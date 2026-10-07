@@ -195,6 +195,37 @@ let dashboardHTML = #"""
   .tabbar svg { width: 28px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .tabbar button.active { color: var(--green); }
 
+  /* Full-screen landscape: the Mac screen fills the phone, with a small floating toolbar. */
+  .float-bar { display: none; }
+  body.landscape-full { padding: 0; overflow: hidden; background: #000; }
+  body.landscape-full main { max-width: none; }
+  body.landscape-full .topbar, body.landscape-full .titles, body.landscape-full .tabbar,
+  body.landscape-full #screenControls > :not(.macbook):not(#zoomBar) { display: none !important; }
+  body.landscape-full .macbook .lid {
+    position: fixed; inset: 0; z-index: 5; border-radius: 0; background: #000; box-shadow: none;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  body.landscape-full .macbook .lid::before, body.landscape-full .macbook .base { display: none; }
+  body.landscape-full .screen-wrap { width: 100%; height: 100%; border-radius: 0; }
+  body.landscape-full .screen-wrap img { width: 100%; height: 100%; object-fit: contain; }
+  body.landscape-full .float-bar {
+    display: flex; position: fixed; z-index: 20; gap: 2px; padding: 4px; border-radius: 14px;
+    top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right));
+    background: rgba(30,30,32,.72); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  }
+  .float-bar button {
+    min-width: 38px; height: 34px; border: 0; border-radius: 10px; background: transparent;
+    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: grid; place-items: center;
+  }
+  .float-bar button.on { background: var(--green); }
+  .float-bar svg { width: 20px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+  body.landscape-full #zoomBar {
+    position: fixed; z-index: 20; left: 50%; bottom: max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: rgba(30,30,32,.72); color: #fff; padding: 4px 6px 4px 12px; border-radius: 99px;
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  }
+  body.landscape-full #screenMsg { position: fixed; z-index: 15; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 80vw; }
+
   /* Locked / off screen. */
   .gate { text-align: center; padding: 30px 22px; display: grid; gap: 12px; margin-top: 24px; }
   .gate .icon { width: 56px; height: 56px; justify-self: center; border-radius: 16px; background: var(--fill); display: grid; place-items: center; }
@@ -289,6 +320,14 @@ let dashboardHTML = #"""
   </div>
 
   <div class="tab" id="tab-screen" hidden>
+    <div class="float-bar" id="floatBar" aria-label="Screen controls">
+      <button type="button" id="kbFloat" aria-label="Keyboard">⌨</button>
+      <button type="button" id="padModeBtn" aria-label="Trackpad mode">
+        <svg viewBox="0 0 20 16" aria-hidden="true"><rect x="1.5" y="1.5" width="17" height="13" rx="3"/></svg></button>
+      <button data-mod="cmd" aria-label="Command">⌘</button>
+      <button data-mod="alt" aria-label="Option">⌥</button>
+      <button data-key="escape">esc</button>
+    </div>
     <div class="notice" id="screenMsg" hidden></div>
     <div class="tab" id="screenControls" hidden>
     <div class="macbook">
@@ -362,6 +401,7 @@ let dashboardHTML = #"""
   }
 
   function render() {
+    updateLandscape();
     const ago = Math.round((Date.now() - lastOk) / 1000);
     const stale = !lastOk || ago > 10;
     $("live").classList.toggle("stale", stale);
@@ -446,6 +486,7 @@ let dashboardHTML = #"""
     }
     if (auth.off || auth.unreachable) {
       unlocked = false;
+      updateLandscape();
       $("app").hidden = true;
       $("lockBtn").hidden = true;
       $("gate").hidden = false;
@@ -469,6 +510,7 @@ let dashboardHTML = #"""
       return;
     }
     unlocked = false;
+    updateLandscape();
     $("app").hidden = true;
     $("lockBtn").hidden = true;
     $("gate").hidden = false;
@@ -683,8 +725,16 @@ let dashboardHTML = #"""
   }
 
   const wrap = $("screenWrap");
+  // Where the picture is actually drawn inside the <img> box (letterboxed in landscape).
+  function drawnRect() {
+    const img = $("screenImg"), r = img.getBoundingClientRect();
+    const nw = img.naturalWidth || r.width, nh = img.naturalHeight || r.height;
+    const fit = Math.min(r.width / nw, r.height / nh);
+    const w = nw * fit, h = nh * fit;
+    return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h };
+  }
   function norm(e) {
-    const r = $("screenImg").getBoundingClientRect();
+    const r = drawnRect();
     return {
       x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
       y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
@@ -692,7 +742,7 @@ let dashboardHTML = #"""
   }
   // Phone pixels → Mac points, so a drag scrolls about the same distance on the Mac.
   function scale() {
-    const r = $("screenImg").getBoundingClientRect();
+    const r = drawnRect();
     return data && data.screenWidth && r.width ? data.screenWidth / r.width : 2;
   }
 
@@ -730,6 +780,7 @@ let dashboardHTML = #"""
   }
 
   wrap.addEventListener("pointerdown", e => {
+    if (padMode()) return;
     e.preventDefault();
     wrap.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -741,6 +792,9 @@ let dashboardHTML = #"""
       return;
     }
     if (pointers.size > 2 || pinch) return;
+    // Taps on the black bars beside the picture (landscape) do nothing.
+    const d = drawnRect();
+    if (e.clientX < d.left || e.clientX > d.left + d.width || e.clientY < d.top || e.clientY > d.top + d.height) return;
     start = last = { x: e.clientX, y: e.clientY };
     moved = false; held = false;
     const p = norm(e);
@@ -751,7 +805,7 @@ let dashboardHTML = #"""
     }, 550);
   });
   wrap.addEventListener("pointermove", e => {
-    if (!pointers.has(e.pointerId)) return;
+    if (padMode() || !pointers.has(e.pointerId)) return;
     e.preventDefault();
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -788,6 +842,7 @@ let dashboardHTML = #"""
   });
   function endPointer(e) {
     pointers.delete(e.pointerId);
+    if (padMode()) return;
     if (pinch) {
       if (pointers.size === 0) { pinch = null; start = null; }
       return;
@@ -823,7 +878,7 @@ let dashboardHTML = #"""
   }
   const shortcut = key => send({ type: "key", key, mods: ["ctrl"] });
 
-  pad.addEventListener("touchstart", e => {
+  function padTouchStart(e) {
     e.preventDefault();
     const c = centroid(e.touches);
     if (!padStart) {
@@ -835,10 +890,10 @@ let dashboardHTML = #"""
     padFingers = Math.max(padFingers, e.touches.length);
     if (e.touches.length >= 3 && !threeStart) threeStart = c;
     padLast = c;  // re-anchor when the finger count changes, so nothing jumps
-    pad.classList.add("active");
-  }, { passive: false });
+    if (e.currentTarget === pad) pad.classList.add("active");
+  }
 
-  pad.addEventListener("touchmove", e => {
+  function padTouchMove(e) {
     e.preventDefault();
     if (!padStart) return;
     const c = centroid(e.touches);
@@ -863,7 +918,7 @@ let dashboardHTML = #"""
         if (navigator.vibrate) navigator.vibrate(10);
       }
     }
-  }, { passive: false });
+  }
 
   function padEnd(e) {
     e.preventDefault();
@@ -881,8 +936,14 @@ let dashboardHTML = #"""
     }
     dragging = false; pendingDrag = false; padStart = null;
   }
-  pad.addEventListener("touchend", padEnd, { passive: false });
-  pad.addEventListener("touchcancel", padEnd, { passive: false });
+  // The bottom trackpad always uses these; the screen picture does in landscape trackpad mode.
+  for (const surface of [pad, wrap]) {
+    const only = f => e => { if (surface === pad || padMode()) f(e); };
+    surface.addEventListener("touchstart", only(padTouchStart), { passive: false });
+    surface.addEventListener("touchmove", only(padTouchMove), { passive: false });
+    surface.addEventListener("touchend", only(padEnd), { passive: false });
+    surface.addEventListener("touchcancel", only(padEnd), { passive: false });
+  }
 
   document.querySelectorAll("[data-gesture]").forEach(b => b.addEventListener("click", () => {
     shortcut({ spaceLeft: "left", spaceRight: "right", mission: "up", appWindows: "down" }[b.dataset.gesture]);
@@ -939,16 +1000,20 @@ let dashboardHTML = #"""
       send({ type: "text", text });
     }
   }
-  $("kbBtn").addEventListener("click", () => {
+  function toggleKeyboard() {
     if (document.activeElement === liveInput) { liveInput.blur(); return; }
     resetLiveInput();
     liveInput.focus();  // must happen inside the tap for iOS to show the keyboard
-  });
+  }
+  $("kbBtn").addEventListener("click", toggleKeyboard);
+  $("kbFloat").addEventListener("click", toggleKeyboard);
   liveInput.addEventListener("focus", () => {
+    $("kbFloat").classList.add("on");
     $("kbBtn").classList.add("on");
     $("kbBtn").textContent = "⌨ Typing on your Mac… tap to stop";
   });
   liveInput.addEventListener("blur", () => {
+    $("kbFloat").classList.remove("on");
     $("kbBtn").classList.remove("on");
     $("kbBtn").textContent = "⌨ Type directly";
   });
@@ -966,6 +1031,26 @@ let dashboardHTML = #"""
   });
   liveInput.addEventListener("compositionend", e => { sendTyped(e.data); resetLiveInput(); });
   liveInput.addEventListener("input", resetLiveInput);
+
+  // ---------- Full-screen landscape ----------
+  // Sideways phone on the Screen tab: the Mac screen fills the phone. Phones only
+  // (max-height), so a desktop browser window never switches.
+  const landscapeQuery = matchMedia("(orientation: landscape) and (max-height: 500px)");
+  let trackpadMode = false;
+  function padMode() { return trackpadMode && document.body.classList.contains("landscape-full"); }
+  function updateLandscape() {
+    const full = landscapeQuery.matches && currentTab === "screen" && unlocked;
+    if (full === document.body.classList.contains("landscape-full")) return;
+    document.body.classList.toggle("landscape-full", full);
+    // The picture changes size, so start the zoom fresh.
+    zoom = 1; panX = panY = 0; applyZoom();
+  }
+  landscapeQuery.addEventListener("change", updateLandscape);
+  $("padModeBtn").addEventListener("click", () => {
+    trackpadMode = !trackpadMode;
+    $("padModeBtn").classList.toggle("on", trackpadMode);
+    if (trackpadMode) { zoom = 1; panX = panY = 0; applyZoom(); }
+  });
 
   // ---------- Hide / show the key buttons ----------
   function setKeysHidden(hidden) {
