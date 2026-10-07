@@ -7,6 +7,8 @@ import Security
 enum Auth {
     static let sessionDays = 7.0
     static let cookieName = "la_session"
+    // Posted when sessions are revoked (new password, logout) so open live sockets close.
+    static let sessionsChanged = Notification.Name("LidAwakeSessionsChanged")
 
     private static let defaults = UserDefaults.standard
     private static let lock = NSLock()
@@ -26,6 +28,7 @@ enum Auth {
         defaults.removeObject(forKey: "sessions")
         failures = 0
         lockedUntil = .distantPast
+        NotificationCenter.default.post(name: sessionsChanged, object: nil)
     }
 
     static func login(_ password: String) -> LoginResult {
@@ -65,6 +68,7 @@ enum Auth {
         var sessions = storedSessions()
         sessions[sha256(token)] = nil
         defaults.set(sessions, forKey: "sessions")
+        NotificationCenter.default.post(name: sessionsChanged, object: nil)
     }
 
     // Unexpired sessions only.
