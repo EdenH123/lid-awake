@@ -73,6 +73,12 @@ let dashboardHTML = #"""
   .screen-wrap img { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none;  transform-origin: 0 0; }
   .zoombar { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--muted); }
   .zoombar[hidden] { display: none; }
+  .quality { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--seg); border-radius: 10px; padding: 2px; }
+  .quality button {
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); background: none; border: 0;
+    padding: 6px 0; border-radius: 8px; cursor: pointer;
+  }
+  .quality button.active { background: var(--seg-on); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
   .zoombar button { font: inherit; font-weight: 600; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; cursor: pointer; }
   .hint { font-size: 13px; color: var(--muted); text-align: center; }
   .typebar { display: flex; gap: 8px; }
@@ -214,6 +220,11 @@ let dashboardHTML = #"""
   <div class="tab" id="tab-screen" hidden>
     <div class="notice" id="screenMsg" hidden></div>
     <div class="tab" id="screenControls" hidden>
+    <nav class="quality" id="quality" aria-label="Picture quality">
+      <button data-quality="sharp">Sharp</button>
+      <button data-quality="balanced">Balanced</button>
+      <button data-quality="fast">Fast</button>
+    </nav>
     <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"></div>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="hint" id="hint">Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom</div>
@@ -394,6 +405,7 @@ let dashboardHTML = #"""
     }
   }
   function locked() {
+    stopLive();
     if (unlocked) { unlocked = false; checkAuth(); }
   }
 
@@ -421,6 +433,7 @@ let dashboardHTML = #"""
   });
 
   $("lockBtn").addEventListener("click", async () => {
+    stopLive();
     await fetch("logout", { method: "POST", headers: { "X-LidAwake": "1" } }).catch(() => {});
     unlocked = false;
     checkAuth();
@@ -450,6 +463,7 @@ let dashboardHTML = #"""
     try { localStorage.setItem("tab", name); } catch (e) {}
     render();
     if (name === "screen") startFrames();
+    else stopLive();
   }
   tabButtons.forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -459,12 +473,70 @@ let dashboardHTML = #"""
     $("screenMsg").textContent = text;
     $("screenMsg").hidden = !text;
   }
-  // The Mac holds each request until the screen changes (up to 2 s), so asking
-  // again right away gives near-live updates without resending unchanged frames.
-  async function startFrames() {
+  // ----- Live stream: one WebSocket, frames pushed by the Mac -----
+  let ws = null, wsFailures = 0, wsRetryAt = 0;
+  let quality = "balanced";
+  try { quality = localStorage.getItem("quality") || "balanced"; } catch (e) {}
+  function showQuality() {
+    document.querySelectorAll("[data-quality]").forEach(b => b.classList.toggle("active", b.dataset.quality === quality));
+  }
+  document.querySelectorAll("[data-quality]").forEach(b => b.addEventListener("click", () => {
+    quality = b.dataset.quality;
+    try { localStorage.setItem("quality", quality); } catch (e) {}
+    showQuality();
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ quality }));
+  }));
+  showQuality();
+
+  function liveURL() {
+    return location.protocol === "https:" ? `wss://${location.host}/live` : `ws://${location.hostname}:8788/live`;
+  }
+  function showFrame(blob) {
+    const url = URL.createObjectURL(blob);
+    const img = $("screenImg");
+    img.onload = () => { if (frameUrl && frameUrl !== url) URL.revokeObjectURL(frameUrl); frameUrl = url; };
+    img.src = url;
+    $("screenControls").hidden = false;
+    setScreenMsg("");
+  }
+  function watching() { return unlocked && currentTab === "screen" && !document.hidden; }
+  function stopLive() { if (ws) { ws.onclose = null; ws.close(); ws = null; } }
+
+  // Opens the socket; after 3 failed tries falls back to long-polling and retries the socket every 30 s.
+  function startFrames() {
+    if (!watching()) { stopLive(); return; }
+    if (ws || framesRunning) return;
+    if (wsFailures >= 3 && Date.now() < wsRetryAt) { startPolling(); return; }
+    let opened = false;
+    const socket = new WebSocket(liveURL());
+    socket.binaryType = "blob";
+    ws = socket;
+    socket.onopen = () => {
+      opened = true; wsFailures = 0;
+      socket.send(JSON.stringify({ quality }));
+      pumpInput();
+    };
+    socket.onmessage = e => {
+      if (typeof e.data !== "string") return showFrame(e.data);
+      try { const m = JSON.parse(e.data); if (m.error) setScreenMsg(m.error); } catch (err) {}
+    };
+    socket.onclose = () => {
+      ws = null;
+      if (!opened) { wsFailures++; if (wsFailures >= 3) wsRetryAt = Date.now() + 30000; }
+      if (!watching()) return;
+      // A refused connection can mean "logged out" or "lid-awake off": let checkAuth sort it out.
+      if (!opened) checkAuth();
+      const delay = opened ? 500 : Math.min(5000, 500 * 2 ** wsFailures);
+      setTimeout(startFrames, delay);
+    };
+  }
+
+  // Fallback: the Mac holds each request until the screen changes (up to 2 s).
+  async function startPolling() {
     if (framesRunning) return;
     framesRunning = true;
-    while (unlocked && currentTab === "screen" && !document.hidden) {
+    while (watching() && !ws) {
+      if (Date.now() >= wsRetryAt) { framesRunning = false; startFrames(); return; }
       let wait = 0;
       try {
         const res = await fetch("screen.jpg?after=" + frameId, { cache: "no-store" });
@@ -472,16 +544,7 @@ let dashboardHTML = #"""
         if (res.status === 204) continue;
         if (res.ok) {
           frameId = Number(res.headers.get("X-Frame-Id")) || 0;
-          const url = URL.createObjectURL(await res.blob());
-          await new Promise(done => {
-            const img = $("screenImg");
-            img.onload = img.onerror = done;
-            img.src = url;
-          });
-          if (frameUrl) URL.revokeObjectURL(frameUrl);
-          frameUrl = url;
-          $("screenControls").hidden = false;
-          setScreenMsg("");
+          showFrame(await res.blob());
         } else {
           setScreenMsg(await res.text());
           // Access turned off or permission missing: hide the old picture and controls.
@@ -524,6 +587,7 @@ let dashboardHTML = #"""
       const cmd = inputQueue.shift();
       if (cmd.dx != null) { cmd.dx = Math.round(cmd.dx); cmd.dy = Math.round(cmd.dy); }
       if ((cmd.type === "move" || cmd.type === "scroll") && !cmd.dx && !cmd.dy) continue;
+      if (ws && ws.readyState === 1) { ws.send(JSON.stringify(cmd)); continue; }
       try {
         const res = await fetch("input", {
           method: "POST",
@@ -807,7 +871,7 @@ let dashboardHTML = #"""
   setInterval(poll, 3000);
   setInterval(() => { if (unlocked) render(); }, 1000);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) return;
+    if (document.hidden) { stopLive(); return; }
     checkAuth();
   });
   try { if (localStorage.getItem("tab") === "screen") currentTab = "screen"; } catch (e) {}
