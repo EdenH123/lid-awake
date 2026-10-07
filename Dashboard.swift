@@ -73,12 +73,13 @@ let dashboardHTML = #"""
   .screen-wrap img { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none;  transform-origin: 0 0; }
   .zoombar { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--muted); }
   .zoombar[hidden] { display: none; }
-  .quality { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--seg); border-radius: 10px; padding: 2px; }
+  .quality { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
   .quality button {
-    font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); background: none; border: 0;
-    padding: 6px 0; border-radius: 8px; cursor: pointer;
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--card);
+    border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; cursor: pointer;
+    transition: background .15s ease, color .15s ease;
   }
-  .quality button.active { background: var(--seg-on); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .quality button.active { background: var(--green); border-color: var(--green); color: #fff; }
   .zoombar button { font: inherit; font-weight: 600; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; cursor: pointer; }
   .hint { font-size: 13px; color: var(--muted); text-align: center; }
   .typebar { display: flex; gap: 8px; }
@@ -220,12 +221,12 @@ let dashboardHTML = #"""
   <div class="tab" id="tab-screen" hidden>
     <div class="notice" id="screenMsg" hidden></div>
     <div class="tab" id="screenControls" hidden>
-    <nav class="quality" id="quality" aria-label="Picture quality">
-      <button data-quality="sharp">Sharp</button>
-      <button data-quality="balanced">Balanced</button>
-      <button data-quality="fast">Fast</button>
-    </nav>
     <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"></div>
+    <nav class="quality" id="quality" aria-label="Picture quality">
+      <button data-quality="sharp">🔍 Sharp</button>
+      <button data-quality="balanced">⚖️ Balanced</button>
+      <button data-quality="fast">⚡ Fast</button>
+    </nav>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="hint" id="hint">Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom</div>
     <button class="panel-toggle" id="keysToggle" aria-expanded="true">Hide buttons ▴</button>
