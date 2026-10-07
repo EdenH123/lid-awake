@@ -160,6 +160,19 @@ final class StatusServer: @unchecked Sendable {
             return text(c, "403 Forbidden", "Forbidden")
         }
 
+        // Home-screen icon and app manifest: static, needed by iOS before any login.
+        switch req.path {
+        case "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png":
+            return reply(c, "200 OK", "image/png", appIcon180)
+        case "/icon-512.png":
+            return reply(c, "200 OK", "image/png", appIcon512)
+        case "/manifest.webmanifest":
+            let manifest = ##"{"name":"Lid Awake","short_name":"Lid Awake","start_url":"/","display":"standalone","background_color":"#000000","theme_color":"#000000","icons":[{"src":"/apple-touch-icon.png","sizes":"180x180","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}]}"##
+            return reply(c, "200 OK", "application/manifest+json", Data(manifest.utf8))
+        default:
+            break
+        }
+
         // While lid-awake is off the page is closed: only the page itself and a
         // status that says "off" are answered — no login, data, screen or control.
         if !awake() {

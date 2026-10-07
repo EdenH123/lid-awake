@@ -247,6 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             remoteAllowed: { UserDefaults.standard.bool(forKey: "remoteScreen") },
             screenPermission: { screenPermission() },
             controlPermission: { controlPermission() }))
+        // The Wi-Fi name shown on the phone needs Location permission (asked once).
+        SystemInfo.shared.requestWiFiNameAccess()
 
         // Re-check the Tailscale link every minute (refresh() also syncs it whenever
         // lid-awake turns on or off).
@@ -438,6 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isOn, let end = endDate, end > Date() { s["timerRemaining"] = end.timeIntervalSinceNow }
         if let t = batteryTemperature() { s["batteryTemp"] = (t * 10).rounded() / 10 }
         s.merge(powerInfo()) { $1 }
+        s.merge(SystemInfo.shared.snapshot()) { $1 }
         return (try? JSONSerialization.data(withJSONObject: s)) ?? Data("{}".utf8)
     }
 

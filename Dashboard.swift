@@ -10,6 +10,9 @@ let dashboardHTML = #"""
 <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>Lid Awake</title>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <style>
   /* Apple system colors (iOS light / dark). */
   :root {
@@ -98,6 +101,28 @@ let dashboardHTML = #"""
   .temp-value { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
   .gauge { height: 8px; border-radius: 99px; background: var(--fill); overflow: hidden; }
   .gauge div { height: 100%; border-radius: 99px; background: var(--green); transition: width .5s ease, background .3s ease; }
+
+  /* Status: Mac health tiles with small rings. */
+  .health { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .tile { display: flex; align-items: center; gap: 12px; padding: 14px; }
+  .mini-ring { position: relative; width: 46px; height: 46px; flex: none; }
+  .mini-ring svg { width: 46px; height: 46px; transform: rotate(-90deg); }
+  .mini-ring .track { stroke: var(--fill); }
+  .mini-ring .arc { stroke: var(--green); transition: stroke-dashoffset .5s ease, stroke .3s ease; }
+  .mini-ring .icon { position: absolute; inset: 0; display: grid; place-items: center; }
+  .mini-ring .icon svg { width: 20px; height: 20px; transform: none; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tile-value { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .tile .label { font-size: 12px; }
+
+  /* Status: network card. */
+  .net { display: grid; gap: 14px; }
+  .net-head { display: flex; align-items: center; gap: 12px; }
+  .bars { width: 30px; height: 22px; flex: none; }
+  .bars rect { fill: var(--fill); transition: fill .3s ease; }
+  .bars rect.on { fill: var(--green); }
+  .net-name { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .net-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; border-top: 0.5px solid var(--line); padding-top: 12px; }
+  .net-value { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
 
   /* Status: iOS Settings-style grouped list. */
   .group-title { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; margin: 6px 16px -6px; }
@@ -329,6 +354,30 @@ let dashboardHTML = #"""
       </section>
     </div>
 
+    <div class="group-title">Mac health</div>
+    <div class="health">
+      <section class="card tile"><div class="mini-ring"><svg viewBox="0 0 46 46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="19" fill="none" stroke-width="6"/><circle class="arc" id="cpuArc" cx="23" cy="23" r="19" fill="none" stroke-width="6" stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4"/></svg></div><div><div class="tile-value" id="cpuValue">—</div><div class="label">Processor</div></div></section>
+      <section class="card tile"><div class="mini-ring"><svg viewBox="0 0 46 46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="19" fill="none" stroke-width="6"/><circle class="arc" id="memArc" cx="23" cy="23" r="19" fill="none" stroke-width="6" stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4"/></svg></div><div><div class="tile-value" id="memValue">—</div><div class="label" id="memLabel">Memory</div></div></section>
+      <section class="card tile"><div class="mini-ring"><svg viewBox="0 0 46 46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="19" fill="none" stroke-width="6"/><circle class="arc" id="diskArc" cx="23" cy="23" r="19" fill="none" stroke-width="6" stroke-linecap="round" stroke-dasharray="119.4" stroke-dashoffset="119.4"/></svg></div><div><div class="tile-value" id="diskValue">—</div><div class="label" id="diskLabel">Disk free</div></div></section>
+      <section class="card tile"><div class="mini-ring"><div class="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div></div><div><div class="tile-value" id="uptimeValue">—</div><div class="label">Since restart</div></div></section>
+    </div>
+
+    <div class="group-title">Network</div>
+    <section class="card net">
+      <div class="net-head">
+        <svg class="bars" id="wifiBars" viewBox="0 0 30 22" aria-hidden="true">
+          <rect x="0" y="15" width="5" height="7" rx="1.5"/><rect x="8" y="10" width="5" height="12" rx="1.5"/>
+          <rect x="16" y="5" width="5" height="17" rx="1.5"/><rect x="24" y="0" width="5" height="22" rx="1.5"/>
+        </svg>
+        <div style="min-width:0"><div class="net-name" id="wifiName">Wi-Fi</div><div class="label" id="wifiSignal">—</div></div>
+      </div>
+      <div class="net-grid">
+        <div><div class="label">↓ Download</div><div class="net-value" id="netDown">—</div></div>
+        <div><div class="label">↑ Upload</div><div class="net-value" id="netUp">—</div></div>
+        <div><div class="label">To this phone</div><div class="net-value" id="netPing">—</div></div>
+      </div>
+    </section>
+
     <div class="group-title">Mac</div>
     <div class="list">
       <div class="row"><span>Turn off after</span><span id="timerRow">—</span></div>
@@ -484,6 +533,8 @@ let dashboardHTML = #"""
       $("tempSub").textContent = `Limit ${max}°C`;
     }
 
+    renderHealth();
+
     const timerChoice = data.timerMinutes > 0
       ? (data.timerMinutes >= 60 ? `${data.timerMinutes / 60} hour${data.timerMinutes === 60 ? "" : "s"}` : `${data.timerMinutes} minutes`)
       : "Never";
@@ -499,6 +550,58 @@ let dashboardHTML = #"""
     } else {
       $("hint").textContent = "Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom";
     }
+  }
+
+  // ---------- Mac health and network ----------
+  const RING = 119.4;
+  function setRing(id, pct, color) {
+    const arc = $(id);
+    arc.style.strokeDashoffset = (RING * (1 - Math.min(100, Math.max(0, pct)) / 100)).toFixed(1);
+    arc.style.stroke = color;
+  }
+  const level = (v, warn, bad) => v >= bad ? "var(--red)" : v >= warn ? "var(--amber)" : "var(--green)";
+  const GiB = 1024 ** 3;
+  function fmtRate(bps) {
+    if (bps == null) return "—";
+    if (bps < 1000) return Math.round(bps) + " B/s";
+    if (bps < 1e6) return Math.round(bps / 1000) + " KB/s";
+    return (bps / 1e6).toFixed(1) + " MB/s";
+  }
+  function fmtUptime(sec) {
+    const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    return d > 0 ? `${d} day${d === 1 ? "" : "s"}` : h > 0 ? `${h} h ${m} m` : `${m} min`;
+  }
+  let pingMs = null;
+  function renderHealth() {
+    const mac = data.mac || {}, net = data.net || {};
+    if (mac.cpu != null) {
+      $("cpuValue").textContent = Math.round(mac.cpu) + "%";
+      setRing("cpuArc", mac.cpu, level(mac.cpu, 60, 85));
+    }
+    if (mac.memUsed != null && mac.memTotal) {
+      const used = mac.memUsed / mac.memTotal * 100;
+      $("memValue").textContent = (mac.memUsed / GiB).toFixed(0) + " GB";
+      $("memLabel").textContent = `Memory of ${Math.round(mac.memTotal / GiB)} GB`;
+      setRing("memArc", used, level(used, 80, 92));
+    }
+    if (mac.diskFree != null && mac.diskTotal) {
+      const usedPct = 100 - mac.diskFree / mac.diskTotal * 100;
+      $("diskValue").textContent = Math.round(mac.diskFree / 1e9) + " GB";
+      $("diskLabel").textContent = `Free of ${Math.round(mac.diskTotal / 1e9)} GB`;
+      setRing("diskArc", usedPct, level(usedPct, 85, 93));
+    }
+    if (mac.uptime != null) $("uptimeValue").textContent = fmtUptime(mac.uptime);
+
+    // Signal: 4 bars ≥ −55 dBm, 3 ≥ −65, 2 ≥ −75, otherwise 1.
+    const rssi = net.rssi;
+    const bars = net.wired ? 4 : rssi == null ? 0 : rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
+    [...$("wifiBars").children].forEach((r, i) => r.classList.toggle("on", i < bars));
+    $("wifiName").textContent = net.wired ? "Wired network" : (net.wifi || "Wi-Fi");
+    $("wifiSignal").textContent = net.wired ? "Ethernet" : rssi == null ? "Not connected"
+      : `${["", "Weak", "Fair", "Good", "Excellent"][bars]} signal · ${rssi} dBm`;
+    $("netDown").textContent = fmtRate(net.down);
+    $("netUp").textContent = fmtRate(net.up);
+    $("netPing").textContent = pingMs == null ? "—" : Math.round(pingMs) + " ms";
   }
 
   // ---------- Lock ----------
@@ -593,9 +696,12 @@ let dashboardHTML = #"""
   async function poll() {
     if (!unlocked) return;
     try {
+      const sentAt = performance.now();
       const res = await fetch("status", { cache: "no-store" });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) throw new Error(res.status);
+      const rtt = performance.now() - sentAt;
+      pingMs = pingMs == null ? rtt : pingMs * 0.7 + rtt * 0.3;
       data = await res.json();
       fetchedAt = Date.now();
       lastOk = fetchedAt;

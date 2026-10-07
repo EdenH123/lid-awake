@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Lid Awake</string>
+  <key>CFBundleIdentifier</key><string>local.lidawake</string>
+  <key>CFBundleExecutable</key><string>LidAwake</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1.1</string>
+  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSLocationUsageDescription</key>
+  <string>Lid Awake reads the name of the Wi-Fi network your Mac is on, to show it on your phone. It doesn't use or share your location.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Lid Awake reads the name of the Wi-Fi network your Mac is on, to show it on your phone. It doesn't use or share your location.</string>
+</dict>
+</plist>

@@ -10,6 +10,7 @@ TMP="$(mktemp -d)"
 
 swiftc -O -o "$TMP/LidAwake" "$SRC"/*.swift
 cp "$TMP/LidAwake" "$APP/Contents/MacOS/LidAwake"
+[ -f "$SRC/Info.plist" ] && cp "$SRC/Info.plist" "$APP/Contents/Info.plist"
 if [ "$SRC" != "$APP/Contents/Resources" ]; then
   rm -f "$APP/Contents/Resources/"*.swift
   cp "$SRC"/*.swift "$SRC/build.sh" "$APP/Contents/Resources/"
