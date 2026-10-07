@@ -233,6 +233,10 @@ let dashboardHTML = #"""
     color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: grid; place-items: center;
   }
   .float-bar button.on { background: var(--green); }
+  .float-bar .q-badge span {
+    font-size: 11px; font-weight: 800; letter-spacing: .03em; line-height: 1;
+    border: 1.5px solid currentColor; border-radius: 4px; padding: 2px 4px;
+  }
   .float-bar svg { width: 20px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
   body.landscape-full #zoomBar {
     position: fixed; z-index: 20; left: 50%; bottom: max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%);
@@ -339,6 +343,7 @@ let dashboardHTML = #"""
       <button type="button" id="kbFloat" aria-label="Keyboard">⌨</button>
       <button type="button" id="padModeBtn" aria-label="Trackpad mode">
         <svg viewBox="0 0 20 16" aria-hidden="true"><rect x="1.5" y="1.5" width="17" height="13" rx="3"/></svg></button>
+      <button type="button" id="qualityFloat" class="q-badge" aria-label="Picture quality: Balanced"><span>SD</span></button>
       <button data-mod="cmd" aria-label="Command">⌘</button>
       <button data-mod="alt" aria-label="Option">⌥</button>
       <button data-key="escape">esc</button>
@@ -623,15 +628,22 @@ let dashboardHTML = #"""
   let ws = null, wsFailures = 0, wsRetryAt = 0;
   let quality = "balanced";
   try { quality = localStorage.getItem("quality") || "balanced"; } catch (e) {}
+  const QUALITY_BADGE = { sharp: "HD", balanced: "SD", fast: "LOW" };
+  const QUALITY_NAME = { sharp: "Sharp", balanced: "Balanced", fast: "Fast" };
   function showQuality() {
     document.querySelectorAll("[data-quality]").forEach(b => b.classList.toggle("active", b.dataset.quality === quality));
+    $("qualityFloat").firstElementChild.textContent = QUALITY_BADGE[quality];
+    $("qualityFloat").setAttribute("aria-label", "Picture quality: " + QUALITY_NAME[quality]);
   }
-  document.querySelectorAll("[data-quality]").forEach(b => b.addEventListener("click", () => {
-    quality = b.dataset.quality;
+  function setQuality(q) {
+    quality = q;
     try { localStorage.setItem("quality", quality); } catch (e) {}
     showQuality();
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ quality }));
-  }));
+  }
+  document.querySelectorAll("[data-quality]").forEach(b => b.addEventListener("click", () => setQuality(b.dataset.quality)));
+  // Landscape toolbar: one badge that steps LOW → SD → HD → LOW.
+  $("qualityFloat").addEventListener("click", () => setQuality({ fast: "balanced", balanced: "sharp", sharp: "fast" }[quality]));
   showQuality();
 
   function liveURL() {
