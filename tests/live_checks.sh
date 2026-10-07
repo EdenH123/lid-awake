@@ -18,7 +18,12 @@ cat "$LOG"
 for p in sharp balanced fast; do
   line=$(grep "^live $p:" "$LOG")
   n=$(echo "$line" | sed -n 's/.* \([0-9][0-9]*\) frames.*/\1/p')
-  if [ -n "$n" ] && [ "$n" -ge 3 ]; then echo "PASS live $p ($line)"; else echo "FAIL live $p: '$line'"; fail=1; fi
+  if [ -n "$n" ] && [ "$n" -ge 1 ]; then echo "PASS live $p ($line)"; else echo "FAIL live $p: '$line'"; fail=1; fi
 done
+# A still screen sends few frames, so check the presets by size: Sharp > Fast.
+sharp=$(grep "^live sharp:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
+fast=$(grep "^live fast:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
+if [ -n "$sharp" ] && [ -n "$fast" ] && [ "$sharp" -gt "$fast" ]; then echo "PASS presets differ (sharp $sharp > fast $fast)"
+else echo "FAIL presets: sharp '$sharp' vs fast '$fast'"; fail=1; fi
 grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL live input"; fail=1; }
 exit $fail

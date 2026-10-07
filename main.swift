@@ -144,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var isOn = false
     var servedState: Bool?  // last lid-awake state the Tailscale link was synced to
     var server: StatusServer?
+    var liveServer: LiveServer?
     let computerName = Host.current().localizedName ?? "Mac"
 
     // Chosen timer length in minutes (0 = never) and when the current run ends.
@@ -240,6 +241,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 notify("Turned off from your phone. Your Mac will sleep normally again.")
             }
         )
+        liveServer = LiveServer(checks: .init(
+            sessionValid: { Auth.isValid($0) },
+            awake: { DispatchQueue.main.sync { self.isOn } },
+            remoteAllowed: { UserDefaults.standard.bool(forKey: "remoteScreen") },
+            screenPermission: { screenPermission() },
+            controlPermission: { controlPermission() }))
 
         // Re-check the Tailscale link every minute (refresh() also syncs it whenever
         // lid-awake turns on or off).
@@ -505,7 +512,47 @@ if CommandLine.arguments.contains("--selftest") {
                 case .unchanged: lines.append("next: unchanged after \(waited) ms (screen didn't change)")
                 case .unavailable: lines.append("next: unavailable after \(waited) ms")
                 }
-                done.signal()
+                // Live socket: a private LiveServer on port 18788 that accepts a test token,
+                // so no real login is created. For each preset, reports the frames received
+                // in 3 s and the size of the last one (Sharp should be largest, Fast smallest).
+                let test = LiveServer(port: 18788, checks: .init(
+                    sessionValid: { $0 == "selftest" }, awake: { true }, remoteAllowed: { true },
+                    screenPermission: { true }, controlPermission: { true }))
+                Task {
+                    for preset in ["sharp", "balanced", "fast"] {
+                        var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)
+                        request.setValue("http://127.0.0.1:\(statusPort)", forHTTPHeaderField: "Origin")
+                        request.setValue("\(Auth.cookieName)=selftest", forHTTPHeaderField: "Cookie")
+                        let socket = URLSession.shared.webSocketTask(with: request)
+                        socket.resume()
+                        try? await socket.send(.string(#"{"quality":"\#(preset)"}"#))
+                        var frames = 0, lastBytes = 0
+                        let end = Date().addingTimeInterval(3)
+                        while Date() < end {
+                            let message = try? await withThrowingTaskGroup(of: URLSessionWebSocketTask.Message?.self) { group in
+                                group.addTask { try await socket.receive() }
+                                group.addTask { try await Task.sleep(nanoseconds: 500_000_000); return nil }
+                                let first = try await group.next() ?? nil
+                                group.cancelAll()
+                                return first
+                            }
+                            if case .data(let d)? = message { frames += 1; lastBytes = d.count }
+                        }
+                        lines.append("live \(preset): \(frames) frames, last \(lastBytes) bytes")
+                        if preset == "fast" {
+                            try? await socket.send(.string(#"{"type":"ping"}"#))
+                            var echoed = false
+                            for _ in 0..<40 {
+                                if case .string(let s)? = try? await socket.receive(), s.contains("pong") { echoed = true; break }
+                            }
+                            lines.append("live input echo: \(echoed ? "ok" : "missing")")
+                        }
+                        socket.cancel(with: .normalClosure, reason: nil)
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                    }
+                    _ = test
+                    done.signal()
+                }
             }
         }
     }
