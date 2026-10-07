@@ -195,6 +195,21 @@ let dashboardHTML = #"""
   .tabbar svg { width: 28px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .tabbar button.active { color: var(--green); }
 
+  /* Screen: Lock Mac / Screen off, and the overlay shown while the screen is off. */
+  .power-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .power-row button {
+    display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 15px; font-weight: 600;
+    color: var(--text); background: var(--card); border: 0; border-radius: 12px; padding: 12px; cursor: pointer;
+  }
+  .power-row button:active { background: var(--card2); }
+  .power-row svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .screen-off {
+    position: absolute; inset: 9px 9px 12px; z-index: 3; display: grid; place-content: center; gap: 12px;
+    text-align: center; background: rgba(0,0,0,.85); color: #fff; border-radius: 4px; font-size: 15px;
+  }
+  .screen-off button { justify-self: center; font-weight: 600; color: #000; background: #fff; border: 0; border-radius: 99px; padding: 8px 18px; cursor: pointer; }
+  body.landscape-full .screen-off { inset: 0; border-radius: 0; }
+
   /* Full-screen landscape: the Mac screen fills the phone, with a small floating toolbar. */
   .float-bar { display: none; }
   body.landscape-full { padding: 0; overflow: hidden; background: #000; }
@@ -331,7 +346,10 @@ let dashboardHTML = #"""
     <div class="notice" id="screenMsg" hidden></div>
     <div class="tab" id="screenControls" hidden>
     <div class="macbook">
-      <div class="lid"><div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"></div></div>
+      <div class="lid">
+        <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"></div>
+        <div class="screen-off" id="screenOffOverlay" hidden><span>Your Mac's screen is off</span><button type="button" id="wakeBtn">Wake screen</button></div>
+      </div>
       <div class="base"></div>
     </div>
     <nav class="quality" id="quality" aria-label="Picture quality">
@@ -372,6 +390,10 @@ let dashboardHTML = #"""
       <button data-gesture="spaceRight">Desktop ▶</button>
     </div>
     </div>
+    <div class="power-row">
+      <button type="button" id="lockMacBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Lock Mac</button>
+      <button type="button" id="screenOffBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg>Screen off</button>
+    </div>
     <div class="trackpad" id="trackpad">Trackpad</div>
     <div class="hint">1 finger: move · tap = click · tap twice, then hold &amp; slide = drag<br>
       2 fingers: slide = scroll · tap = right-click<br>
@@ -402,6 +424,7 @@ let dashboardHTML = #"""
 
   function render() {
     updateLandscape();
+    showScreenOff();
     const ago = Math.round((Date.now() - lastOk) / 1000);
     const stale = !lastOk || ago > 10;
     $("live").classList.toggle("stale", stale);
@@ -691,6 +714,8 @@ let dashboardHTML = #"""
   const inputQueue = [];
   let inputBusy = false;
   function send(cmd) {
+    // Any input wakes the Mac's screen again (the Mac does the same).
+    if (!$("screenOffOverlay").hidden) { screenOffAt = 0; wakeAt = Date.now(); showScreenOff(); }
     // A latched ⌘/⌥ also applies to the next click (e.g. ⌘-click).
     if (cmd.type === "click" && latched.size) cmd = { ...cmd, mods: takeMods() };
     const last = inputQueue[inputQueue.length - 1];
@@ -1031,6 +1056,39 @@ let dashboardHTML = #"""
   });
   liveInput.addEventListener("compositionend", e => { sendTyped(e.data); resetLiveInput(); });
   liveInput.addEventListener("input", resetLiveInput);
+
+  // ---------- Lock / Screen off ----------
+  let screenOffAt = 0, wakeAt = 0;
+  function showScreenOff() {
+    const recentlyOff = Date.now() - screenOffAt < 4000;
+    const recentlyWoken = Date.now() - wakeAt < 4000;
+    $("screenOffOverlay").hidden = !(recentlyOff || (data && data.screenOff && !recentlyWoken));
+  }
+  function power(action) {
+    return fetch("power", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+      body: JSON.stringify({ action }),
+    }).then(async res => {
+      if (res.status === 401 || res.status === 423) return locked();
+      if (!res.ok && res.status !== 204) setScreenMsg(await res.text());
+    }).catch(() => setScreenMsg("Can't reach your Mac."));
+  }
+  $("lockMacBtn").addEventListener("click", () => {
+    if (!confirm("Lock your Mac?\n\nTo unlock it from here, tap ⌨ Type directly, type your Mac password and press Return.")) return;
+    power("lock");
+  });
+  $("screenOffBtn").addEventListener("click", () => {
+    if (!confirm("Turn off your Mac's screen?\n\nYour Mac may lock too. Tap “Wake screen” to turn it back on.")) return;
+    screenOffAt = Date.now(); wakeAt = 0;
+    showScreenOff();
+    power("displayoff");
+  });
+  $("wakeBtn").addEventListener("click", () => {
+    screenOffAt = 0; wakeAt = Date.now();
+    showScreenOff();
+    power("wake");
+  });
 
   // ---------- Full-screen landscape ----------
   // Sideways phone on the Screen tab: the Mac screen fills the phone. Phones only

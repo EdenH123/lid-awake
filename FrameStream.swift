@@ -30,6 +30,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     private var latestID = 0
     private var lastRequest = Date.distantPast
     private var lastWake = Date.distantPast
+    private var wakeSuppressedSince: Date?
     private var waiters: [(after: Int, done: (Result) -> Void)] = []
     private var subscribers: [UUID: (frame: (Data) -> Void, unavailable: () -> Void)] = [:]
     private var idleTimer: DispatchSourceTimer?
@@ -55,16 +56,40 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     }
 
     // Counts as user activity (like nudging the mouse): wakes the display if it slept
-    // and keeps it on. Throttled to every 15 s.
+    // and keeps it on. Throttled to every 15 s. Does nothing after "Screen off" from the
+    // phone, until the phone wakes it again.
     func wakeDisplay() {
         queue.async {
-            guard Date().timeIntervalSince(self.lastWake) > 15 else { return }
+            guard self.wakeSuppressedSince == nil,
+                  Date().timeIntervalSince(self.lastWake) > 15 else { return }
             self.lastWake = Date()
             var assertion: IOPMAssertionID = 0
             IOPMAssertionDeclareUserActivity("Lid Awake phone is viewing the screen" as CFString,
                                              kIOPMUserActiveLocal, &assertion)
         }
     }
+
+    // "Screen off" from the phone: turn the display off and stop waking it.
+    func displayOff() {
+        queue.async {
+            self.wakeSuppressedSince = Date()
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+            p.arguments = ["displaysleepnow"]
+            try? p.run()
+        }
+    }
+
+    // The phone wants the screen back (Wake button or any input): wake it right away.
+    func wakeNow() {
+        queue.async {
+            // Skip the 15 s throttle only when coming back from "Screen off".
+            if self.wakeSuppressedSince != nil { self.wakeSuppressedSince = nil; self.lastWake = .distantPast }
+        }
+        wakeDisplay()
+    }
+
+    var isScreenOff: Bool { queue.sync { wakeSuppressedSince != nil } }
 
     // Long-poll: calls back with a frame newer than `after`, waiting up to 2 seconds.
     func frame(after: Int, done: @escaping (Result) -> Void) {
@@ -179,6 +204,9 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
                   options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: preset.quality])
         else { return }
 
+        // A frame after "Screen off" (past the last one in flight) means someone woke the
+        // Mac at the keyboard, so the phone may keep it awake again.
+        if let since = wakeSuppressedSince, Date().timeIntervalSince(since) > 3 { wakeSuppressedSince = nil }
         latest = jpeg
         latestID += 1
         let ready = waiters.filter { $0.after < latestID }

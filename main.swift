@@ -433,6 +433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "screenPermission": screenPermission(),
             "controlPermission": controlPermission(),
             "screenWidth": CGDisplayBounds(CGMainDisplayID()).width,
+            "screenOff": FrameStream.shared.isScreenOff,
         ]
         if isOn, let end = endDate, end > Date() { s["timerRemaining"] = end.timeIntervalSinceNow }
         if let t = batteryTemperature() { s["batteryTemp"] = (t * 10).rounded() / 10 }

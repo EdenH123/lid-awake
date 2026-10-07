@@ -137,7 +137,7 @@ final class LiveServer: @unchecked Sendable {
         guard checks.controlPermission() else {
             return sendText(connection, ["error": "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility."])
         }
-        FrameStream.shared.wakeDisplay()
+        FrameStream.shared.wakeNow()
         // "ping" isn't an input command (RemoteInput ignores it); it lets the selftest
         // check the input path end-to-end.
         if message["type"] as? String == "ping" { return sendText(connection, ["pong": true]) }

@@ -261,7 +261,28 @@ final class StatusServer: @unchecked Sendable {
             guard let cmd = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any] else {
                 return text(c, "400 Bad Request", "Bad request")
             }
+            FrameStream.shared.wakeNow()
             DispatchQueue.main.async { RemoteInput.perform(cmd) }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        case ("POST", "/power"):
+            // Lock the Mac, or turn its display off / back on, from the phone.
+            guard remoteAllowed() else { return text(c, "403 Forbidden", "Screen access is off.") }
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            switch body?["action"] as? String {
+            case "lock":
+                guard controlPermission() else {
+                    return text(c, "403 Forbidden", "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility.")
+                }
+                // Control-⌘-Q, the macOS "Lock Screen" shortcut.
+                DispatchQueue.main.async { RemoteInput.perform(["type": "key", "char": "q", "mods": ["ctrl", "cmd"]]) }
+            case "displayoff":
+                FrameStream.shared.displayOff()
+            case "wake":
+                FrameStream.shared.wakeNow()
+            default:
+                return text(c, "400 Bad Request", "Bad request")
+            }
             reply(c, "204 No Content", "text/plain", Data())
 
         default:
