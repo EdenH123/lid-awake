@@ -527,7 +527,7 @@ if CommandLine.arguments.contains("--selftest") {
                         let socket = URLSession.shared.webSocketTask(with: request)
                         socket.resume()
                         try? await socket.send(.string(#"{"quality":"\#(preset)"}"#))
-                        var frames = 0, lastBytes = 0
+                        var frames = 0, firstBytes = 0, lastBytes = 0
                         let end = Date().addingTimeInterval(3)
                         while Date() < end {
                             let message = try? await withThrowingTaskGroup(of: URLSessionWebSocketTask.Message?.self) { group in
@@ -537,9 +537,9 @@ if CommandLine.arguments.contains("--selftest") {
                                 group.cancelAll()
                                 return first
                             }
-                            if case .data(let d)? = message { frames += 1; lastBytes = d.count }
+                            if case .data(let d)? = message { frames += 1; if firstBytes == 0 { firstBytes = d.count }; lastBytes = d.count }
                         }
-                        lines.append("live \(preset): \(frames) frames, last \(lastBytes) bytes")
+                        lines.append("live \(preset): \(frames) frames, first \(firstBytes) bytes, last \(lastBytes) bytes")
                         if preset == "fast" {
                             try? await socket.send(.string(#"{"type":"ping"}"#))
                             var echoed = false
@@ -547,6 +547,7 @@ if CommandLine.arguments.contains("--selftest") {
                                 if case .string(let s)? = try? await socket.receive(), s.contains("pong") { echoed = true; break }
                             }
                             lines.append("live input echo: \(echoed ? "ok" : "missing")")
+                            lines.append("live fast changed areas: \(FrameStream.shared.changeReport)")
                         }
                         socket.cancel(with: .normalClosure, reason: nil)
                         try? await Task.sleep(nanoseconds: 300_000_000)

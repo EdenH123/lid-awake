@@ -20,10 +20,14 @@ for p in sharp balanced fast; do
   n=$(echo "$line" | sed -n 's/.* \([0-9][0-9]*\) frames.*/\1/p')
   if [ -n "$n" ] && [ "$n" -ge 1 ]; then echo "PASS live $p ($line)"; else echo "FAIL live $p: '$line'"; fail=1; fi
 done
-# A still screen sends few frames, so check the presets by size: Sharp > Fast.
+# A still screen sends few frames, so check the presets by size: Sharp > Fast while moving,
+# and Fast sends a clearer (bigger) frame once the screen is still.
 sharp=$(grep "^live sharp:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
-fast=$(grep "^live fast:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
-if [ -n "$sharp" ] && [ -n "$fast" ] && [ "$sharp" -gt "$fast" ]; then echo "PASS presets differ (sharp $sharp > fast $fast)"
-else echo "FAIL presets: sharp '$sharp' vs fast '$fast'"; fail=1; fi
+fastFirst=$(grep "^live fast:" "$LOG" | sed -n 's/.*first \([0-9]*\) bytes.*/\1/p')
+fastLast=$(grep "^live fast:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
+if [ -n "$sharp" ] && [ -n "$fastFirst" ] && [ "$sharp" -gt "$fastFirst" ]; then echo "PASS presets differ (sharp $sharp > fast $fastFirst)"
+else echo "FAIL presets: sharp '$sharp' vs fast '$fastFirst'"; fail=1; fi
+if [ -n "$fastLast" ] && [ "$fastLast" -gt $(( fastFirst * 2 )) ]; then echo "PASS fast sharpens when still ($fastFirst -> $fastLast bytes)"
+else echo "FAIL fast still frame: first '$fastFirst', last '$fastLast'"; fail=1; fi
 grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL live input"; fail=1; }
 exit $fail

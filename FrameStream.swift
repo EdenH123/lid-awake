@@ -31,6 +31,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     private var lastRequest = Date.distantPast
     private var lastWake = Date.distantPast
     private var wakeSuppressedSince: Date?
+    private var lastInput = Date.distantPast
     private var waiters: [(after: Int, done: (Result) -> Void)] = []
     private var subscribers: [UUID: (frame: (Data) -> Void, unavailable: () -> Void)] = [:]
     private var idleTimer: DispatchSourceTimer?
@@ -83,6 +84,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     // The phone wants the screen back (Wake button or any input): wake it right away.
     func wakeNow() {
         queue.async {
+            self.lastInput = Date()
             // Skip the 15 s throttle only when coming back from "Screen off".
             if self.wakeSuppressedSince != nil { self.wakeSuppressedSince = nil; self.lastWake = .distantPast }
         }
@@ -127,6 +129,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         queue.async {
             guard newPreset != self.preset else { return }
             self.preset = newPreset
+            self.crispShown = false
             if let stream = self.stream, let display = self.display {
                 stream.updateConfiguration(self.configuration(for: display)) { _ in }
             }
@@ -207,12 +210,117 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         // A frame after "Screen off" (past the last one in flight) means someone woke the
         // Mac at the keyboard, so the phone may keep it awake again.
         if let since = wakeSuppressedSince, Date().timeIntervalSince(since) > 3 { wakeSuppressedSince = nil }
+        handleFrame(jpeg, changed: changedFraction(pixels))
+    }
+
+    // Share of the picture that visibly changed since the last frame, measured on a tiny
+    // 96×60 thumbnail. (macOS's own "dirty rects" mark whole windows as changed when only
+    // a spinner or a few letters move, so they can't tell motion from small updates.)
+    private var lastThumb: [UInt8] = []
+    private func changedFraction(_ pixels: CVPixelBuffer) -> Double {
+        let w = 96, h = 60
+        let image = CIImage(cvPixelBuffer: pixels)
+        let small = image.transformed(by: CGAffineTransform(scaleX: CGFloat(w) / image.extent.width,
+                                                            y: CGFloat(h) / image.extent.height))
+        var thumb = [UInt8](repeating: 0, count: w * h * 4)
+        ciContext.render(small, toBitmap: &thumb, rowBytes: w * 4,
+                         bounds: CGRect(x: 0, y: 0, width: w, height: h), format: .RGBA8, colorSpace: nil)
+        defer { lastThumb = thumb }
+        guard lastThumb.count == thumb.count else { return 1 }
+        var changed = 0
+        for i in stride(from: 0, to: thumb.count, by: 4) {
+            let d = abs(Int(thumb[i]) - Int(lastThumb[i])) + abs(Int(thumb[i + 1]) - Int(lastThumb[i + 1]))
+                + abs(Int(thumb[i + 2]) - Int(lastThumb[i + 2]))
+            if d > 24 { changed += 1 }
+        }
+        return Double(changed) / Double(w * h)
+    }
+
+    // Recent changed-area shares, reported by --selftest.
+    private(set) var recentChanges: [Double] = []
+    var changeReport: String { queue.sync { recentChanges.map { String(format: "%.3f", $0) }.joined(separator: " ") } }
+
+    private func handleFrame(_ jpeg: Data, changed: Double) {
+        recentChanges = Array((recentChanges + [changed]).suffix(20))
+        guard preset == .fast else { return deliver(jpeg) }
+        // Motion = a big part of the screen changed, or the phone is being used right now.
+        let motion = changed > 0.03 || Date().timeIntervalSince(lastInput) < 1.5
+        if motion { motionCount += 1 }
+        if motion || !crispShown {
+            crispShown = false
+            deliver(jpeg)
+            scheduleSharpen(restart: motion)
+        } else {
+            // Only a small change (cursor blink, spinner, clock) while a clear frame is shown:
+            // keep it clear and refresh it soon, instead of dropping to a blurry frame.
+            scheduleSharpen(restart: false)
+        }
+    }
+
+    private func deliver(_ jpeg: Data) {
         latest = jpeg
         latestID += 1
         let ready = waiters.filter { $0.after < latestID }
         waiters.removeAll { $0.after < latestID }
         ready.forEach { $0.done(.frame(jpeg, id: latestID)) }
         subscribers.values.forEach { $0.frame(jpeg) }
+    }
+
+    // Fast preset: once the screen has been still for a moment, send one clearer frame
+    // (about Sharp quality). While things move, frames stay small so motion stays quick.
+    private var sharpenWork: DispatchWorkItem?
+    private var sharpenPending = false
+    private var lastSharpen = Date.distantPast
+    private var crispShown = false  // the phone is showing a clear (sharpened) frame
+    private var motionCount = 0     // bumps on every motion frame
+
+    // Restart the 0.7 s "still" timer on motion; small changes only make sure one is pending.
+    private func scheduleSharpen(restart: Bool) {
+        guard preset == .fast else { return }
+        if sharpenPending && !restart { return }
+        sharpenWork?.cancel()
+        sharpenPending = true
+        let work = DispatchWorkItem { [weak self] in self?.sharpen() }
+        sharpenWork = work
+        queue.asyncAfter(deadline: .now() + 0.7, execute: work)
+    }
+
+    private func sharpen() {
+        sharpenPending = false
+        // At most every 1.5 s, so small ongoing changes can't flood the phone with big frames.
+        guard preset == .fast, stream != nil, let display else { return }
+        let wait = 1.5 - Date().timeIntervalSince(lastSharpen)
+        if wait > 0 {
+            sharpenPending = true
+            let work = DispatchWorkItem { [weak self] in self?.sharpen() }
+            sharpenWork = work
+            queue.asyncAfter(deadline: .now() + wait, execute: work)
+            return
+        }
+        lastSharpen = Date()
+        let motionAtStart = motionCount
+        // About 1600 px wide: clearly sharper than Fast's moving frames, still light enough
+        // for mobile data.
+        let config = SCStreamConfiguration()
+        let scale = min(1, 1600 / Double(max(display.width, 1)))
+        config.width = Int(Double(display.width) * scale)
+        config.height = Int(Double(display.height) * scale)
+        config.showsCursor = true
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        Task {
+            guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config),
+                  let jpeg = ciContext.jpegRepresentation(
+                      of: CIImage(cgImage: image),
+                      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                      options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.7])
+            else { return }
+            queue.async {
+                // Skip it if something moved meanwhile; the next pause sharpens again.
+                guard self.motionCount == motionAtStart, self.preset == .fast, self.stream != nil else { return }
+                self.deliver(jpeg)
+                self.crispShown = true
+            }
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
