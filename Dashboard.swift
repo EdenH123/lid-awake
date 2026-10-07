@@ -83,6 +83,18 @@ let dashboardHTML = #"""
   .zoombar button { font: inherit; font-weight: 600; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; cursor: pointer; }
   .hint { font-size: 13px; color: var(--muted); text-align: center; }
   .typebar { display: flex; gap: 8px; }
+  .panel-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .panel-row .panel-toggle { justify-self: auto; }
+  .kb-btn {
+    font: inherit; font-size: 15px; font-weight: 600; color: var(--text); background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer;
+  }
+  .kb-btn.on { background: var(--green); border-color: var(--green); color: #fff; }
+  /* Invisible field that receives the iPhone keyboard; 16px stops iOS zooming in on focus. */
+  .live-input {
+    position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0;
+    font-size: 16px; border: 0; padding: 0; background: transparent; color: transparent;
+  }
   .typebar input {
     flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--card);
     border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
@@ -229,7 +241,10 @@ let dashboardHTML = #"""
     </nav>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="hint" id="hint">Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom</div>
-    <button class="panel-toggle" id="keysToggle" aria-expanded="true">Hide buttons ▴</button>
+    <div class="panel-row">
+      <button type="button" class="kb-btn" id="kbBtn">⌨ Type directly</button>
+      <button class="panel-toggle" id="keysToggle" aria-expanded="true">Hide buttons ▴</button>
+    </div>
     <div class="tab" id="keyPanel">
     <form class="typebar" id="typeForm">
       <input id="typeInput" placeholder="Type on your Mac…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
@@ -265,6 +280,8 @@ let dashboardHTML = #"""
   </div>
   </div>
 </main>
+<input class="live-input" id="liveInput" aria-label="Type directly on your Mac"
+       autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="go">
 <script>
   const $ = id => document.getElementById(id);
   let data = null, fetchedAt = 0, lastOk = 0;
@@ -840,6 +857,52 @@ let dashboardHTML = #"""
     latched.has(mod) ? latched.delete(mod) : latched.add(mod);
     updateModButtons();
   }));
+
+  // ---------- Type directly ----------
+  // An invisible field holds the iPhone keyboard; every keystroke goes straight to the
+  // Mac and the field never keeps the text, so iOS has nothing to autocorrect.
+  const liveInput = $("liveInput");
+  const SENTINEL = "  ";  // lets Backspace fire even when "empty"
+  function resetLiveInput() {
+    liveInput.value = SENTINEL;
+    try { liveInput.setSelectionRange(SENTINEL.length, SENTINEL.length); } catch (e) {}
+  }
+  function sendTyped(text) {
+    if (!text) return;
+    if (latched.size) {
+      const mods = takeMods();
+      for (const char of text) send({ type: "key", char, mods });
+    } else {
+      send({ type: "text", text });
+    }
+  }
+  $("kbBtn").addEventListener("click", () => {
+    if (document.activeElement === liveInput) { liveInput.blur(); return; }
+    resetLiveInput();
+    liveInput.focus();  // must happen inside the tap for iOS to show the keyboard
+  });
+  liveInput.addEventListener("focus", () => {
+    $("kbBtn").classList.add("on");
+    $("kbBtn").textContent = "⌨ Typing on your Mac… tap to stop";
+  });
+  liveInput.addEventListener("blur", () => {
+    $("kbBtn").classList.remove("on");
+    $("kbBtn").textContent = "⌨ Type directly";
+  });
+  liveInput.addEventListener("keydown", e => {
+    if (e.isComposing) return;
+    if (e.key === "Enter") { e.preventDefault(); send({ type: "key", key: "return", mods: takeMods() }); }
+    else if (e.key === "Backspace") { e.preventDefault(); send({ type: "key", key: "delete", mods: takeMods() }); }
+  });
+  liveInput.addEventListener("beforeinput", e => {
+    if (e.isComposing || e.inputType === "insertCompositionText") return;  // finished in compositionend
+    e.preventDefault();
+    if (e.inputType === "insertText") sendTyped(e.data);
+    else if (e.inputType === "deleteContentBackward") send({ type: "key", key: "delete", mods: takeMods() });
+    else if (e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") send({ type: "key", key: "return", mods: takeMods() });
+  });
+  liveInput.addEventListener("compositionend", e => { sendTyped(e.data); resetLiveInput(); });
+  liveInput.addEventListener("input", resetLiveInput);
 
   // ---------- Hide / show the key buttons ----------
   function setKeysHidden(hidden) {
