@@ -49,10 +49,13 @@ func ensureTailscaleServe(enabled: Bool) {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    let serving = run(["serve", "status", "--json"]).contains("127.0.0.1:\(statusPort)")
-    if enabled && !serving {
-        _ = run(["serve", "--bg", "\(statusPort)"])
-    } else if !enabled && serving {
+    let status = run(["serve", "status", "--json"])
+    let servingPage = status.contains("127.0.0.1:\(statusPort)")
+    let servingLive = status.contains("127.0.0.1:\(livePort)")
+    if enabled {
+        if !servingPage { _ = run(["serve", "--bg", "\(statusPort)"]) }
+        if !servingLive { _ = run(["serve", "--bg", "--set-path", "/live", "http://127.0.0.1:\(livePort)"]) }
+    } else if servingPage || servingLive {
         _ = run(["serve", "--https=443", "off"])
     }
 }
