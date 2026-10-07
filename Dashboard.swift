@@ -5,179 +5,225 @@ let dashboardHTML = #"""
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Lid Awake">
-<meta name="theme-color" content="#f4f4f1" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>Lid Awake</title>
 <style>
+  /* Apple system colors (iOS light / dark). */
   :root {
-    --bg: #f4f4f1; --card: #ffffff; --text: #1b1b1a; --muted: #6b6b66; --line: #e6e5e0;
-    --green: #1f9d55; --green-soft: #e3f4ea; --amber: #b7791f; --red: #d23f31; --track: #ecebe6;
-    --seg: #e8e7e2; --seg-on: #ffffff;
+    --bg: #f2f2f7; --card: #ffffff; --card2: #f2f2f7; --text: #000000;
+    --muted: rgba(60,60,67,.6); --line: rgba(60,60,67,.18); --fill: rgba(118,118,128,.12);
+    --green: #34c759; --green-text: #248a3d; --green-soft: #e8f8ec; --amber: #ff9500; --red: #ff3b30; --blue: #007aff;
+    --tabbar: rgba(249,249,249,.88); --seg-on: #ffffff;
+    --kb: #d1d3d9; --key: #ffffff; --key-fn: #abb0bc; --key-shadow: rgba(0,0,0,.35);
+    --pad: #e5e5ea; --pad-on: #dcdce1;
+    --mac-base: linear-gradient(#e6e6ea, #b8b8be); --mac-groove: #9a9aa1;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #121212; --card: #1d1d1c; --text: #f1f0ec; --muted: #9a9993; --line: #2c2c2a;
-      --green: #3ccf7e; --green-soft: #17301f; --amber: #e0a43c; --red: #f06b5d; --track: #2c2c2a;
-      --seg: #242423; --seg-on: #3a3a38;
+      --bg: #000000; --card: #1c1c1e; --card2: #2c2c2e; --text: #ffffff;
+      --muted: rgba(235,235,245,.6); --line: rgba(84,84,88,.6); --fill: rgba(118,118,128,.24);
+      --green: #30d158; --green-text: #30d158; --green-soft: #0e2a17; --amber: #ff9f0a; --red: #ff453a; --blue: #0a84ff;
+      --tabbar: rgba(22,22,24,.86); --seg-on: #636366;
+      --kb: #2b2b2d; --key: #6b6b6e; --key-fn: #464649; --key-shadow: rgba(0,0,0,.6);
+      --pad: #2c2c2e; --pad-on: #3a3a3c;
+      --mac-base: linear-gradient(#8e8e93, #5a5a5f); --mac-groove: #3a3a3c;
     }
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    font: 17px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; letter-spacing: -0.01em;
+    padding: max(12px, env(safe-area-inset-top)) 16px calc(80px + env(safe-area-inset-bottom));
   }
-  main { max-width: 460px; margin: 0 auto; display: grid; gap: 12px; }
-  main.wide { max-width: 1200px; }
-  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 4px 4px 0; }
-  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .live { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex: none; }
+  button { font: inherit; color: inherit; -webkit-user-select: none; user-select: none; }
+  main { max-width: 480px; margin: 0 auto; display: grid; gap: 14px; }
+  main.wide { max-width: 1100px; }
+  .tab { display: grid; gap: 14px; }
+  .tab[hidden], [hidden] { display: none !important; }
+
+  /* Top: status pill row, then an iOS large title. */
+  .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 30px; }
+  .live { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
   .live.stale .dot { background: var(--red); }
-
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--seg); border-radius: 10px; padding: 2px; }
-  .tabs button {
-    font: inherit; font-size: 14px; font-weight: 600; color: var(--muted); background: none; border: 0;
-    padding: 7px 0; border-radius: 8px; cursor: pointer;
+  .lock-btn {
+    font-size: 15px; font-weight: 600; color: var(--blue); background: var(--fill);
+    border: 0; border-radius: 99px; padding: 5px 14px; cursor: pointer;
   }
-  .tabs button.active { background: var(--seg-on); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-  .tab { display: grid; gap: 12px; }
-  .tab[hidden] { display: none; }
+  .titles h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; margin: 2px 0 0; line-height: 1.1; }
+  .titles p { margin: 2px 0 0; font-size: 15px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
-  .label { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-  .big { font-size: 40px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .sub { color: var(--muted); margin-top: 4px; font-size: 15px; }
-  .status.on { background: var(--green-soft); border-color: transparent; }
-  .status.on .big { color: var(--green); }
-  .countdown { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); display: none; }
-  .status.on .countdown { border-color: color-mix(in srgb, var(--green) 25%, transparent); }
-  .countdown .big { font-size: 34px; }
-  .bar { height: 10px; background: var(--track); border-radius: 99px; margin-top: 12px; overflow: hidden; position: relative; }
-  .fill { height: 100%; border-radius: 99px; background: var(--green); transition: width .4s ease; }
-  .limit { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--muted); opacity: .6; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { background: var(--card); border-radius: 22px; padding: 16px; }
+  .label { font-size: 13px; color: var(--muted); }
   .warn { color: var(--amber) !important; }
   .bad { color: var(--red) !important; }
-  footer { font-size: 13px; color: var(--muted); text-align: center; padding: 6px 8px; }
 
-  .notice { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 15px; }
-  .notice[hidden] { display: none; }
+  /* Status: hero card with a little MacBook that lights up. */
+  .hero { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; transition: background .3s ease; }
+  .hero.on { background: var(--green-soft); }
+  .hero .mac-icon { width: 64px; height: 44px; }
+  .hero .mac-icon .glass { fill: var(--fill); transition: fill .3s ease; }
+  .hero.on .mac-icon .glass { fill: var(--green); }
+  .hero .state { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+  .hero.on .state, .hero.on .label { color: var(--green-text); }
+  .hero .sub { font-size: 14px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .hero.on .sub { color: var(--green-text); }
+  .awake-switch {
+    position: relative; width: 51px; height: 31px; border-radius: 99px; border: 0; padding: 0; flex: none;
+    background: var(--fill); cursor: pointer; transition: background .25s ease;
+  }
+  .awake-switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
+    background: #fff; box-shadow: 0 3px 8px rgba(0,0,0,.15), 0 1px 1px rgba(0,0,0,.16); transition: transform .25s ease;
+  }
+  .awake-switch.on { background: var(--green); }
+  .awake-switch.on::after { transform: translateX(20px); }
+  .awake-switch:disabled { opacity: .5; }
+
+  /* Status: battery ring and temperature gauge widgets. */
+  .widgets { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .widget { display: grid; gap: 6px; align-content: start; min-height: 168px; }
+  .ring { position: relative; width: 96px; height: 96px; justify-self: center; margin: 2px 0; }
+  .ring svg { width: 96px; height: 96px; transform: rotate(-90deg); }
+  .ring .track { stroke: var(--fill); }
+  .ring .arc { stroke: var(--green); transition: stroke-dashoffset .5s ease, stroke .3s ease; }
+  .ring .pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 1px;
+    font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .ring .bolt { width: 12px; height: 16px; fill: var(--green); }
+  .widget .cap { font-size: 13px; color: var(--muted); text-align: center; line-height: 1.25; }
+  .temp-value { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
+  .gauge { height: 8px; border-radius: 99px; background: var(--fill); overflow: hidden; }
+  .gauge div { height: 100%; border-radius: 99px; background: var(--green); transition: width .5s ease, background .3s ease; }
+
+  /* Status: iOS Settings-style grouped list. */
+  .group-title { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; margin: 6px 16px -6px; }
+  .list { background: var(--card); border-radius: 12px; padding-left: 16px; }
+  .list .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px 12px 0; font-size: 17px; }
+  .list .row + .row { border-top: 0.5px solid var(--line); }
+  .list .row span:last-child { color: var(--muted); text-align: right; }
+
+  /* Screen: the picture sits inside a MacBook Pro. */
+  .notice { background: var(--card); border-radius: 14px; padding: 14px 16px; font-size: 15px; }
+  .macbook { display: grid; justify-items: center; }
+  .macbook .lid {
+    position: relative; width: 100%; background: #0d0d0f; border-radius: 16px 16px 6px 6px;
+    padding: 9px 9px 12px; box-shadow: inset 0 0 0 1.5px #3a3a3e;
+  }
+  .macbook .lid::before {  /* the notch */
+    content: ""; position: absolute; left: 50%; top: 9px; transform: translateX(-50%); z-index: 2;
+    width: 13%; max-width: 90px; height: 9px; background: #0d0d0f; border-radius: 0 0 6px 6px; pointer-events: none;
+  }
+  .macbook .base {
+    position: relative; width: 108%; height: 12px; margin-top: -1px; background: var(--mac-base);
+    border-radius: 2px 2px 14px 14px / 2px 2px 10px 10px;
+  }
+  .macbook .base::after {  /* the thumb groove */
+    content: ""; position: absolute; left: 50%; top: 0; transform: translateX(-50%);
+    width: 16%; height: 5px; background: var(--mac-groove); border-radius: 0 0 6px 6px;
+  }
   .screen-wrap {
-    position: relative; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
+    position: relative; background: #000; border-radius: 4px; overflow: hidden; min-height: 120px;
     touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
-    min-height: 120px;
   }
-  .screen-wrap img { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none;  transform-origin: 0 0; }
+  .screen-wrap img { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none; transform-origin: 0 0; }
+
+  /* Screen: iOS segmented control for picture quality. */
+  .quality { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--fill); border-radius: 9px; padding: 2px; justify-self: center; width: min(100%, 320px); }
+  .quality button { font-size: 13px; font-weight: 500; background: none; border: 0; padding: 6px 0; border-radius: 7px; cursor: pointer; }
+  .quality button.active { background: var(--seg-on); font-weight: 600; box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04); }
   .zoombar { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--muted); }
-  .zoombar[hidden] { display: none; }
-  .quality { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
-  .quality button {
-    font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--card);
-    border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; cursor: pointer;
-    transition: background .15s ease, color .15s ease;
-  }
-  .quality button.active { background: var(--green); border-color: var(--green); color: #fff; }
-  .zoombar button { font: inherit; font-weight: 600; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px; cursor: pointer; }
-  .hint { font-size: 13px; color: var(--muted); text-align: center; }
-  .typebar { display: flex; gap: 8px; }
+  .zoombar button { font-size: 13px; font-weight: 600; color: var(--blue); background: var(--fill); border: 0; border-radius: 99px; padding: 4px 12px; cursor: pointer; }
+  .hint { font-size: 13px; color: var(--muted); text-align: center; line-height: 1.4; }
+
   .panel-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .panel-row .panel-toggle { justify-self: auto; }
-  .kb-btn {
-    font: inherit; font-size: 15px; font-weight: 600; color: var(--text); background: var(--card);
-    border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer;
+  .kb-btn, .panel-toggle {
+    font-size: 15px; font-weight: 600; color: var(--blue); background: var(--fill);
+    border: 0; border-radius: 99px; padding: 8px 14px; cursor: pointer;
   }
-  .kb-btn.on { background: var(--green); border-color: var(--green); color: #fff; }
+  .kb-btn.on { background: var(--green); color: #fff; }
+  .panel-toggle { font-size: 13px; color: var(--muted); }
   /* Invisible field that receives the iPhone keyboard; 16px stops iOS zooming in on focus. */
   .live-input {
     position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0;
     font-size: 16px; border: 0; padding: 0; background: transparent; color: transparent;
   }
+
+  /* Screen: keys styled like the iPhone keyboard, on a keyboard tray. */
+  .keyboard { background: var(--kb); border-radius: 16px; padding: 8px 6px; display: grid; gap: 8px; }
+  .typebar { display: flex; gap: 6px; }
   .typebar input {
-    flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--card);
-    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
-  }
-  .typebar button, .keys button {
-    font: inherit; font-size: 15px; font-weight: 600; color: var(--text); background: var(--card);
-    border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer;
+    flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--text); background: var(--card);
+    border: 0; border-radius: 10px; padding: 9px 12px;
   }
   .keys { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
-  .keys.arrows { grid-template-columns: repeat(6, 1fr); }
   .keys .space { grid-column: span 2; }
-  .panel-toggle {
-    justify-self: center; font: inherit; font-size: 13px; font-weight: 600; color: var(--muted);
-    background: var(--seg); border: 0; border-radius: 99px; padding: 6px 14px; cursor: pointer;
+  .key, .keys button, .gestures button, .typebar button {
+    font-size: 16px; font-weight: 500; color: var(--text); background: var(--key); border: 0;
+    border-radius: 6px; padding: 10px 0; cursor: pointer; box-shadow: 0 1px 0 var(--key-shadow);
   }
-  .keys button.on { background: var(--green); border-color: var(--green); color: #fff; }
-  .status-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .status-head .label { margin: 0; }
-  .awake-switch {
-    position: relative; width: 51px; height: 31px; border-radius: 99px; border: 0; padding: 0; flex: none;
-    background: var(--track); cursor: pointer; transition: background .2s ease;
-  }
-  .awake-switch::after {
-    content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
-    background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .2s ease;
-  }
-  .awake-switch.on { background: var(--green); }
-  .awake-switch.on::after { transform: translateX(20px); }
-  .awake-switch:disabled { opacity: .5; }
-  .keys button { padding: 10px 0; }
+  .typebar button { padding: 9px 14px; font-weight: 600; }
+  .keys button[data-mod], .keys button[data-key="escape"], .keys button[data-key="tab"],
+  .keys button[data-key="delete"], .keys button[data-key="return"], .gestures button { background: var(--key-fn); }
+  .keys button:active, .gestures button:active, .typebar button:active { background: var(--card2); }
+  .keys button.on { background: var(--green); color: #fff; }
   .gestures { display: grid; grid-template-columns: 1fr 1.3fr 1.1fr 1fr; gap: 6px; }
-  .gestures button {
-    font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--card);
-    border: 1px solid var(--line); border-radius: 10px; padding: 10px 2px; cursor: pointer;
-  }
-  .gestures button:active { background: var(--seg); }
+  .gestures button { font-size: 13px; padding: 9px 2px; }
+
+  /* Screen: Magic Trackpad. */
   .trackpad {
-    height: 230px; border-radius: 18px; background: var(--seg); border: 1px solid var(--line);
+    aspect-ratio: 16 / 10.5; max-height: 280px; width: 100%; justify-self: center; border-radius: 18px;
+    background: var(--pad); box-shadow: inset 0 0 0 0.5px var(--line), inset 0 1px 2px rgba(0,0,0,.06);
     display: flex; align-items: flex-end; justify-content: center; padding-bottom: 12px;
     color: var(--muted); font-size: 12px; letter-spacing: .04em;
     touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
     transition: background .15s ease;
   }
-  .trackpad.active { background: var(--seg-on); }
-  .typebar button:active, .keys button:active { background: var(--seg); }
+  .trackpad.active { background: var(--pad-on); }
 
-  .head-right { display: flex; align-items: center; gap: 12px; flex: none; }
-  .lock-btn {
-    font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); background: var(--seg);
-    border: 0; border-radius: 99px; padding: 4px 10px; cursor: pointer;
+  /* Bottom tab bar, like iPhone apps. */
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    display: grid; grid-template-columns: 1fr 1fr; padding: 7px 0 max(8px, env(safe-area-inset-bottom));
+    background: var(--tabbar); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+    border-top: 0.5px solid var(--line);
   }
-  .lock-btn[hidden] { display: none; }
-  .gate { text-align: center; padding: 28px 20px; display: grid; gap: 14px; }
-  .gate[hidden] { display: none; }
-  .gate .icon { font-size: 34px; }
-  .gate h2 { margin: 0; font-size: 20px; }
+  .tabbar button { background: none; border: 0; display: grid; justify-items: center; gap: 2px; font-size: 10px; font-weight: 500; color: var(--muted); cursor: pointer; padding: 0; }
+  .tabbar svg { width: 28px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tabbar button.active { color: var(--green); }
+
+  /* Locked / off screen. */
+  .gate { text-align: center; padding: 30px 22px; display: grid; gap: 12px; margin-top: 24px; }
+  .gate .icon { width: 56px; height: 56px; justify-self: center; border-radius: 16px; background: var(--fill); display: grid; place-items: center; }
+  .gate .icon svg { width: 28px; height: 28px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .gate h2 { margin: 0; font-size: 22px; font-weight: 700; }
   .gate p { margin: 0; color: var(--muted); font-size: 15px; }
-  .gate form { display: grid; gap: 10px; margin-top: 4px; }
-  .gate form[hidden] { display: none; }
+  .gate form { display: grid; gap: 10px; margin-top: 6px; }
   .gate input {
-    font: inherit; font-size: 17px; color: var(--text); background: var(--bg); text-align: center;
-    border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+    font: inherit; color: var(--text); background: var(--fill); text-align: center;
+    border: 0; border-radius: 12px; padding: 13px;
   }
-  .gate button {
-    font: inherit; font-size: 17px; font-weight: 600; color: #fff; background: var(--green);
-    border: 0; border-radius: 12px; padding: 12px; cursor: pointer;
-  }
+  .gate button { font-weight: 600; color: #fff; background: var(--green); border: 0; border-radius: 12px; padding: 13px; cursor: pointer; }
   .gate button:disabled { opacity: .6; }
   .gate .error { color: var(--red); font-size: 14px; min-height: 1.2em; }
 </style>
 </head>
 <body>
 <main id="main">
-  <header>
-    <h1 id="host">Lid Awake</h1>
-    <div class="head-right">
-      <div class="live" id="live"><span class="dot"></span><span id="liveText">Connecting…</span></div>
-      <button class="lock-btn" id="lockBtn" hidden>Lock</button>
-    </div>
-  </header>
+  <div class="topbar">
+    <div class="live" id="live"><span class="dot"></span><span id="liveText">Connecting…</span></div>
+    <button class="lock-btn" id="lockBtn" hidden>Lock</button>
+  </div>
+  <div class="titles">
+    <h1 id="pageTitle">Lid Awake</h1>
+    <p id="host"></p>
+  </div>
 
   <section class="card gate" id="gate" hidden>
-    <div class="icon">🔒</div>
+    <div class="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
     <h2 id="gateTitle">Locked</h2>
     <p id="gateText"></p>
     <form id="loginForm">
@@ -188,56 +234,71 @@ let dashboardHTML = #"""
   </section>
 
   <div class="tab" id="app" hidden>
-  <nav class="tabs">
-    <button data-tab="status" class="active">Status</button>
-    <button data-tab="screen">Screen</button>
+  <nav class="tabbar tabs" aria-label="Pages">
+    <button data-tab="status" class="active">
+      <svg viewBox="0 0 28 26" aria-hidden="true"><path d="M4 18a10 10 0 1 1 20 0"/><path d="M14 18l5-6"/><circle cx="14" cy="18" r="1.6"/></svg>Status</button>
+    <button data-tab="screen">
+      <svg viewBox="0 0 28 26" aria-hidden="true"><rect x="5" y="5" width="18" height="12" rx="1.8"/><path d="M2.5 20.5h23"/></svg>Screen</button>
   </nav>
 
   <div class="tab" id="tab-status">
-    <section class="card status" id="statusCard">
-      <div class="status-head">
-        <div class="label">Lid-closed awake</div>
-        <button class="awake-switch" id="awakeSwitch" role="switch" aria-label="Stay awake with lid closed"></button>
+    <section class="card hero" id="statusCard">
+      <svg class="mac-icon" viewBox="0 0 64 44" aria-hidden="true">
+        <rect x="8" y="2" width="48" height="32" rx="3.5" fill="#1d1d1f"/>
+        <rect class="glass" x="11" y="5" width="42" height="26" rx="1.5"/>
+        <rect x="28" y="2" width="8" height="2.2" rx="1.1" fill="#1d1d1f"/>
+        <path d="M2 36h60l-2.5 4.5a3 3 0 0 1-2.6 1.5H7.1a3 3 0 0 1-2.6-1.5z" fill="#a1a1a6"/>
+        <rect x="27" y="36" width="10" height="1.8" rx=".9" fill="#7c7c80"/>
+      </svg>
+      <div>
+        <div class="label" id="stateLabel">Lid-closed awake</div>
+        <div class="state" id="state">—</div>
+        <div class="sub" id="stateSub"></div>
       </div>
-      <div class="big" id="state">—</div>
-      <div class="sub" id="stateSub"></div>
-      <div class="countdown" id="countdown">
-        <div class="label">Turns off in</div>
-        <div class="big" id="remaining">—</div>
-      </div>
+      <button class="awake-switch" id="awakeSwitch" role="switch" aria-label="Stay awake with lid closed"></button>
     </section>
 
-    <section class="card">
-      <div class="label">Battery</div>
-      <div class="big" id="battery">—</div>
-      <div class="sub" id="batterySub"></div>
-      <div class="bar"><div class="fill" id="batteryFill" style="width:0"></div><div class="limit" id="batteryLimit"></div></div>
-    </section>
-
-    <div class="row">
-      <section class="card">
-        <div class="label">Battery temp</div>
-        <div class="big" id="temp">—</div>
-        <div class="sub" id="tempSub"></div>
+    <div class="widgets">
+      <section class="card widget">
+        <div class="label">Battery</div>
+        <div class="ring">
+          <svg viewBox="0 0 96 96" aria-hidden="true">
+            <circle class="track" cx="48" cy="48" r="40" fill="none" stroke-width="10"/>
+            <circle class="arc" id="batteryArc" cx="48" cy="48" r="40" fill="none" stroke-width="10" stroke-linecap="round"
+                    stroke-dasharray="251.3" stroke-dashoffset="251.3"/>
+          </svg>
+          <div class="pct"><svg class="bolt" id="bolt" viewBox="0 0 12 16" hidden aria-hidden="true"><path d="M7 0 0 9h5l-1 7 7-9H6z"/></svg><span id="battery">—</span></div>
+        </div>
+        <div class="cap" id="batterySub"></div>
       </section>
-      <section class="card">
-        <div class="label">Mac heat</div>
-        <div class="big" id="thermal" style="font-size:28px">—</div>
-        <div class="sub">macOS thermal state</div>
+      <section class="card widget">
+        <div class="label">Battery temperature</div>
+        <div class="temp-value" id="temp">—</div>
+        <div class="gauge"><div id="tempFill" style="width:0"></div></div>
+        <div class="cap" id="tempSub" style="text-align:left"></div>
       </section>
     </div>
 
-    <footer id="guards"></footer>
+    <div class="group-title">Mac</div>
+    <div class="list">
+      <div class="row"><span>Turn off after</span><span id="timerRow">—</span></div>
+      <div class="row"><span>Low-battery limit</span><span id="batteryGuardRow">—</span></div>
+      <div class="row"><span>Heat limit</span><span id="heatGuardRow">—</span></div>
+      <div class="row"><span>Mac heat</span><span id="thermal">—</span></div>
+    </div>
   </div>
 
   <div class="tab" id="tab-screen" hidden>
     <div class="notice" id="screenMsg" hidden></div>
     <div class="tab" id="screenControls" hidden>
-    <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"></div>
+    <div class="macbook">
+      <div class="lid"><div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"></div></div>
+      <div class="base"></div>
+    </div>
     <nav class="quality" id="quality" aria-label="Picture quality">
-      <button data-quality="sharp">🔍 Sharp</button>
-      <button data-quality="balanced">⚖️ Balanced</button>
-      <button data-quality="fast">⚡ Fast</button>
+      <button data-quality="sharp">Sharp</button>
+      <button data-quality="balanced">Balanced</button>
+      <button data-quality="fast">Fast</button>
     </nav>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="hint" id="hint">Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom</div>
@@ -245,7 +306,7 @@ let dashboardHTML = #"""
       <button type="button" class="kb-btn" id="kbBtn">⌨ Type directly</button>
       <button class="panel-toggle" id="keysToggle" aria-expanded="true">Hide buttons ▴</button>
     </div>
-    <div class="tab" id="keyPanel">
+    <div class="keyboard" id="keyPanel">
     <form class="typebar" id="typeForm">
       <input id="typeInput" placeholder="Type on your Mac…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
       <button>Send</button>
@@ -305,63 +366,65 @@ let dashboardHTML = #"""
     const stale = !lastOk || ago > 10;
     $("live").classList.toggle("stale", stale);
     $("liveText").textContent = !lastOk ? "Can't reach Mac" : stale ? `Last seen ${ago}s ago` : "Live";
+    $("pageTitle").textContent = currentTab === "screen" ? "Screen" : "Lid Awake";
     if (!data) return;
 
-    $("host").textContent = data.host || "Lid Awake";
+    $("host").textContent = data.host || "";
     const on = data.lidAwake;
     $("statusCard").classList.toggle("on", on);
     $("awakeSwitch").classList.toggle("on", on);
     $("awakeSwitch").setAttribute("aria-checked", on);
     $("awakeSwitch").disabled = !on;
-    $("state").textContent = on ? "ON" : "OFF";
-    $("stateSub").textContent = on ? "Stays awake with the lid closed" : "Sleeps normally when the lid closes";
-
+    $("stateLabel").textContent = on ? "Stays awake with lid closed" : "Sleeps when the lid closes";
+    $("state").textContent = on ? "On" : "Off";
     const left = data.timerRemaining != null ? data.timerRemaining - (Date.now() - fetchedAt) / 1000 : null;
-    $("countdown").style.display = on && left != null && left > 0 ? "block" : "none";
-    if (left != null) $("remaining").textContent = fmtCountdown(left);
-    if (on && data.timerRemaining == null) $("stateSub").textContent += " · no timer";
+    $("stateSub").textContent = !on ? "" : left != null && left > 0 ? `Turns off in ${fmtCountdown(left)}` : "No timer";
 
     if (data.battery != null) {
       const pct = data.battery;
+      const color = pct < data.batteryLimit + 5 ? "var(--red)" : pct < 25 ? "var(--amber)" : "var(--green)";
       $("battery").textContent = pct + "%";
-      $("battery").className = "big" + (pct < data.batteryLimit + 5 ? " bad" : pct < 25 ? " warn" : "");
-      $("batteryFill").style.width = pct + "%";
-      $("batteryFill").style.background = pct < data.batteryLimit + 5 ? "var(--red)" : pct < 25 ? "var(--amber)" : "var(--green)";
-      $("batteryLimit").style.left = data.batteryLimit + "%";
-      let sub;
+      $("batteryArc").style.strokeDashoffset = (251.3 * (1 - pct / 100)).toFixed(1);
+      $("batteryArc").style.stroke = color;
+      $("bolt").toggleAttribute("hidden", !data.charging);
       // macOS needs a minute or two after plugging in / unplugging before it has an estimate.
       const clockIn = min => new Date(fetchedAt + min * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      let sub;
       if (data.onBattery) {
         sub = fmtMinutes(data.minutesToEmpty)
-          ? `On battery · ${fmtMinutes(data.minutesToEmpty)} left (until around ${clockIn(data.minutesToEmpty)})`
-          : "On battery · estimating time left…";
+          ? `${fmtMinutes(data.minutesToEmpty)} left · until ${clockIn(data.minutesToEmpty)}`
+          : "On battery · estimating…";
       } else if (data.charging) {
         sub = fmtMinutes(data.minutesToFull) && data.minutesToFull > 0
-          ? `Charging · full in ${fmtMinutes(data.minutesToFull)} (around ${clockIn(data.minutesToFull)})`
-          : "Charging · estimating time to full…";
+          ? `Full in ${fmtMinutes(data.minutesToFull)} · at ${clockIn(data.minutesToFull)}`
+          : "Charging · estimating…";
       } else {
-        sub = data.charged || pct >= 99 ? "Plugged in · fully charged"
-          : pct >= 79 ? "Plugged in · holding charge to protect the battery"
-          : "Plugged in · not charging right now";
+        sub = data.charged || pct >= 99 ? "Plugged in · full"
+          : pct >= 79 ? "Plugged in · holding charge"
+          : "Plugged in · not charging";
       }
       $("batterySub").textContent = sub;
     }
 
     if (data.batteryTemp != null) {
       const t = data.batteryTemp, max = data.maxBatteryTemp;
-      $("temp").textContent = t.toFixed(1) + "°C";
-      $("temp").className = "big" + (t >= max ? " bad" : t >= max - 4 ? " warn" : "");
+      const level = t >= max ? "bad" : t >= max - 4 ? "warn" : "";
+      $("temp").textContent = t.toFixed(1) + "°";
+      $("temp").className = "temp-value " + level;
+      $("tempFill").style.width = Math.min(100, Math.max(4, t / max * 100)) + "%";
+      $("tempFill").style.background = level === "bad" ? "var(--red)" : level === "warn" ? "var(--amber)" : "var(--green)";
       $("tempSub").textContent = `Limit ${max}°C`;
     }
 
+    const timerChoice = data.timerMinutes > 0
+      ? (data.timerMinutes >= 60 ? `${data.timerMinutes / 60} hour${data.timerMinutes === 60 ? "" : "s"}` : `${data.timerMinutes} minutes`)
+      : "Never";
+    $("timerRow").textContent = timerChoice;
+    $("batteryGuardRow").textContent = data.batteryGuard ? `Below ${data.batteryLimit}%` : "Off";
+    $("heatGuardRow").textContent = data.heatGuard ? `Above ${data.maxBatteryTemp}°C` : "Off";
     const thermalText = { nominal: "Normal", fair: "Warm", serious: "Hot", critical: "Critical" }[data.thermalState] || "—";
     $("thermal").textContent = thermalText;
-    $("thermal").className = "big" + (data.thermalState === "serious" || data.thermalState === "critical" ? " bad" : data.thermalState === "fair" ? " warn" : "");
-
-    const guards = [];
-    if (data.batteryGuard) guards.push(`below ${data.batteryLimit}% battery`);
-    if (data.heatGuard) guards.push(`above ${data.maxBatteryTemp}°C`);
-    $("guards").textContent = guards.length ? "Auto turns off " + guards.join(" or ") : "Safety limits are off";
+    $("thermal").className = data.thermalState === "serious" || data.thermalState === "critical" ? "bad" : data.thermalState === "fair" ? "warn" : "";
 
     if (currentTab === "screen" && data.remoteScreen && data.screenPermission && !data.controlPermission) {
       $("hint").textContent = "View only. To control, allow Lid Awake in System Settings → Privacy & Security → Accessibility on your Mac.";
