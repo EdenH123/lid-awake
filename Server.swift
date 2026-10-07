@@ -1,0 +1,268 @@
+import Foundation
+import IOKit.ps
+import Network
+
+let statusPort: UInt16 = 8787
+
+// Battery details for the live page: level, power source, charging and time estimates.
+func powerInfo() -> [String: Any] {
+    guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+          let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return [:] }
+    for source in list {
+        guard let desc = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
+              let current = desc[kIOPSCurrentCapacityKey] as? Int,
+              let max = desc[kIOPSMaxCapacityKey] as? Int, max > 0 else { continue }
+        return [
+            "battery": current * 100 / max,
+            "onBattery": (desc[kIOPSPowerSourceStateKey] as? String) == kIOPSBatteryPowerValue,
+            "charging": desc[kIOPSIsChargingKey] as? Bool ?? false,
+            "charged": desc[kIOPSIsChargedKey] as? Bool ?? false,
+            "minutesToEmpty": desc[kIOPSTimeToEmptyKey] as? Int ?? -1,
+            "minutesToFull": desc[kIOPSTimeToFullChargeKey] as? Int ?? -1,
+        ]
+    }
+    return [:]
+}
+
+// Offer the private HTTPS link only while lid-awake is on. When on, restore the
+// Tailscale Serve config if it was lost (e.g. after Tailscale restarts); when off,
+// remove it so nothing on the tailnet can reach this Mac's page at all.
+func ensureTailscaleServe(enabled: Bool) {
+    let tailscale = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    guard FileManager.default.isExecutableFile(atPath: tailscale) else { return }
+
+    func run(_ args: [String]) -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tailscale)
+        p.arguments = args
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = out
+        p.standardInput = FileHandle.nullDevice
+        // Launched by launchd, the Tailscale binary otherwise starts in GUI mode and fails.
+        var env = ProcessInfo.processInfo.environment
+        env["TAILSCALE_BE_CLI"] = "1"
+        p.environment = env
+        guard (try? p.run()) != nil else { return "" }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    let serving = run(["serve", "status", "--json"]).contains("127.0.0.1:\(statusPort)")
+    if enabled && !serving {
+        _ = run(["serve", "--bg", "\(statusPort)"])
+    } else if !enabled && serving {
+        _ = run(["serve", "--https=443", "off"])
+    }
+}
+
+struct HTTPRequest {
+    let method: String
+    let path: String
+    let query: [String: String]
+    let headers: [String: String]
+    let body: Data
+
+    // Returns nil until the full request (headers and body) has arrived.
+    init?(_ data: Data) {
+        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)),
+              let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8) else { return nil }
+        let lines = head.components(separatedBy: "\r\n")
+        let parts = lines.first?.split(separator: " ") ?? []
+        guard parts.count >= 2 else { return nil }
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        let length = Int(headers["content-length"] ?? "") ?? 0
+        let body = data[headerEnd.upperBound...]
+        guard body.count >= length else { return nil }
+        method = String(parts[0])
+        let target = parts[1].split(separator: "?", maxSplits: 1)
+        path = target.first.map(String.init) ?? "/"
+        var query: [String: String] = [:]
+        for pair in (target.count > 1 ? target[1] : "").split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            if kv.count == 2 { query[String(kv[0])] = String(kv[1]) }
+        }
+        self.query = query
+        self.headers = headers
+        self.body = Data(body.prefix(length))
+    }
+}
+
+// A tiny HTTP server for the live page. It listens on 127.0.0.1 only, so nothing
+// on the network can reach it directly; Tailscale Serve proxies it over HTTPS to
+// the owner's own devices.
+final class StatusServer: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "lidawake.status-server")
+    private let status: () -> Data
+    private let remoteAllowed: () -> Bool
+    private let awake: () -> Bool
+    private let turnOff: () -> Void
+
+    init?(status: @escaping () -> Data, remoteAllowed: @escaping () -> Bool, awake: @escaping () -> Bool,
+          turnOff: @escaping () -> Void) {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: statusPort)!)
+        guard let listener = try? NWListener(using: params) else { return nil }
+        self.listener = listener
+        self.status = status
+        self.remoteAllowed = remoteAllowed
+        self.awake = awake
+        self.turnOff = turnOff
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
+            connection.start(queue: self.queue)
+            self.read(connection, Data())
+        }
+        listener.start(queue: queue)
+    }
+
+    private func read(_ connection: NWConnection, _ buffer: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, done, error in
+            var buffer = buffer
+            if let data { buffer.append(data) }
+            if let request = HTTPRequest(buffer) {
+                self.route(request, connection)
+            } else if done || error != nil || buffer.count > 256 * 1024 {
+                connection.cancel()
+            } else {
+                self.read(connection, buffer)
+            }
+        }
+    }
+
+    private func reply(_ connection: NWConnection, _ code: String, _ type: String, _ body: Data, extraHeaders: [String] = []) {
+        let extra = extraHeaders.map { $0 + "\r\n" }.joined()
+        let head = "HTTP/1.1 \(code)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
+            + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\n"
+            + extra + "Connection: close\r\n\r\n"
+        connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
+    }
+
+    private func text(_ connection: NWConnection, _ code: String, _ message: String) {
+        reply(connection, code, "text/plain; charset=utf-8", Data(message.utf8))
+    }
+
+    private func route(_ req: HTTPRequest, _ c: NWConnection) {
+        // Only answer requests addressed to this Mac (the Tailscale name or localhost),
+        // so a website using DNS rebinding can't reach the server from a browser here.
+        let host = (req.headers["host"] ?? "").split(separator: ":").first.map(String.init) ?? ""
+        guard host == "127.0.0.1" || host == "localhost" || host.hasSuffix(".ts.net") else {
+            return text(c, "403 Forbidden", "Forbidden")
+        }
+
+        // While lid-awake is off the page is closed: only the page itself and a
+        // status that says "off" are answered — no login, data, screen or control.
+        if !awake() {
+            switch req.path {
+            case "/": return reply(c, "200 OK", "text/html; charset=utf-8", Data(dashboardHTML.utf8))
+            case "/auth": return reply(c, "200 OK", "application/json", Data(#"{"off":true}"#.utf8))
+            default: return text(c, "423 Locked", "Lid Awake is off on your Mac.")
+            }
+        }
+
+        let cookies = Dictionary(
+            (req.headers["cookie"] ?? "").split(separator: ";").compactMap { pair -> (String, String)? in
+                let kv = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                return kv.count == 2 ? (kv[0], kv[1]) : nil
+            },
+            uniquingKeysWith: { first, _ in first })
+        let token = cookies[Auth.cookieName]
+        // The page and its login calls are open; everything else needs a valid session.
+        let isPublic = req.path == "/" || req.path == "/auth" || req.path == "/login" || req.path == "/logout"
+        if !isPublic && !Auth.isValid(token) {
+            return text(c, "401 Unauthorized", "Locked")
+        }
+        // Login and logout are POSTs with a custom header, which other websites can't send.
+        if req.method == "POST" && req.headers["x-lidawake"] != "1" {
+            return text(c, "403 Forbidden", "Forbidden")
+        }
+
+        switch (req.method, req.path) {
+        case ("GET", "/"):
+            reply(c, "200 OK", "text/html; charset=utf-8", Data(dashboardHTML.utf8))
+
+        case ("GET", "/auth"):
+            let info: [String: Any] = ["hasPassword": Auth.hasPassword, "loggedIn": Auth.isValid(token)]
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: info)) ?? Data())
+
+        case ("POST", "/login"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            switch Auth.login(body?["password"] as? String ?? "") {
+            case .ok(let newToken):
+                let secure = host.hasSuffix(".ts.net") ? "; Secure" : ""
+                let maxAge = Int(Auth.sessionDays * 86400)
+                reply(c, "204 No Content", "text/plain", Data(), extraHeaders: [
+                    "Set-Cookie: \(Auth.cookieName)=\(newToken); Path=/; Max-Age=\(maxAge); HttpOnly; SameSite=Strict\(secure)",
+                ])
+            case .wrong:
+                text(c, "401 Unauthorized", "Wrong password.")
+            case .locked(let seconds):
+                text(c, "429 Too Many Requests", "Too many wrong tries. Try again in \(seconds) seconds.")
+            case .noPassword:
+                text(c, "409 Conflict", "No password is set yet.")
+            }
+
+        case ("POST", "/logout"):
+            Auth.logout(token)
+            reply(c, "204 No Content", "text/plain", Data(), extraHeaders: [
+                "Set-Cookie: \(Auth.cookieName)=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict",
+            ])
+
+        case ("POST", "/awake"):
+            // The phone can only turn lid-awake off: while it's off this page is closed,
+            // so turning it back on is done on the Mac.
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard body?["on"] as? Bool == false else {
+                return text(c, "400 Bad Request", "Lid-awake can only be turned on from the Mac.")
+            }
+            DispatchQueue.main.async { self.turnOff() }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        case ("GET", "/status"):
+            reply(c, "200 OK", "application/json", status())
+
+        case ("GET", "/screen.jpg"):
+            guard remoteAllowed() else {
+                return text(c, "403 Forbidden", "Screen access is off. Turn on “Allow screen & control from phone” in the Lid Awake menu on your Mac.")
+            }
+            guard screenPermission() else {
+                return text(c, "403 Forbidden", "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Screen & System Audio Recording.")
+            }
+            // Waits until there's a frame newer than the phone's last one (or 2 s pass).
+            let after = Int(req.query["after"] ?? "") ?? 0
+            FrameStream.shared.frame(after: after) { result in
+                self.queue.async {
+                    switch result {
+                    case .frame(let jpeg, let id):
+                        self.reply(c, "200 OK", "image/jpeg", jpeg, extraHeaders: ["X-Frame-Id: \(id)"])
+                    case .unchanged:
+                        self.reply(c, "204 No Content", "text/plain", Data())
+                    case .unavailable:
+                        self.text(c, "503 Service Unavailable", "Waking the Mac's screen… If this stays, the lid may be closed with no monitor attached, so there's no screen to show.")
+                    }
+                }
+            }
+
+        case ("POST", "/input"):
+            guard remoteAllowed() else { return text(c, "403 Forbidden", "Screen access is off.") }
+            guard controlPermission() else {
+                return text(c, "403 Forbidden", "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility.")
+            }
+            guard let cmd = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any] else {
+                return text(c, "400 Bad Request", "Bad request")
+            }
+            DispatchQueue.main.async { RemoteInput.perform(cmd) }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        default:
+            text(c, "404 Not Found", "Not found")
+        }
+    }
+}
