@@ -244,6 +244,30 @@ let dashboardHTML = #"""
   }
   .trackpad.active { background: var(--pad-on); }
 
+  /* Apps: a home-screen grid of the Mac apps chosen in the menu. */
+  .app-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px 8px; padding: 8px 0 4px; }
+  .app {
+    display: grid; justify-items: center; gap: 5px; background: none; border: 0; padding: 0; cursor: pointer; min-width: 0;
+    transition: transform .2s cubic-bezier(.32,.72,0,1), opacity .2s ease;
+  }
+  .app:active { transform: scale(.9); }
+  .app.opening { opacity: .45; }
+  .app img { width: 68px; height: 68px; display: block; -webkit-user-drag: none; pointer-events: none; }
+  .app .name { font-size: 12px; letter-spacing: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app .run { width: 4px; height: 4px; border-radius: 50%; background: var(--muted); margin-top: -2px; visibility: hidden; }
+  .app.running .run { visibility: visible; }
+  .apps-empty { text-align: center; padding: 10vh 16px 0; display: grid; gap: 8px; }
+  .apps-empty h2 { margin: 0; font-size: 22px; font-weight: 700; }
+  .apps-empty p { margin: 0 auto; max-width: 32ch; color: var(--muted); font-size: 15px; line-height: 1.38; text-wrap: pretty; }
+  .opened {
+    position: fixed; z-index: 9; left: 50%; transform: translateX(-50%);
+    bottom: calc(max(10px, env(safe-area-inset-bottom) - 8px) + 72px);
+    display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; border-radius: 99px; font-size: 15px; white-space: nowrap;
+    background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
+    -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+  }
+  .opened button { font-size: 15px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 7px 14px; cursor: pointer; }
+
   /* Floating tab bar, as in iOS 26: a capsule above the content, the current tab on a soft pill. */
   .tabbar {
     position: fixed; z-index: 10; left: 50%; transform: translateX(-50%);
@@ -253,7 +277,7 @@ let dashboardHTML = #"""
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
   }
   .tabbar button {
-    width: 92px; height: 54px; background: none; border: 0; border-radius: 99px; display: grid; justify-items: center; align-content: center; gap: 1px;
+    width: 84px; height: 54px; background: none; border: 0; border-radius: 99px; display: grid; justify-items: center; align-content: center; gap: 1px;
     font-size: 10px; font-weight: 600; letter-spacing: 0; color: var(--text); cursor: pointer; padding: 0; transition: background .25s ease, color .25s ease;
   }
   .tabbar svg { width: 26px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -357,6 +381,8 @@ let dashboardHTML = #"""
       <svg viewBox="0 0 26 24" aria-hidden="true"><path d="M3 17a10 10 0 1 1 20 0"/><path d="M13 17l5-6"/><circle cx="13" cy="17" r="1.6"/></svg>Status</button>
     <button data-tab="screen">
       <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="4" width="18" height="12" rx="1.8"/><path d="M1.5 19.5h23"/></svg>Screen</button>
+    <button data-tab="apps">
+      <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="2.5" width="8" height="8" rx="2.4"/><rect x="14" y="2.5" width="8" height="8" rx="2.4"/><rect x="4" y="12.5" width="8" height="8" rx="2.4"/><rect x="14" y="12.5" width="8" height="8" rx="2.4"/></svg>Apps</button>
   </nav>
 
   <div class="tab" id="tab-status">
@@ -454,6 +480,16 @@ let dashboardHTML = #"""
       </div>
       <div class="section-foot">Change the limits from the Lid Awake menu on your Mac.</div>
     </div>
+  </div>
+
+  <div class="tab" id="tab-apps" hidden>
+    <div class="app-grid" id="appGrid"></div>
+    <div class="apps-empty" id="appsEmpty" hidden>
+      <h2>No apps yet</h2>
+      <p>On your Mac, click the Lid Awake icon in the menu bar, then choose Apps on phone → Add apps…</p>
+    </div>
+    <div class="section-foot" id="appsFoot" hidden>Tap an app to open it on your Mac. A dot means it's already open. To change this list, use Apps on phone in the Lid Awake menu on your Mac.</div>
+    <div class="opened" id="openedBar" hidden><span id="openedText"></span><button type="button" id="openedShow">Show screen</button></div>
   </div>
 
   <div class="tab" id="tab-screen" hidden>
@@ -565,7 +601,7 @@ let dashboardHTML = #"""
     const stale = !lastOk || ago > 10;
     $("live").classList.toggle("stale", stale);
     $("liveText").textContent = !lastOk ? "Can't reach Mac" : stale ? `Last seen ${ago}s ago` : "Live";
-    $("pageTitle").textContent = currentTab === "screen" ? "Screen" : "Lid Awake";
+    $("pageTitle").textContent = { screen: "Screen", apps: "Apps" }[currentTab] || "Lid Awake";
     if (!data) return;
 
     $("host").textContent = data.host || "";
@@ -615,6 +651,7 @@ let dashboardHTML = #"""
     }
 
     renderHealth();
+    renderApps();
 
     const timerChoice = data.timerMinutes > 0
       ? (data.timerMinutes >= 60 ? `${data.timerMinutes / 60} hour${data.timerMinutes === 60 ? "" : "s"}` : `${data.timerMinutes} minutes`)
@@ -799,6 +836,7 @@ let dashboardHTML = #"""
     tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     $("tab-status").hidden = name !== "status";
     $("tab-screen").hidden = name !== "screen";
+    $("tab-apps").hidden = name !== "apps";
     $("main").classList.toggle("wide", name === "screen");
     try { localStorage.setItem("tab", name); } catch (e) {}
     render();
@@ -1405,6 +1443,62 @@ let dashboardHTML = #"""
     setTimeout(checkAuth, 1500);
   });
 
+  // ---------- Apps ----------
+  // The grid is rebuilt only when the list changes, so icons aren't downloaded again.
+  let appsKey = null, openedTimer = null;
+  function renderApps() {
+    const apps = data.apps || [];
+    const key = apps.map(a => a.id).join();
+    if (key !== appsKey) {
+      appsKey = key;
+      const grid = $("appGrid");
+      grid.replaceChildren(...apps.map(a => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "app";
+        b.dataset.id = a.id;
+        const img = document.createElement("img");
+        img.src = "app-icon.png?id=" + encodeURIComponent(a.id);
+        img.alt = "";
+        const name = document.createElement("span");
+        name.className = "name";
+        name.textContent = a.name;
+        const run = document.createElement("span");
+        run.className = "run";
+        b.append(img, name, run);
+        b.setAttribute("aria-label", "Open " + a.name);
+        b.addEventListener("click", () => openApp(a, b));
+        return b;
+      }));
+    }
+    for (const a of apps) {
+      const b = $("appGrid").querySelector(`[data-id="${a.id}"]`);
+      if (b) b.classList.toggle("running", a.running);
+    }
+    $("appsEmpty").hidden = apps.length > 0;
+    $("appsFoot").hidden = apps.length === 0;
+  }
+  async function openApp(app, button) {
+    button.classList.add("opening");
+    let message = `Opened ${app.name}`;
+    try {
+      const res = await fetch("open-app", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ id: app.id }),
+      });
+      if (res.status === 401 || res.status === 423) return locked();
+      if (!res.ok) message = await res.text();
+    } catch (e) { message = "Can't reach your Mac."; }
+    setTimeout(() => button.classList.remove("opening"), 400);
+    $("openedText").textContent = message;
+    $("openedBar").hidden = false;
+    clearTimeout(openedTimer);
+    openedTimer = setTimeout(() => { $("openedBar").hidden = true; }, 5000);
+    poll();
+  }
+  $("openedShow").addEventListener("click", () => { $("openedBar").hidden = true; showTab("screen"); });
+
   // ---------- Timer ----------
   // Picking a length restarts the countdown from now, so it also works as "give me more time".
   let timerSaving = false;
@@ -1434,7 +1528,7 @@ let dashboardHTML = #"""
     if (document.hidden) { stopLive(); return; }
     checkAuth();
   });
-  try { if (localStorage.getItem("tab") === "screen") currentTab = "screen"; } catch (e) {}
+  try { const saved = localStorage.getItem("tab"); if (saved === "screen" || saved === "apps") currentTab = saved; } catch (e) {}
   showTab(currentTab);
   checkAuth();
 </script>

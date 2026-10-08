@@ -139,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let infoLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     let remoteItem = NSMenuItem(title: "Allow screen & control from phone", action: nil, keyEquivalent: "")
     let passwordItem = NSMenuItem(title: "Set phone password…", action: nil, keyEquivalent: "")
+    let appsMenu = NSMenu()
     let defaults = UserDefaults.standard
     var busy = false
     var isOn = false
@@ -227,6 +228,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         passwordItem.target = self
         passwordItem.action = #selector(setPhonePassword)
         menu.addItem(passwordItem)
+        let appsItem = NSMenuItem(title: "Apps on phone", action: nil, keyEquivalent: "")
+        appsItem.submenu = appsMenu
+        menu.addItem(appsItem)
         statusItem.menu = menu
 
         // Serve the live page; the status is built on the main thread from the
@@ -284,7 +288,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusLine.title = "Turns off in \(formatRemaining(r))"
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh() }
+    func menuWillOpen(_ menu: NSMenu) { refresh(); rebuildAppsMenu() }
+
+    // "Apps on phone": add apps, or click one to take it off the phone's Apps page.
+    func rebuildAppsMenu() {
+        appsMenu.removeAllItems()
+        let add = NSMenuItem(title: "Add apps…", action: #selector(addPhoneApps), keyEquivalent: "")
+        add.target = self
+        appsMenu.addItem(add)
+        let paths = PhoneApps.paths
+        guard !paths.isEmpty else { return }
+        appsMenu.addItem(.separator())
+        let hint = NSMenuItem(title: "Click an app to remove it", action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        appsMenu.addItem(hint)
+        for path in paths {
+            let item = NSMenuItem(title: PhoneApps.name(path), action: #selector(removePhoneApp(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = path
+            let icon = NSWorkspace.shared.icon(forFile: path)
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+            appsMenu.addItem(item)
+        }
+    }
+
+    @objc func addPhoneApps() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose apps to open from your phone"
+        panel.prompt = "Add"
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .OK { PhoneApps.add(panel.urls) }
+    }
+
+    @objc func removePhoneApp(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        PhoneApps.remove(path)
+    }
 
     func tick() {
         refresh()
@@ -435,6 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "host": computerName,
             "lidAwake": isOn,
             "timerMinutes": timerMinutes,
+            "apps": PhoneApps.list(),
             "batteryGuard": batteryGuard,
             "heatGuard": heatGuard,
             "batteryLimit": batteryLimit,
