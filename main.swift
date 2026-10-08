@@ -159,10 +159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let batteryItem = NSMenuItem(title: "Turn off below \(batteryLimit)% battery", action: nil, keyEquivalent: "")
     let heatItem = NSMenuItem(title: "Turn off if battery is hotter than \(Int(maxBatteryTemp))°C", action: nil, keyEquivalent: "")
     let infoLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    let remoteItem = NSMenuItem(title: "Allow screen & control from phone", action: nil, keyEquivalent: "")
+    let remoteItem = NSMenuItem(title: "Allow screen from phone", action: nil, keyEquivalent: "")
+    let controlItem = NSMenuItem(title: "Allow control from phone", action: nil, keyEquivalent: "")
+    let devicesMenu = NSMenu()
     let passwordItem = NSMenuItem(title: "Set phone password…", action: nil, keyEquivalent: "")
     let appsMenu = NSMenu()
-    let faceIDItem = NSMenuItem(title: "Remove Face ID sign-ins", action: nil, keyEquivalent: "")
     let defaults = UserDefaults.standard
     var busy = false
     var isOn = false
@@ -187,10 +188,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { defaults.object(forKey: "batteryGuard") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "batteryGuard") }
     }
-    // Off by default: the phone can only see and control the screen once this is ticked.
+    // Off by default: the phone can only see the screen once this is ticked…
     var remoteScreen: Bool {
         get { defaults.bool(forKey: "remoteScreen") }
         set { defaults.set(newValue, forKey: "remoteScreen") }
+    }
+    // …and only click and type when this is ticked too (off = view only). Before this setting
+    // existed, screen access included control, so that stays the starting value.
+    var remoteControl: Bool {
+        get { defaults.object(forKey: "remoteControl") as? Bool ?? defaults.bool(forKey: "remoteScreen") }
+        set { defaults.set(newValue, forKey: "remoteControl") }
     }
     var heatGuard: Bool {
         get { defaults.object(forKey: "heatGuard") as? Bool ?? true }
@@ -248,12 +255,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         remoteItem.target = self
         remoteItem.action = #selector(toggleRemote)
         menu.addItem(remoteItem)
+        controlItem.target = self
+        controlItem.action = #selector(toggleControl)
+        controlItem.indentationLevel = 1
+        menu.addItem(controlItem)
         passwordItem.target = self
         passwordItem.action = #selector(setPhonePassword)
         menu.addItem(passwordItem)
-        faceIDItem.target = self
-        faceIDItem.action = #selector(removeFaceID)
-        menu.addItem(faceIDItem)
+        let devicesItem = NSMenuItem(title: "Signed-in devices", action: nil, keyEquivalent: "")
+        devicesItem.submenu = devicesMenu
+        menu.addItem(devicesItem)
         let appsItem = NSMenuItem(title: "Apps on phone", action: nil, keyEquivalent: "")
         appsItem.submenu = appsMenu
         menu.addItem(appsItem)
@@ -264,9 +275,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         server = StatusServer(
             status: { DispatchQueue.main.sync { self.statusJSON() } },
             remoteAllowed: { UserDefaults.standard.bool(forKey: "remoteScreen") },
+            controlAllowed: { DispatchQueue.main.sync { self.remoteScreen && self.remoteControl } },
             awake: { DispatchQueue.main.sync { self.isOn } },
             turnOff: { [weak self] in
                 guard let self, self.isOn, !self.busy else { return }
+                AccessLog.write("Lid Awake turned off from the phone")
                 self.setAwake(false)
                 notify("Turned off from your phone. Your Mac will sleep normally again.")
             },
@@ -292,6 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             sessionValid: { Auth.isValid($0) },
             awake: { DispatchQueue.main.sync { self.isOn } },
             remoteAllowed: { UserDefaults.standard.bool(forKey: "remoteScreen") },
+            controlAllowed: { DispatchQueue.main.sync { self.remoteScreen && self.remoteControl } },
             screenPermission: { screenPermission() },
             controlPermission: { controlPermission() }))
         // The Wi-Fi name shown on the phone needs Location permission (asked once).
@@ -309,7 +323,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Check the timer and battery every 15 seconds, and update the countdown
         // every second. Common run loop mode keeps both running while the menu is open.
         let check = Timer(timeInterval: 15, repeats: true) { [weak self] _ in self?.tick() }
-        let countdown = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.updateCountdown() }
+        let countdown = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            self?.updateCountdown()
+            self?.showActivity()
+        }
         RunLoop.main.add(check, forMode: .common)
         RunLoop.main.add(countdown, forMode: .common)
         tick()
@@ -329,13 +346,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         refresh()
         rebuildAppsMenu()
-        faceIDItem.isHidden = Passkeys.count == 0
+        rebuildDevicesMenu()
     }
 
-    // Forget every phone's Face ID sign-in (they can add it again after a password sign-in).
-    @objc func removeFaceID() {
-        Passkeys.removeAll()
-        notify("Face ID sign-ins removed. The phone page will ask for the password.")
+    // While the phone watches the screen the menu bar icon becomes an eye, and a hand while it
+    // clicks or types, so the owner always sees when the Mac is being looked at or used.
+    private var shownActivity = (viewers: 0, controlling: false)
+    func showActivity() {
+        let now = liveServer?.activity ?? (viewers: 0, controlling: false)
+        guard now.viewers != shownActivity.viewers || now.controlling != shownActivity.controlling else { return }
+        shownActivity = now
+        refresh()
+    }
+
+    // "Signed-in devices": every phone or browser signed in, and every Face ID key, each with a
+    // click to remove it.
+    func rebuildDevicesMenu() {
+        devicesMenu.removeAllItems()
+        let sessions = Auth.sessions(current: nil)
+        let day = DateFormatter()
+        day.dateFormat = "MMM d"
+        let header = NSMenuItem(title: sessions.isEmpty ? "No devices signed in" : "Signed in (click to sign out)", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        devicesMenu.addItem(header)
+        for session in sessions {
+            let how = session.faceID ? "Face ID" : "password"
+            let item = NSMenuItem(title: "\(session.device) · \(day.string(from: session.created)) · \(how)",
+                                  action: #selector(signOutDevice(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = session.id
+            devicesMenu.addItem(item)
+        }
+        if sessions.count > 1 {
+            let all = NSMenuItem(title: "Sign out all devices", action: #selector(signOutAll), keyEquivalent: "")
+            all.target = self
+            devicesMenu.addItem(all)
+        }
+        let keys = Passkeys.list
+        devicesMenu.addItem(.separator())
+        let faceHeader = NSMenuItem(title: keys.isEmpty ? "No Face ID sign-ins" : "Face ID sign-ins (click to remove)", action: nil, keyEquivalent: "")
+        faceHeader.isEnabled = false
+        devicesMenu.addItem(faceHeader)
+        for key in keys {
+            let item = NSMenuItem(title: "\(key.device) · " + (key.added.map { "added \(day.string(from: $0))" } ?? "added earlier"),
+                                  action: #selector(removeFaceID(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = key.id
+            devicesMenu.addItem(item)
+        }
+        if Auth.isLockedOut {
+            devicesMenu.addItem(.separator())
+            let clear = NSMenuItem(title: "Allow password sign-in again (after wrong tries)", action: #selector(clearLockout), keyEquivalent: "")
+            clear.target = self
+            devicesMenu.addItem(clear)
+        }
+        devicesMenu.addItem(.separator())
+        let log = NSMenuItem(title: "Show activity log", action: #selector(showAccessLog), keyEquivalent: "")
+        log.target = self
+        devicesMenu.addItem(log)
+    }
+
+    @objc func signOutDevice(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        Auth.signOut(id: id)
+        AccessLog.write("Signed out a device from the Mac menu")
+    }
+
+    @objc func signOutAll() {
+        Auth.signOut()
+        AccessLog.write("Signed out all devices from the Mac menu")
+        notify("Every device is signed out of the phone page.")
+    }
+
+    // Forget one Face ID key, and sign out the devices that used it.
+    @objc func removeFaceID(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        Passkeys.remove(id: id)
+        Auth.signOut(faceID: id)
+        AccessLog.write("Removed a Face ID sign-in from the Mac menu")
+        notify("Face ID sign-in removed. That device will need the password.")
+    }
+
+    @objc func clearLockout() {
+        Auth.clearLockout()
+        AccessLog.write("Password sign-in allowed again from the Mac menu")
+    }
+
+    @objc func showAccessLog() {
+        if !FileManager.default.fileExists(atPath: AccessLog.url.path) { AccessLog.write("Activity log started") }
+        NSWorkspace.shared.open(AccessLog.url)
     }
 
     // "Apps on phone": add apps, or click one to take it off the phone's Apps page.
@@ -460,8 +559,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         toggle.isOn = isOn
 
-        let image = NSImage(systemSymbolName: isOn ? "cup.and.saucer.fill" : "moon.zzz",
-                            accessibilityDescription: isOn ? "Lid Awake on" : "Lid Awake off")
+        let activity = liveServer?.activity ?? (viewers: 0, controlling: false)
+        let symbol = activity.controlling ? "hand.point.up.left.fill" : activity.viewers > 0 ? "eye.fill"
+            : isOn ? "cup.and.saucer.fill" : "moon.zzz"
+        let label = activity.controlling ? "Lid Awake: your Mac is being controlled from your phone"
+            : activity.viewers > 0 ? "Lid Awake: your screen is being viewed from your phone" : isOn ? "Lid Awake on" : "Lid Awake off"
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         image?.isTemplate = true
         statusItem.button?.image = image
 
@@ -473,7 +576,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusItem.button?.title = ""
             statusLine.title = isOn ? "On, no timer" : "Off"
         }
-        statusItem.button?.toolTip = isOn ? "Lid Awake: ON" : "Lid Awake: OFF"
+        statusItem.button?.toolTip = activity.viewers > 0 ? label : isOn ? "Lid Awake: ON" : "Lid Awake: OFF"
+        if activity.viewers > 0 { statusLine.title = activity.controlling ? "Being controlled from your phone" : "Screen being viewed from your phone" }
 
         for item in timerMenu.items {
             item.state = timerChoices[item.tag].minutes == timerMinutes ? .on : .off
@@ -481,6 +585,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         batteryItem.state = batteryGuard ? .on : .off
         heatItem.state = heatGuard ? .on : .off
         remoteItem.state = remoteScreen ? .on : .off
+        controlItem.state = remoteScreen && remoteControl ? .on : .off
+        controlItem.isEnabled = remoteScreen
         passwordItem.title = Auth.hasPassword ? "Change phone password…" : "Set phone password…"
 
         var info: [String] = []
@@ -541,7 +647,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.messageText = Auth.hasPassword ? "Change phone password" : "Set phone password"
         alert.informativeText = "Your phone will ask for this password before showing anything. "
-            + "Use at least 6 characters. Saving a new password logs out every device."
+            + "Use at least \(Auth.minPasswordLength) characters. Saving a new password signs out every device "
+            + "and removes Face ID sign-ins and phone alerts."
         let password = NSSecureTextField(frame: NSRect(x: 0, y: 32, width: 260, height: 24))
         password.placeholderString = "New password"
         let confirm = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
@@ -556,7 +663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         var problem: String?
-        if password.stringValue.count < 6 { problem = "The password needs at least 6 characters." }
+        if password.stringValue.count < Auth.minPasswordLength { problem = "The password needs at least \(Auth.minPasswordLength) characters." }
         else if password.stringValue != confirm.stringValue { problem = "The two passwords don't match." }
         if let problem {
             let error = NSAlert()
@@ -565,6 +672,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return setPhonePassword()
         }
         Auth.setPassword(password.stringValue)
+        AccessLog.write("Phone password changed on the Mac")
         notify("Phone password saved. Your phone will ask for it next time.")
         refresh()
     }
@@ -572,11 +680,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleRemote() {
         remoteScreen.toggle()
         if remoteScreen { requestRemotePermissions() } else { liveServer?.closeAll() }
+        AccessLog.write(remoteScreen ? "Screen from phone allowed on the Mac" : "Screen from phone turned off on the Mac")
         refresh()
     }
 
+    @objc func toggleControl() {
+        remoteControl = !(remoteScreen && remoteControl)
+        if !remoteControl { DispatchQueue.main.async { RemoteInput.releaseButtons() } }
+        AccessLog.write(remoteControl ? "Control from phone allowed on the Mac" : "Control from phone turned off (view only)")
+        refresh()
+    }
+
+    // The page lives at the Mac's Tailscale address (signing in on 127.0.0.1 isn't offered).
     @objc func openLivePage() {
-        NSWorkspace.shared.open(URL(string: "http://127.0.0.1:\(statusPort)/")!)
+        guard let host = Tailnet.host, let url = URL(string: "https://\(host)/") else {
+            return notify("Tailscale isn't connected yet, so the phone page has no address.")
+        }
+        NSWorkspace.shared.open(url)
     }
 
     func statusJSON() -> Data {
@@ -594,6 +714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "maxBatteryTemp": Int(maxBatteryTemp),
             "thermalState": thermalNames[min(ProcessInfo.processInfo.thermalState.rawValue, 3)],
             "remoteScreen": remoteScreen,
+            "remoteControl": remoteScreen && remoteControl,
             "screenPermission": screenPermission(),
             "controlPermission": controlPermission(),
             "screenWidth": CGDisplayBounds(CGMainDisplayID()).width,
@@ -687,8 +808,8 @@ if CommandLine.arguments.contains("--selftest") {
                 // so no real login is created. For each preset, reports the frames received
                 // in 3 s and the size of the last one (Sharp should be largest, Fast smallest).
                 let test = LiveServer(port: 18788, checks: .init(
-                    sessionValid: { $0 == selftestToken }, awake: { true }, remoteAllowed: { true },
-                    screenPermission: { true }, controlPermission: { true }))
+                    sessionValid: { $0 == selftestToken }, awake: { true }, remoteAllowed: { true }, controlAllowed: { true },
+                    screenPermission: { true }, controlPermission: { true }, allowLoopback: true))
                 Task {
                     for preset in ["max", "sharp", "balanced", "fast"] {
                         var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)

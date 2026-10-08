@@ -26,6 +26,9 @@ check("register reuse of challenge refused", !Passkeys.register(clientData: clie
 let c1b = Passkeys.challenge("create")
 check("register without Face ID (no UV) refused", !Passkeys.register(clientData: clientData("webauthn.create", c1b), attestation: attestation(authData(flags: 0x41, count: 0, attested: true)), host: host))
 check("one passkey stored", Passkeys.count == 1)
+let c1c = Passkeys.challenge("create")
+check("same key id can't be registered again (no swapping keys)", !Passkeys.register(clientData: clientData("webauthn.create", c1c), attestation: attestation(authData(flags: 0x45, count: 0, attested: true)), host: host))
+check("still one passkey", Passkeys.count == 1)
 
 func signIn(challenge: String, origin: String = "https://\(host)", flags: UInt8 = 0x05, count: UInt32 = 0, signer: P256.Signing.PrivateKey = key, rp: String = host, type: String = "webauthn.get") -> Bool {
     let cd = clientData(type, challenge, origin: origin)

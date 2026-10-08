@@ -3,14 +3,18 @@ import Foundation
 
 // Face ID / Touch ID sign-in for the phone page (WebAuthn passkeys). The phone keeps a private
 // key that only unlocks with the owner's face; the Mac stores just the public key and checks
-// the signature on each sign-in. Adding one needs a password sign-in first, a new password
-// removes them all, and they only work on the Tailscale HTTPS address (passkeys need HTTPS).
+// the signature on each sign-in. Adding one needs the password again, a new password removes
+// them all, and they only work on the Tailscale HTTPS address (passkeys need HTTPS).
 enum Passkeys {
     private struct Stored: Codable {
         let id: String          // credential id, base64url
         let publicKey: Data     // P-256, x9.63 (04 || x || y)
         var signCount: UInt32
+        var added: Date?        // (not kept by older versions)
+        var device: String?
     }
+
+    struct Info { let id: String; let added: Date?; let device: String }
 
     private static let defaults = UserDefaults.standard
     private static let key = "passkeys"
@@ -42,8 +46,18 @@ enum Passkeys {
 
     static var credentialIDs: [String] { lock.lock(); defer { lock.unlock() }; return stored().map(\.id) }
 
+    static var list: [Info] {
+        lock.lock(); defer { lock.unlock() }
+        return stored().map { Info(id: $0.id, added: $0.added, device: $0.device ?? "Phone") }
+    }
+
+    static func remove(id: String) {
+        lock.lock(); defer { lock.unlock() }
+        save(stored().filter { $0.id != id })
+    }
+
     // Adding Face ID: checks what the phone signed up with and keeps its public key.
-    static func register(clientData: Data, attestation: Data, host: String) -> Bool {
+    static func register(clientData: Data, attestation: Data, host: String, device: String = "Phone") -> Bool {
         guard host.hasSuffix(".ts.net"),
               checkClientData(clientData, type: "webauthn.create", purpose: "create", host: host),
               case .map(let att)? = try? CBOR.decode(attestation),
@@ -54,8 +68,11 @@ enum Passkeys {
               let credentialID = parsed.credentialID,
               let publicKey = parsed.publicKey else { return false }
         lock.lock(); defer { lock.unlock() }
-        var all = stored().filter { $0.id != base64url(credentialID) }
-        all.append(Stored(id: base64url(credentialID), publicKey: publicKey, signCount: parsed.signCount))
+        var all = stored()
+        // A key with the same id is never replaced (that would let someone swap in their own).
+        guard !all.contains(where: { $0.id == base64url(credentialID) }), all.count < 20 else { return false }
+        all.append(Stored(id: base64url(credentialID), publicKey: publicKey, signCount: parsed.signCount,
+                          added: Date(), device: device))
         save(all)
         return true
     }

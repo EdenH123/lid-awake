@@ -472,6 +472,11 @@ let dashboardHTML = #"""
   .row .title small { display: block; font-size: 13px; color: var(--muted); margin-top: 1px; white-space: normal; }
   .icon-list .row + .row::before, .icon-list .alert-rows .row::before { left: 42px; }
   .row-link.danger { color: var(--red); }
+  .pw-row input { flex: 1; min-width: 0; font: inherit; font-size: 17px; color: inherit; background: none; border: 0; outline: none; padding: 6px 0; }
+  .device-row .title small { display: block; color: var(--muted); font-size: 13px; }
+  .activity-list .row { min-height: 44px; align-items: baseline; font-size: 15px; }
+  .activity-list .row .when { color: var(--muted); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .activity-list .row .what { flex: 1; min-width: 0; }
   /* Alerts: one card with a title, then one row per alert. */
   .alerts-card { background: var(--card); border-radius: 26px; overflow: hidden; }
   .alerts-head { display: flex; gap: 12px; align-items: center; padding: 16px 16px 14px; }
@@ -650,7 +655,7 @@ let dashboardHTML = #"""
     <section class="alerts-card" id="alertsSection">
       <header class="alerts-head">
         <div class="alerts-badge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></div>
-        <div><h2>Alerts</h2><p>Notifications on this iPhone, even when Lid Awake is closed.</p></div>
+        <div><h2>Alerts</h2><p>Notifications on this iPhone, even when Lid Awake is closed. Sign-in alerts are always on.</p></div>
       </header>
       <div class="alert-row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, low battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
       <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
@@ -664,9 +669,23 @@ let dashboardHTML = #"""
       <div class="list icon-list">
         <div class="row" id="faceIdRow" hidden><span class="set-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></span><span class="title">Face ID</span>
           <span class="value" id="faceIdState" hidden>On</span><button type="button" class="row-link" id="faceIdRowBtn">Set up</button></div>
+        <form class="row pw-row" id="faceIdPwRow" hidden><input type="password" id="faceIdPassword" placeholder="Password, to add Face ID" autocomplete="current-password" aria-label="Your Lid Awake password"><button class="row-link" id="faceIdPwGo">Continue</button></form>
         <div class="row"><span class="set-icon gray"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><button type="button" class="row-link start danger" id="lockNowBtn">Lock this page now</button></div>
       </div>
-      <div class="section-foot">You stay signed in on this iPhone for 7 days. Change the password from the Lid Awake menu on your Mac.</div>
+      <div class="section-foot" id="faceIdError" hidden></div>
+      <div class="section-foot">You stay signed in on this iPhone for 7 days. Adding Face ID asks for your password. Change the password from the Lid Awake menu on your Mac.</div>
+    </div>
+
+    <div class="section" id="devicesSection" hidden>
+      <div class="section-head">Signed-in devices</div>
+      <div class="list" id="devicesList"></div>
+      <div class="section-foot">Sign out anything you don't recognize. Your iPhone gets an alert whenever someone signs in with the password or adds Face ID.</div>
+    </div>
+
+    <div class="section" id="activitySection" hidden>
+      <div class="section-head">Recent activity</div>
+      <div class="list activity-list" id="activityList"></div>
+      <div class="section-foot">The full log is on your Mac: Lid Awake menu → Signed-in devices → Show activity log.</div>
     </div>
 
     <div class="section">
@@ -877,9 +896,13 @@ let dashboardHTML = #"""
     $("thermal").textContent = thermalText;
     $("thermal").className = "value " + (data.thermalState === "serious" || data.thermalState === "critical" ? "bad" : data.thermalState === "fair" ? "warn" : "");
 
-    const viewOnly = currentTab === "screen" && data.remoteScreen && data.screenPermission && !data.controlPermission;
+    const noPermission = data.remoteScreen && data.screenPermission && !data.controlPermission;
+    const controlOff = data.remoteScreen && data.screenPermission && data.remoteControl === false;
+    const viewOnly = currentTab === "screen" && (noPermission || controlOff);
     $("hint").hidden = !viewOnly;
-    $("hint").textContent = viewOnly ? "View only. To control, allow Lid Awake in System Settings → Privacy & Security → Accessibility on your Mac." : "";
+    $("hint").textContent = !viewOnly ? ""
+      : controlOff ? "View only. To click and type from here, tick “Allow control from phone” in the Lid Awake menu on your Mac."
+      : "View only. To control, allow Lid Awake in System Settings → Privacy & Security → Accessibility on your Mac.";
   }
 
   // ---------- Mac health and network ----------
@@ -943,6 +966,23 @@ let dashboardHTML = #"""
       // Over Tailscale the link disappears while lid-awake is off, so this is the usual "off" view.
       auth = { unreachable: true };
     }
+    if (auth.loopback) {
+      // On the Mac's own 127.0.0.1 address: sign-in only happens at the Tailscale address.
+      unlocked = false;
+      $("app").hidden = true;
+      $("lockBtn").hidden = true;
+      $("gate").hidden = false;
+      $("loginForm").hidden = true;
+      $("gateTitle").textContent = "Open the Tailscale address";
+      $("gateText").textContent = "For safety, Lid Awake only signs in at its private Tailscale address. ";
+      if (auth.url) {
+        const a = document.createElement("a");
+        a.href = auth.url;
+        a.textContent = "Open it";
+        $("gateText").append(a);
+      }
+      return;
+    }
     if (auth.off || auth.unreachable) {
       unlocked = false;
       updateLandscape();
@@ -1003,6 +1043,7 @@ let dashboardHTML = #"""
         body: JSON.stringify({ password: $("password").value }),
       });
       if (res.ok) {
+        rememberPassword($("password").value);
         $("password").value = "";
         await checkAuth();
         offerFaceID();
@@ -1030,7 +1071,6 @@ let dashboardHTML = #"""
       const o = await (await fetch("passkey/login-options", { cache: "no-store" })).json();
       const cred = await navigator.credentials.get({ publicKey: {
         challenge: fromB64u(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000,
-        allowCredentials: o.ids.map(id => ({ type: "public-key", id: fromB64u(id) })),
       } });
       const r = cred.response;
       const res = await fetch("passkey/login", {
@@ -1047,12 +1087,47 @@ let dashboardHTML = #"""
   }
   $("faceIdBtn").addEventListener("click", faceIDLogin);
 
+  // The password typed at sign-in is kept in this page (never stored) for 3 minutes, so turning
+  // on Face ID right after doesn't ask for it twice.
+  let recentPassword = "", recentTimer = null;
+  function rememberPassword(pw) {
+    recentPassword = pw;
+    clearTimeout(recentTimer);
+    recentTimer = setTimeout(() => { recentPassword = ""; }, 180000);
+  }
+  function faceIDError(text) {
+    $("faceIdError").textContent = text;
+    $("faceIdError").hidden = !text;
+  }
+
   async function faceIDSetup() {
+    const pw = recentPassword || $("faceIdPassword").value;
+    faceIDError("");
+    if (!pw) {
+      // Ask for the password first (in Settings).
+      $("faceIdOffer").hidden = true;
+      if (currentTab !== "settings") showTab("settings");
+      $("faceIdPwRow").hidden = false;
+      $("faceIdPassword").focus();
+      return;
+    }
     try {
-      const o = await (await fetch("passkey/register-options", { cache: "no-store" })).json();
+      const optRes = await fetch("passkey/register-options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ password: pw }),
+      });
+      if (!optRes.ok) {
+        recentPassword = "";
+        $("faceIdPassword").value = "";
+        throw new Error(await optRes.text());
+      }
+      const o = await optRes.json();
       const cred = await navigator.credentials.create({ publicKey: {
         challenge: fromB64u(o.challenge), rp: { name: "Lid Awake", id: o.rpId },
-        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "Lid Awake", displayName: "Lid Awake" },
+        // One account on every phone, so setting up again replaces rather than piles up keys.
+        user: { id: new TextEncoder().encode("lid-awake-owner"), name: "Lid Awake", displayName: "Lid Awake" },
+        excludeCredentials: (o.ids || []).map(id => ({ type: "public-key", id: fromB64u(id) })),
         pubKeyCredParams: [{ type: "public-key", alg: -7 }], attestation: "none", timeout: 60000,
         authenticatorSelection: { authenticatorAttachment: "platform", residentKey: "preferred", userVerification: "required" },
       } });
@@ -1062,16 +1137,104 @@ let dashboardHTML = #"""
         body: JSON.stringify({ clientData: b64u(cred.response.clientDataJSON), attestation: b64u(cred.response.attestationObject) }),
       });
       if (!res.ok) throw new Error(await res.text());
+      recentPassword = "";
+      $("faceIdPassword").value = "";
+      $("faceIdPwRow").hidden = true;
       setFaceIDState("on");
       $("faceIdOffer").hidden = true;
       renderFaceIDRow();
     } catch (e) {
+      if (e.name === "InvalidStateError") {
+        // This iPhone already has Face ID for Lid Awake.
+        setFaceIDState("on");
+        $("faceIdOffer").hidden = true;
+        $("faceIdPwRow").hidden = true;
+        return renderFaceIDRow();
+      }
       if (e.name !== "NotAllowedError") {
-        $("faceIdOffer").hidden = false;
-        $("faceIdOffer").querySelector(".faceid-text span").textContent = "Couldn't turn on Face ID: " + (e.message || e);
+        const msg = "Couldn't turn on Face ID: " + (e.message || e);
+        if (currentTab === "settings") faceIDError(msg);
+        else {
+          $("faceIdOffer").hidden = false;
+          $("faceIdOffer").querySelector(".faceid-text span").textContent = msg;
+        }
       }
     }
   }
+  $("faceIdPwRow").addEventListener("submit", e => { e.preventDefault(); faceIDSetup(); });
+
+  // ---------- Signed-in devices and recent activity (Settings) ----------
+  const dayFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+  const timeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  async function loadDevices() {
+    try {
+      const { sessions } = await (await fetch("sessions", { cache: "no-store" })).json();
+      const list = $("devicesList");
+      list.replaceChildren();
+      for (const d of sessions) {
+        const row = document.createElement("div");
+        row.className = "row device-row";
+        const title = document.createElement("span");
+        title.className = "title";
+        title.textContent = d.current ? `${d.device} (this one)` : d.device;
+        const small = document.createElement("small");
+        small.textContent = `Signed in ${dayFmt.format(new Date(d.created * 1000))} with ${d.faceID ? "Face ID" : "the password"}`;
+        title.append(small);
+        row.append(title);
+        if (!d.current) {
+          const out = document.createElement("button");
+          out.type = "button";
+          out.className = "row-link danger";
+          out.textContent = "Sign out";
+          out.addEventListener("click", () => signOutDevices({ id: d.id }));
+          row.append(out);
+        }
+        list.append(row);
+      }
+      if (sessions.filter(d => !d.current).length > 1) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const all = document.createElement("button");
+        all.type = "button";
+        all.className = "row-link start danger";
+        all.textContent = "Sign out all other devices";
+        all.addEventListener("click", () => signOutDevices({ others: true }));
+        row.append(all);
+        list.append(row);
+      }
+      $("devicesSection").hidden = sessions.length === 0;
+    } catch (e) {}
+  }
+  async function signOutDevices(body) {
+    await fetch("sessions/signout", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-LidAwake": "1" }, body: JSON.stringify(body),
+    }).catch(() => {});
+    loadDevices();
+    loadActivity();
+  }
+  async function loadActivity() {
+    try {
+      const { lines } = await (await fetch("activity", { cache: "no-store" })).json();
+      const list = $("activityList");
+      list.replaceChildren();
+      for (const line of lines) {
+        const space = line.indexOf("  ");
+        const when = new Date(line.slice(0, space));
+        const row = document.createElement("div");
+        row.className = "row";
+        const what = document.createElement("span");
+        what.className = "what";
+        what.textContent = line.slice(space + 2);
+        const time = document.createElement("span");
+        time.className = "when";
+        time.textContent = isNaN(when) ? "" : timeFmt.format(when);
+        row.append(what, time);
+        list.append(row);
+      }
+      $("activitySection").hidden = lines.length === 0;
+    } catch (e) {}
+  }
+
   // After a password sign-in, offer it once (and keep a "Set up" row in settings if declined).
   function offerFaceID() {
     renderFaceIDRow();
@@ -1086,7 +1249,7 @@ let dashboardHTML = #"""
   }
   renderFaceIDRow();
   $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
-  $("settingsBtn").addEventListener("click", () => { showTab("settings"); scrollTo(0, 0); });
+  $("settingsBtn").addEventListener("click", () => { showTab("settings"); scrollTo(0, 0); loadDevices(); loadActivity(); });
   $("settingsBack").addEventListener("click", () => { showTab("status"); scrollTo(0, 0); });
   $("faceIdOn").addEventListener("click", faceIDSetup);
   $("faceIdRowBtn").addEventListener("click", faceIDSetup);

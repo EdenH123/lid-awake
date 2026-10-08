@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import IOKit.ps
 import Network
@@ -22,6 +23,35 @@ func powerInfo() -> [String: Any] {
         ]
     }
     return [:]
+}
+
+// Who may use the page: this Mac's own Tailscale address, opened from a device signed in to
+// the same Tailscale account as the Mac. Learned from `tailscale status` (and remembered, so a
+// restart while Tailscale is starting doesn't lock the owner out).
+enum Tailnet {
+    private static let lock = NSLock()
+    private static let defaults = UserDefaults.standard
+
+    static var host: String? { lock.lock(); defer { lock.unlock() }; return defaults.string(forKey: "tailnetHost") }
+    static var owner: String? { lock.lock(); defer { lock.unlock() }; return defaults.string(forKey: "tailnetOwner") }
+
+    static func update(fromStatus json: [String: Any]) {
+        guard let me = json["Self"] as? [String: Any], let dns = me["DNSName"] as? String, dns.hasSuffix(".ts.net."),
+              let userID = (me["UserID"] as? NSNumber)?.stringValue,
+              let user = (json["User"] as? [String: Any])?[userID] as? [String: Any],
+              let login = user["LoginName"] as? String, !login.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        defaults.set(String(dns.dropLast()).lowercased(), forKey: "tailnetHost")
+        defaults.set(login.lowercased(), forKey: "tailnetOwner")
+    }
+
+    // A request that came through Tailscale Serve from the owner's own device, to this Mac's name.
+    static func isOwner(host: String, login: String?) -> Bool {
+        guard let mine = self.host, let owner = self.owner, let login else { return false }
+        return host.lowercased() == mine && login.lowercased() == owner
+    }
+
+    static func isLoopback(_ host: String) -> Bool { host == "127.0.0.1" || host == "localhost" }
 }
 
 // Offer the private HTTPS link only while lid-awake is on. When on, restore the
@@ -49,6 +79,9 @@ func ensureTailscaleServe(enabled: Bool) {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    if let me = (try? JSONSerialization.jsonObject(with: Data(run(["status", "--json"]).utf8))) as? [String: Any] {
+        Tailnet.update(fromStatus: me)
+    }
     let status = run(["serve", "status", "--json"])
     let servingPage = status.contains("127.0.0.1:\(statusPort)")
     let servingLive = status.contains("127.0.0.1:\(livePort)")
@@ -122,12 +155,14 @@ final class StatusServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "lidawake.status-server")
     private let status: () -> Data
     private let remoteAllowed: () -> Bool
+    private let controlAllowed: () -> Bool
     private let awake: () -> Bool
     private let turnOff: () -> Void
     private let setTimer: (Int) -> Bool
     private let setLimit: (String, Bool) -> Bool
 
-    init?(status: @escaping () -> Data, remoteAllowed: @escaping () -> Bool, awake: @escaping () -> Bool,
+    init?(status: @escaping () -> Data, remoteAllowed: @escaping () -> Bool, controlAllowed: @escaping () -> Bool,
+          awake: @escaping () -> Bool,
           turnOff: @escaping () -> Void, setLimit: @escaping (String, Bool) -> Bool,
           setTimer: @escaping (Int) -> Bool) {
         let params = NWParameters.tcp
@@ -137,6 +172,7 @@ final class StatusServer: @unchecked Sendable {
         self.listener = listener
         self.status = status
         self.remoteAllowed = remoteAllowed
+        self.controlAllowed = controlAllowed
         self.awake = awake
         self.turnOff = turnOff
         self.setTimer = setTimer
@@ -193,6 +229,7 @@ final class StatusServer: @unchecked Sendable {
         let extra = extraHeaders.map { $0 + "\r\n" }.joined()
         let head = "HTTP/1.1 \(code)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
             + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\n"
+            + "Cross-Origin-Resource-Policy: same-origin\r\nReferrer-Policy: no-referrer\r\n"
             + extra + "Connection: close\r\n\r\n"
         connection.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
     }
@@ -201,15 +238,70 @@ final class StatusServer: @unchecked Sendable {
         reply(connection, code, "text/plain; charset=utf-8", Data(message.utf8))
     }
 
-    private func route(_ req: HTTPRequest, _ c: NWConnection) {
-        // Only answer requests addressed to this Mac (the Tailscale name or localhost),
-        // so a website using DNS rebinding can't reach the server from a browser here.
-        let host = (req.headers["host"] ?? "").split(separator: ":").first.map(String.init) ?? ""
-        guard host == "127.0.0.1" || host == "localhost" || host.hasSuffix(".ts.net") else {
-            return text(c, "403 Forbidden", "Forbidden")
+    // The page may only run its own two scripts and talk to this Mac (defense in depth: the page
+    // never puts Mac data into HTML, but if it ever did, injected script still couldn't run).
+    private static let scriptHashes: String = {
+        var hashes: [String] = []
+        var rest = dashboardHTML[...]
+        while let open = rest.range(of: "<script>"), let close = rest.range(of: "</script>", range: open.upperBound..<rest.endIndex) {
+            let digest = SHA256.hash(data: Data(rest[open.upperBound..<close.lowerBound].utf8))
+            hashes.append("'sha256-\(Data(digest).base64EncodedString())'")
+            rest = rest[close.upperBound...]
         }
+        return hashes.joined(separator: " ")
+    }()
+
+    private func pageHeaders(_ host: String) -> [String] {
+        ["Content-Security-Policy: default-src 'none'; script-src \(Self.scriptHashes); style-src 'unsafe-inline'; "
+            + "img-src 'self' blob:; connect-src 'self' wss://\(host); worker-src 'self'; manifest-src 'self'; "
+            + "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"]
+    }
+
+    private func page(_ c: NWConnection, _ host: String) {
+        reply(c, "200 OK", "text/html; charset=utf-8", Data(dashboardHTML.utf8), extraHeaders: pageHeaders(host))
+    }
+
+    private func sessionCookie(_ token: String) -> [String] {
+        ["Set-Cookie: \(Auth.cookieName)=\(token); Path=/; Max-Age=\(Int(Auth.sessionDays * 86400)); HttpOnly; SameSite=Strict; Secure",
+         "Set-Cookie: la_session=; Path=/; Max-Age=0"]  // the old name, from before
+    }
+
+    // A new password sign-in or Face ID key: tell the owner on the Mac and on their phones,
+    // so a sign-in they didn't make doesn't go unnoticed.
+    private func announce(_ title: String, _ body: String) {
+        notify("\(title). \(body)")
+        WebPush.send(.security, title: title, body: body)
+        AccessLog.write(title + " · " + body)
+    }
+
+    private func route(_ req: HTTPRequest, _ c: NWConnection) {
+        let host = ((req.headers["host"] ?? "").split(separator: ":").first.map(String.init) ?? "").lowercased()
         // Tailscale marks requests that came from the public internet (Funnel): never answer those.
         guard req.headers["tailscale-funnel-request"] == nil else {
+            return text(c, "403 Forbidden", "Forbidden")
+        }
+        let isStatic = ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icon-512.png", "/sw.js",
+                        "/manifest.webmanifest"].contains(req.path)
+
+        if Tailnet.isLoopback(host) {
+            // On this Mac's own 127.0.0.1 address the page only points to the Tailscale address:
+            // signing in here would hand the session to every other local web server.
+            if req.path == "/" { return page(c, host) }
+            if req.path == "/auth" {
+                let info: [String: Any] = ["loopback": true, "url": Tailnet.host.map { "https://\($0)/" } ?? ""]
+                return reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: info)) ?? Data())
+            }
+            if !isStatic { return text(c, "403 Forbidden", "Open Lid Awake at its Tailscale address.") }
+        } else if !Tailnet.isOwner(host: host, login: req.headers["tailscale-user-login"]) {
+            // Only this Mac's own Tailscale name, from a device signed in to the Mac's Tailscale
+            // account (Tailscale adds who it is; it can't be faked from another device). Also
+            // stops DNS rebinding, since no other name is answered.
+            return text(c, "403 Forbidden", "This device isn't signed in to the Tailscale account this Mac uses.")
+        }
+
+        // Requests started by other websites (or other devices' pages on the tailnet) are refused,
+        // except opening the page itself.
+        if !isStatic && req.path != "/", let site = req.headers["sec-fetch-site"], site != "same-origin" && site != "none" {
             return text(c, "403 Forbidden", "Forbidden")
         }
 
@@ -233,49 +325,40 @@ final class StatusServer: @unchecked Sendable {
         // status that says "off" are answered — no login, data, screen or control.
         if !awake() {
             switch req.path {
-            case "/": return reply(c, "200 OK", "text/html; charset=utf-8", Data(dashboardHTML.utf8))
+            case "/": return page(c, host)
             case "/auth": return reply(c, "200 OK", "application/json", Data(#"{"off":true}"#.utf8))
             default: return text(c, "423 Locked", "Lid Awake is off on your Mac.")
             }
         }
 
-        let cookies = Dictionary(
-            (req.headers["cookie"] ?? "").split(separator: ";").compactMap { pair -> (String, String)? in
-                let kv = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                return kv.count == 2 ? (kv[0], kv[1]) : nil
-            },
-            uniquingKeysWith: { first, _ in first })
-        let token = cookies[Auth.cookieName]
+        let token = Auth.token(fromCookies: req.headers["cookie"])
+        let device = Auth.deviceName(userAgent: req.headers["user-agent"])
         // The page and its login calls are open; everything else needs a valid session.
         let isPublic = req.path == "/" || req.path == "/auth" || req.path == "/login" || req.path == "/logout"
             || req.path == "/passkey/login-options" || req.path == "/passkey/login"
         if !isPublic && !Auth.isValid(token) {
             return text(c, "401 Unauthorized", "Locked")
         }
-        // Login and logout are POSTs with a custom header, which other websites can't send.
+        // Every change is a POST with a custom header, which other websites can't send.
         if req.method == "POST" && req.headers["x-lidawake"] != "1" {
             return text(c, "403 Forbidden", "Forbidden")
         }
 
         switch (req.method, req.path) {
         case ("GET", "/"):
-            reply(c, "200 OK", "text/html; charset=utf-8", Data(dashboardHTML.utf8))
+            page(c, host)
 
         case ("GET", "/auth"):
-            // Face ID needs HTTPS, so it's only offered on the Tailscale address.
             let info: [String: Any] = ["hasPassword": Auth.hasPassword, "loggedIn": Auth.isValid(token),
-                                       "faceID": host.hasSuffix(".ts.net") && Passkeys.count > 0]
+                                       "faceID": Passkeys.count > 0]
             reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: info)) ?? Data())
 
         case ("POST", "/login"):
             let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
-            switch Auth.login(body?["password"] as? String ?? "") {
+            switch Auth.login(body?["password"] as? String ?? "", device: device) {
             case .ok(let newToken):
-                let secure = host.hasSuffix(".ts.net") ? "; Secure" : ""
-                let maxAge = Int(Auth.sessionDays * 86400)
-                reply(c, "204 No Content", "text/plain", Data(), extraHeaders: [
-                    "Set-Cookie: \(Auth.cookieName)=\(newToken); Path=/; Max-Age=\(maxAge); HttpOnly; SameSite=Strict\(secure)",
-                ])
+                reply(c, "204 No Content", "text/plain", Data(), extraHeaders: sessionCookie(newToken))
+                announce("New sign-in to Lid Awake", "With the password, on \(device == "Browser" ? "a browser" : "an \(device)").")
             case .wrong:
                 text(c, "401 Unauthorized", "Wrong password.")
             case .locked(let seconds):
@@ -286,8 +369,8 @@ final class StatusServer: @unchecked Sendable {
 
         // Face ID (passkeys). Signing in: a one-time challenge, then the phone's signature.
         case ("GET", "/passkey/login-options"):
-            let options: [String: Any] = ["challenge": Passkeys.challenge("get"), "rpId": host,
-                                          "ids": Passkeys.credentialIDs]
+            // No list of keys: the phone offers its own (and strangers learn nothing).
+            let options: [String: Any] = ["challenge": Passkeys.challenge("get"), "rpId": host]
             reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: options)) ?? Data())
 
         case ("POST", "/passkey/login"):
@@ -300,22 +383,49 @@ final class StatusServer: @unchecked Sendable {
                   Passkeys.verify(credentialID: id, clientData: clientData, authenticatorData: authData,
                                   signature: signature, host: host)
             else { return text(c, "401 Unauthorized", "Face ID sign-in didn't work. Use your password.") }
-            reply(c, "204 No Content", "text/plain", Data(), extraHeaders: [
-                "Set-Cookie: \(Auth.cookieName)=\(Auth.loginWithPasskey()); Path=/; Max-Age=\(Int(Auth.sessionDays * 86400)); HttpOnly; SameSite=Strict; Secure",
-            ])
+            reply(c, "204 No Content", "text/plain", Data(), extraHeaders: sessionCookie(Auth.loginWithPasskey(id, device: device)))
 
-        // Adding Face ID (already signed in with the password).
-        case ("GET", "/passkey/register-options"):
-            guard host.hasSuffix(".ts.net") else { return text(c, "400 Bad Request", "Face ID works on the Tailscale address only.") }
-            let options: [String: Any] = ["challenge": Passkeys.challenge("create"), "rpId": host]
+        // Adding Face ID: signed in, and the password typed again before the phone is even asked
+        // (the one-time challenge is only handed out after the password checks out).
+        case ("POST", "/passkey/register-options"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            switch Auth.confirm(body?["password"] as? String ?? "") {
+            case .ok: break
+            case .locked(let seconds): return text(c, "429 Too Many Requests", "Too many wrong tries. Try again in \(seconds) seconds.")
+            default: return text(c, "401 Unauthorized", "Wrong password.")
+            }
+            let options: [String: Any] = ["challenge": Passkeys.challenge("create"), "rpId": host, "ids": Passkeys.credentialIDs]
             reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: options)) ?? Data())
 
         case ("POST", "/passkey/register"):
             let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
             guard let clientData = (body?["clientData"] as? String).flatMap(Passkeys.fromBase64url),
                   let attestation = (body?["attestation"] as? String).flatMap(Passkeys.fromBase64url),
-                  Passkeys.register(clientData: clientData, attestation: attestation, host: host)
+                  Passkeys.register(clientData: clientData, attestation: attestation, host: host, device: device)
             else { return text(c, "400 Bad Request", "Couldn't turn on Face ID. Try again.") }
+            reply(c, "204 No Content", "text/plain", Data())
+            announce("Face ID added to Lid Awake", "On \(device == "Browser" ? "a browser" : "an \(device)"). If this wasn't you, remove it from the Lid Awake menu on your Mac.")
+
+        // The newest lines of the activity log, for Settings.
+        case ("GET", "/activity"):
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: ["lines": AccessLog.recent(8)])) ?? Data())
+
+        // Signed-in devices: see them, sign one out, or all but this one.
+        case ("GET", "/sessions"):
+            let list = Auth.sessions(current: token).map { s -> [String: Any] in
+                ["id": s.id, "device": s.device, "created": Int(s.created.timeIntervalSince1970), "faceID": s.faceID, "current": s.current]
+            }
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: ["sessions": list])) ?? Data())
+
+        case ("POST", "/sessions/signout"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            if body?["others"] as? Bool == true {
+                Auth.signOut(keep: token)
+            } else if let id = body?["id"] as? String {
+                Auth.signOut(id: id, keep: token)
+            } else {
+                return text(c, "400 Bad Request", "Which device?")
+            }
             reply(c, "204 No Content", "text/plain", Data())
 
         // iPhone alerts: the Mac's public key, subscribing, and which alerts.
@@ -342,7 +452,7 @@ final class StatusServer: @unchecked Sendable {
         case ("POST", "/logout"):
             Auth.logout(token)
             reply(c, "204 No Content", "text/plain", Data(), extraHeaders: [
-                "Set-Cookie: \(Auth.cookieName)=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict",
+                "Set-Cookie: \(Auth.cookieName)=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure",
             ])
 
         case ("POST", "/awake"):
@@ -368,6 +478,7 @@ final class StatusServer: @unchecked Sendable {
             let opened: Bool = DispatchQueue.main.sync {
                 guard let path = PhoneApps.path(for: body?["id"] as? String ?? "") else { return false }
                 PhoneApps.open(path)
+                AccessLog.write("Opened \(PhoneApps.name(path)) from the phone · \(device)")
                 return true
             }
             guard opened else { return text(c, "404 Not Found", "That app isn't on your list any more.") }
@@ -378,6 +489,7 @@ final class StatusServer: @unchecked Sendable {
             let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
             let result: Bool? = DispatchQueue.main.sync {
                 guard let path = PhoneApps.path(for: body?["id"] as? String ?? "") else { return nil }
+                AccessLog.write("Quit \(PhoneApps.name(path)) from the phone · \(device)")
                 return PhoneApps.quit(path)
             }
             switch result {
@@ -435,6 +547,7 @@ final class StatusServer: @unchecked Sendable {
 
         case ("POST", "/input"):
             guard remoteAllowed() else { return text(c, "403 Forbidden", "Screen access is off.") }
+            guard controlAllowed() else { return text(c, "403 Forbidden", "View only: control from the phone is off in the Lid Awake menu on your Mac.") }
             guard controlPermission() else {
                 return text(c, "403 Forbidden", "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility.")
             }
@@ -454,12 +567,15 @@ final class StatusServer: @unchecked Sendable {
             let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
             switch body?["action"] as? String {
             case "lock":
+                guard controlAllowed() else { return text(c, "403 Forbidden", "View only: control from the phone is off in the Lid Awake menu on your Mac.") }
+                AccessLog.write("Mac locked from the phone · \(device)")
                 guard controlPermission() else {
                     return text(c, "403 Forbidden", "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility.")
                 }
                 // Control-⌘-Q, the macOS "Lock Screen" shortcut.
                 DispatchQueue.main.async { RemoteInput.perform(["type": "key", "char": "q", "mods": ["ctrl", "cmd"]]) }
             case "displayoff":
+                AccessLog.write("Display turned off from the phone · \(device)")
                 FrameStream.shared.displayOff()
             case "wake":
                 FrameStream.shared.wakeNow()

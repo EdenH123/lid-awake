@@ -12,15 +12,26 @@ final class LiveServer: @unchecked Sendable {
         var sessionValid: (String?) -> Bool
         var awake: () -> Bool
         var remoteAllowed: () -> Bool
+        var controlAllowed: () -> Bool
         var screenPermission: () -> Bool
         var controlPermission: () -> Bool
+        var allowLoopback = false  // the selftest's private server only
+    }
+
+    // For the menu bar: someone is watching the screen, or controlled it in the last few seconds.
+    private let activityLock = NSLock()
+    private var viewers = 0
+    private var lastInput = Date.distantPast
+    var activity: (viewers: Int, controlling: Bool) {
+        activityLock.lock(); defer { activityLock.unlock() }
+        return (viewers, Date().timeIntervalSince(lastInput) < 5)
     }
 
     private let listener: NWListener
     private let queue: DispatchQueue
     private let checks: Checks
     private var sockets: [ObjectIdentifier: NWConnection] = [:]  // every connection, from its first byte
-    private var handshakeTokens: [String?] = []                  // accepted handshakes, oldest first
+    private var handshakeTokens: [(token: String, device: String)] = []  // accepted handshakes, oldest first
     private static let maxSockets = 8
     private var observer: NSObjectProtocol?
     private var timer: DispatchSourceTimer?
@@ -33,10 +44,13 @@ final class LiveServer: @unchecked Sendable {
         // The handshake check must be in place before the listener starts.
         // (Each accepted handshake is followed by that connection becoming ready, in the same
         // order on this queue, so the session it used can be tied to the socket.)
-        var tokens: (String?) -> Void = { _ in }
+        var tokens: ((String, String)) -> Void = { _ in }
         ws.setClientRequestHandler(queue) { _, headers in
             let token = LiveServer.handshakeToken(headers, checks)
-            if let token { tokens(token) }
+            if let token {
+                let agent = headers.first { $0.name.lowercased() == "user-agent" }?.value
+                tokens((token, Auth.deviceName(userAgent: agent)))
+            }
             return NWProtocolWebSocket.Response(status: token != nil ? .accept : .reject, subprotocol: nil)
         }
         let params = NWParameters.tcp
@@ -76,16 +90,18 @@ final class LiveServer: @unchecked Sendable {
     // The session token of an allowed handshake, or nil to refuse it.
     private static func handshakeToken(_ headers: [(name: String, value: String)], _ checks: Checks) -> String? {
         func header(_ name: String) -> String? { headers.first { $0.name.lowercased() == name }?.value }
-        let host = (header("host") ?? "").split(separator: ":").first.map(String.init) ?? ""
-        let hostOK = host == "127.0.0.1" || host == "localhost" || host.hasSuffix(".ts.net")
-        // Origin must be this page: the Tailscale name itself, or the local page on 8787.
+        let host = ((header("host") ?? "").split(separator: ":").first.map(String.init) ?? "").lowercased()
+        // Same rule as the page: this Mac's Tailscale name from the owner's own device (Tailscale
+        // says who), with the page itself as the Origin. Plain 127.0.0.1 is only used by the selftest.
+        let hostOK = (checks.allowLoopback && Tailnet.isLoopback(host))
+            || Tailnet.isOwner(host: host, login: header("tailscale-user-login"))
         let origin = header("origin") ?? ""
-        let originOK = origin == "https://\(host)"
-            || origin == "http://127.0.0.1:\(statusPort)" || origin == "http://localhost:\(statusPort)"
-        let token = (header("cookie") ?? "").split(separator: ";").lazy
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .first { $0.hasPrefix(Auth.cookieName + "=") }
-            .map { String($0.dropFirst(Auth.cookieName.count + 1)) }
+        let originOK = Tailnet.isLoopback(host)
+            ? origin == "http://127.0.0.1:\(statusPort)" || origin == "http://localhost:\(statusPort)"
+            : origin == "https://\(host)"
+        let siteOK = header("sec-fetch-site").map { $0 == "same-origin" } ?? true
+        guard header("tailscale-funnel-request") == nil, siteOK else { return nil }
+        let token = Auth.token(fromCookies: header("cookie"))
         guard hostOK && originOK && checks.sessionValid(token)
             && checks.awake() && checks.remoteAllowed() && checks.screenPermission() else { return nil }
         return token
@@ -105,6 +121,7 @@ final class LiveServer: @unchecked Sendable {
         var flowControl = false
         var video = false
         var token: String?
+        var device = "phone"
         var lastProgress = Date()                   // last send that completed
         var inputs = 0, inputWindow = Date()        // input messages this second
         var usedInput = false
@@ -212,8 +229,14 @@ final class LiveServer: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
-                peer.token = self.handshakeTokens.isEmpty ? nil : self.handshakeTokens.removeFirst()
+                if !self.handshakeTokens.isEmpty {
+                    let first = self.handshakeTokens.removeFirst()
+                    peer.token = first.token
+                    peer.device = first.device
+                }
                 self.peers[key] = peer
+                self.activityLock.lock(); self.viewers = self.peers.count; self.activityLock.unlock()
+                if !self.checks.allowLoopback { AccessLog.write("Screen viewing started · \(peer.device)") }
                 FrameStream.shared.subscribe(id,
                     frame: { jpeg in self.queue.async { sendFrame(jpeg) } },
                     unavailable: { self.queue.async { self.sendText(connection, ["error": "Waking the Mac's screen… This usually takes a few seconds."]) } })
@@ -224,6 +247,8 @@ final class LiveServer: @unchecked Sendable {
                 self.sockets[key] = nil
                 if self.peers.removeValue(forKey: key) != nil {
                     FrameStream.shared.unsubscribe(id)
+                    self.activityLock.lock(); self.viewers = self.peers.count; self.activityLock.unlock()
+                    if !self.checks.allowLoopback { AccessLog.write("Screen viewing ended · \(peer.device)") }
                     // Don't leave a mouse button held down if the phone was mid-drag.
                     if peer.usedInput { DispatchQueue.main.async { RemoteInput.releaseButtons() } }
                 }
@@ -295,6 +320,9 @@ final class LiveServer: @unchecked Sendable {
         guard checks.awake(), checks.remoteAllowed() else {
             return sendText(connection, ["error": "Screen access is off."])
         }
+        guard checks.controlAllowed() else {
+            return sendText(connection, ["error": "View only: control from the phone is off in the Lid Awake menu on your Mac."])
+        }
         guard checks.controlPermission() else {
             return sendText(connection, ["error": "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility."])
         }
@@ -303,8 +331,10 @@ final class LiveServer: @unchecked Sendable {
             if Date().timeIntervalSince(peer.inputWindow) >= 1 { peer.inputWindow = Date(); peer.inputs = 0 }
             peer.inputs += 1
             if peer.inputs > 240 { return }
+            if !peer.usedInput && !checks.allowLoopback { AccessLog.write("Mac controlled from the phone · \(peer.device)") }
             peer.usedInput = true
         }
+        activityLock.lock(); lastInput = Date(); activityLock.unlock()
         if let text = message["text"] as? String, text.count > RemoteInput.maxText {
             return sendText(connection, ["error": "That's too much text to type at once."])
         }

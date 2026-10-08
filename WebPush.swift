@@ -6,7 +6,8 @@ import Foundation
 // iPhone), encrypted so only that phone can read them (RFC 8291) and signed with this Mac's
 // key (VAPID, RFC 8292). Alerts reach the phone even when the page is closed.
 enum WebPush {
-    enum Kind: String, CaseIterable { case turnedOff, lowBattery, claudeUsage, warm }
+    // `security` (new sign-in, Face ID added) always goes out; the others can be turned off per phone.
+    enum Kind: String, CaseIterable { case turnedOff, lowBattery, claudeUsage, warm, security }
 
     private struct Subscription: Codable {
         let endpoint: String
@@ -20,27 +21,46 @@ enum WebPush {
     // Only real push services: the Mac never posts to an address a page made up.
     private static let allowedHosts = ["web.push.apple.com", "fcm.googleapis.com", "updates.push.services.mozilla.com"]
 
-    // This Mac's VAPID key, made once.
+    // This Mac's VAPID key, made once (under the lock, so two alerts can't make two keys).
+    private static let keyLock = NSLock()
     private static var signingKey: P256.Signing.PrivateKey {
+        keyLock.lock(); defer { keyLock.unlock() }
         if let raw = defaults.data(forKey: "pushKey"), let key = try? P256.Signing.PrivateKey(rawRepresentation: raw) { return key }
         let key = P256.Signing.PrivateKey()
         defaults.set(key.rawRepresentation, forKey: "pushKey")
         return key
     }
 
+    // The push service's address, exactly as given: https, a known host, no port or login part.
+    private static func pushURL(_ endpoint: String) -> URL? {
+        guard let parts = URLComponents(string: endpoint), parts.scheme == "https",
+              let host = parts.percentEncodedHost, allowedHosts.contains(host),
+              parts.port == nil, parts.user == nil, parts.password == nil else { return nil }
+        return parts.url
+    }
+
+    // Push services answer directly; never follow a redirect somewhere else.
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+    private static let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+
     static var publicKey: String { Passkeys.base64url(signingKey.publicKey.x963Representation) }
 
     static var count: Int { lock.lock(); defer { lock.unlock() }; return stored().count }
 
     static func subscribe(endpoint: String, p256dh: String, auth: String, off: [String], pageHost: String) -> Bool {
-        guard let url = URL(string: endpoint), url.scheme == "https", let host = url.host,
-              allowedHosts.contains(where: { host == $0 || host.hasSuffix("." + $0) }),
+        guard pushURL(endpoint) != nil, endpoint.utf8.count < 1024,
               let key = Passkeys.fromBase64url(p256dh), key.count == 65, key.first == 4,
               let secret = Passkeys.fromBase64url(auth), secret.count == 16 else { return false }
         lock.lock(); defer { lock.unlock() }
         defaults.set("https://\(pageHost)", forKey: "pushContact")
         var all = stored().filter { $0.endpoint != endpoint }
         all.append(Subscription(endpoint: endpoint, p256dh: key, auth: secret, off: off.filter { Kind(rawValue: $0) != nil }))
+        all = Array(all.suffix(10))  // a few phones at most; the oldest goes first
         save(all)
         return true
     }
@@ -66,7 +86,7 @@ enum WebPush {
     // Sends to every phone that wants this kind. `done` runs when all have answered (or 8 s pass).
     static func send(_ kind: Kind?, title: String, body: String, done: (() -> Void)? = nil) {
         lock.lock()
-        let targets = stored().filter { kind == nil || !$0.off.contains(kind!.rawValue) }
+        let targets = stored().filter { kind == nil || kind == .security || !$0.off.contains(kind!.rawValue) }
         lock.unlock()
         guard !targets.isEmpty else { done?(); return }
         let payload = (try? JSONSerialization.data(withJSONObject: ["title": title, "body": body, "tag": kind?.rawValue ?? "test"])) ?? Data()
@@ -74,7 +94,7 @@ enum WebPush {
         for target in targets {
             guard let request = request(for: target, payload: payload) else { continue }
             group.enter()
-            URLSession.shared.dataTask(with: request) { _, response, _ in
+            session.dataTask(with: request) { _, response, _ in
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 // Gone or unknown: the phone unsubscribed or removed the app.
                 if status == 404 || status == 410 { unsubscribe(endpoint: target.endpoint) }
@@ -93,7 +113,7 @@ enum WebPush {
     // MARK: Encryption (RFC 8291, aes128gcm) and VAPID (RFC 8292)
 
     private static func request(for target: Subscription, payload: Data) -> URLRequest? {
-        guard let url = URL(string: target.endpoint), let host = url.host,
+        guard let url = pushURL(target.endpoint), let host = url.host,
               let body = try? encrypt(payload, to: target), let jwt = try? vapidToken(audience: "https://\(host)")
         else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 8)
