@@ -1044,6 +1044,11 @@ let dashboardHTML = #"""
   const canvas = $("screenCanvas");
   const canvasCtx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   function canPlayVideo() { return "VideoDecoder" in window && !videoBroken; }
+  let videoProblem = "";
+  // For the Mac's stream log: why this phone isn't playing video.
+  function videoWhy() {
+    return !("VideoDecoder" in window) ? "no VideoDecoder in this browser: " + navigator.userAgent : videoProblem;
+  }
   async function setupVideo(v) {
     videoConfigured = false;
     const config = {
@@ -1084,8 +1089,9 @@ let dashboardHTML = #"""
   function videoFailed(e) {
     if (videoBroken) return;
     videoBroken = true;
+    videoProblem = String(e && e.message || e);
     try { decoder && decoder.state !== "closed" && decoder.close(); } catch (err) {}
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false }));
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false, why: videoProblem }));
   }
 
   function watching() { return unlocked && currentTab === "screen" && !document.hidden; }
@@ -1103,7 +1109,7 @@ let dashboardHTML = #"""
     socket.onopen = () => {
       opened = true; wsFailures = 0;
       videoConfigured = false; videoBacklog = [];
-      socket.send(JSON.stringify({ quality, acks: true, video: canPlayVideo() }));
+      socket.send(JSON.stringify({ quality, acks: true, video: canPlayVideo(), why: videoWhy() }));
       pumpInput();
     };
     socket.onmessage = e => {

@@ -210,6 +210,9 @@ final class LiveServer: @unchecked Sendable {
         if let peer = peers[ObjectIdentifier(connection)] {
             if message["acks"] as? Bool == true { peer.flowControl = true }
             // The page can play H.264 (true), or its decoder failed and it wants JPEGs again (false).
+            if let wantsVideo = message["video"] as? Bool {
+                StreamStats.shared.note("phone video: \(wantsVideo ? "on" : "off")" + ((message["why"] as? String).map { " (\($0))" } ?? ""))
+            }
             if let wantsVideo = message["video"] as? Bool, wantsVideo != peer.video {
                 peer.video = wantsVideo
                 FrameStream.shared.setVideo(peer.id, wantsVideo ? FrameStream.VideoSink(

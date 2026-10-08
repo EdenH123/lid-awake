@@ -44,6 +44,12 @@ final class StreamStats {
     // Fallback (no live socket): one long-poll answer.
     func polled(bytes: Int) { lock.lock(); polls += 1; pollBytes += bytes; lock.unlock() }
 
+    // A one-off event (e.g. why a phone can't play video), written right away.
+    func note(_ text: String) {
+        let time = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        write("\(time) \(text)\n")
+    }
+
     private func flush() {
         lock.lock()
         guard captured + sent + polls > 0 else { lock.unlock(); return }
@@ -60,6 +66,12 @@ final class StreamStats {
         polls = 0; pollBytes = 0
         lock.unlock()
 
+        write(line)
+    }
+
+    private let fileLock = NSLock()
+    private func write(_ line: String) {
+        fileLock.lock(); defer { fileLock.unlock() }
         if let size = try? log.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 1_000_000 {
             try? FileManager.default.removeItem(at: log)
         }
