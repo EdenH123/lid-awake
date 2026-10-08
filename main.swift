@@ -100,6 +100,27 @@ func safetyStop(batteryGuard: Bool, heatGuard: Bool) -> String? {
     return nil
 }
 
+// The same checks as safetyStop, worded for the iPhone alert ("… after 3 h 12 min").
+func safetyStopAlertReason(batteryGuard: Bool, heatGuard: Bool) -> String? {
+    if batteryGuard, let b = batteryStatus(), b.onBattery, b.percent < batteryLimit {
+        return "Battery reached \(b.percent)%"
+    }
+    if heatGuard {
+        if let t = batteryTemperature(), t >= maxBatteryTemp { return String(format: "Battery got too hot (%.1f°C)", t) }
+        let thermal = ProcessInfo.processInfo.thermalState
+        if thermal == .serious || thermal == .critical { return "Your Mac was overheating" }
+    }
+    return nil
+}
+
+// "3 h 12 min", "45 min", "under a minute".
+func spokenDuration(_ seconds: TimeInterval) -> String {
+    let minutes = Int(seconds / 60)
+    if minutes < 1 { return "under a minute" }
+    let h = minutes / 60, m = minutes % 60
+    return h == 0 ? "\(m) min" : m == 0 ? "\(h) h" : "\(h) h \(m) min"
+}
+
 func sleepDisabled() -> Bool {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
@@ -348,9 +369,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
         guard isOn, !busy, !stopping else { return }
         if let end = endDate, Date() >= end {
-            stopWithAlert("Timer finished. Your Mac will sleep normally again.")
+            stopWithAlert("Timer finished. Your Mac will sleep normally again.", reason: "Timer finished")
         } else if let reason = safetyStop(batteryGuard: batteryGuard, heatGuard: heatGuard) {
-            stopWithAlert("\(reason) Turned off so your Mac can sleep.")
+            stopWithAlert("\(reason) Turned off so your Mac can sleep.",
+                          reason: safetyStopAlertReason(batteryGuard: batteryGuard, heatGuard: heatGuard) ?? reason)
         } else {
             checkAlerts()
         }
@@ -359,13 +381,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: iPhone alerts
 
     private var stopping = false
+    private var onSince = Date()
     private var lowBatteryAlerted = false
     private var warmAlerted = false
 
     // Tell the phone first (the Mac may sleep right after), then turn off.
-    func stopWithAlert(_ message: String) {
+    // Alerts read like Apple's: the key fact in the title, one plain sentence below.
+    func stopWithAlert(_ message: String, reason: String) {
         stopping = true
-        WebPush.send(.turnedOff, title: "Lid Awake turned off", body: message) { [weak self] in
+        let body = "\(reason) after \(spokenDuration(Date().timeIntervalSince(onSince))). Your Mac can sleep now."
+        WebPush.send(.turnedOff, title: "Lid Awake turned off", body: body) { [weak self] in
             guard let self else { return }
             self.stopping = false
             self.setAwake(false)
@@ -378,9 +403,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let b = batteryStatus() {
             if b.onBattery && b.percent <= 20 && !lowBatteryAlerted {
                 lowBatteryAlerted = true
-                WebPush.send(.lowBattery, title: "Mac battery at \(b.percent)%",
-                             body: batteryGuard ? "Lid Awake turns off at \(batteryLimit)%. Plug in the charger to keep it awake."
-                                                : "Plug in the charger to keep your Mac running.")
+                let minutes = powerInfo()["minutesToEmpty"] as? Int ?? -1
+                let left = minutes > 0 ? "About \(spokenDuration(Double(minutes) * 60)) left. " : ""
+                WebPush.send(.lowBattery, title: "Mac battery at \(b.percent)%", body: left + "Plug in to keep it running.")
             } else if !b.onBattery || b.percent > 25 { lowBatteryAlerted = false }
         }
         if let t = batteryTemperature() {
@@ -399,10 +424,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       let resets = w["resetsAt"] as? Int, resets > Int(Date().timeIntervalSince1970),
                       defaults.integer(forKey: "claudeAlerted.\(key)") != resets else { continue }
                 defaults.set(resets, forKey: "claudeAlerted.\(key)")
-                let when = DateFormatter.localizedString(from: Date(timeIntervalSince1970: Double(resets)),
-                                                         dateStyle: key == "sevenDay" ? .short : .none, timeStyle: .short)
+                let resetDate = Date(timeIntervalSince1970: Double(resets))
+                let time = DateFormatter.localizedString(from: resetDate, dateStyle: .none, timeStyle: .short)
+                let weekday = resetDate.formatted(.dateTime.weekday(.abbreviated))
+                let when = Calendar.current.isDateInToday(resetDate) ? "at \(time)" : "\(weekday) at \(time)"
                 WebPush.send(.claudeUsage, title: "Claude usage at \(Int(pct))%",
-                             body: "You've used \(Int(pct))% of your \(label) limit. It resets \(when).")
+                             body: "\(label.prefix(1).uppercased() + label.dropFirst()) limit, resets \(when) (in \(spokenDuration(resetDate.timeIntervalSinceNow))).")
             }
         }
     }
@@ -414,6 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The phone link exists only while lid-awake is on.
         if wasOn != isOn {
             servedState = isOn
+            if isOn { onSince = Date() }
             let on = isOn
             DispatchQueue.global(qos: .utility).async { ensureTailscaleServe(enabled: on) }
         }
