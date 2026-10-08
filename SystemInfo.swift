@@ -59,25 +59,18 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
         guard !usageChecking, Date().timeIntervalSince(usageCheckedAt) > interval,
               let claude = ["/opt/homebrew/bin/claude", "/usr/local/bin/claude",
                             NSHomeDirectory() + "/.local/bin/claude", NSHomeDirectory() + "/.claude/local/claude"]
-                .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+                .first(where: { FileManager.default.isExecutableFile(atPath: $0) && ownedSafely($0) }) else { return }
         usageChecking = true
         usageCheckedAt = Date()
         DispatchQueue.global(qos: .utility).async {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: claude)
-            // Skip the user's hooks and plugins, and don't save a session for this check.
-            p.arguments = ["-p", "/usage", "--setting-sources", "local", "--no-session-persistence"]
-            p.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-            let out = Pipe()
-            p.standardOutput = out
-            p.standardError = FileHandle.nullDevice
-            var text = ""
-            if (try? p.run()) != nil {
-                let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 45, execute: killer)
-                text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                p.waitUntilExit()
-                killer.cancel()
+            // Skip the user's hooks and plugins (an empty folder has no project settings), and
+            // don't save a session for this check.
+            var template = Array((NSTemporaryDirectory() + "lidawake-usage.XXXXXX").utf8CString)
+            let text = template.withUnsafeMutableBufferPointer { buffer -> String in
+                guard let dir = mkdtemp(buffer.baseAddress).map({ String(cString: $0) }) else { return "" }
+                defer { try? FileManager.default.removeItem(atPath: dir) }
+                return runOnItsOwn(claude, ["-p", "/usage", "--setting-sources", "local", "--no-session-persistence"],
+                                   in: dir, timeout: 45) ?? ""
             }
             if let limits = Self.parseUsage(text),
                let data = try? JSONSerialization.data(withJSONObject: ["rate_limits": limits, "updated": Int(Date().timeIntervalSince1970)]) {
@@ -229,4 +222,53 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
         guard seconds > 0.2, rx >= last.rx, tx >= last.tx else { return nil }
         return (Double(rx - last.rx) / seconds, Double(tx - last.tx) / seconds)
     }
+}
+
+// A program file (after links) that belongs to this user or the system and that no other
+// account can change.
+func ownedSafely(_ path: String) -> Bool {
+    guard let real = realpath(path, nil) else { return false }
+    defer { free(real) }
+    var info = stat()
+    guard stat(real, &info) == 0 else { return false }
+    return (info.st_uid == getuid() || info.st_uid == 0) && info.st_mode & (S_IWGRP | S_IWOTH) == 0
+}
+
+// Runs a helper program as its own program in macOS's eyes, not as part of Lid Awake, so it
+// gets none of Lid Awake's Screen Recording or Accessibility permission (the same thing Terminal
+// does for the commands it runs). It inherits no open files either. Returns its output, or nil
+// if it couldn't be started that way.
+func runOnItsOwn(_ path: String, _ args: [String], in dir: String, timeout: TimeInterval) -> String? {
+    typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") else { return nil }
+    var attr: posix_spawnattr_t?
+    posix_spawnattr_init(&attr)
+    defer { posix_spawnattr_destroy(&attr) }
+    guard unsafeBitCast(symbol, to: Disclaim.self)(&attr, 1) == 0,
+          posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)) == 0 else { return nil }
+
+    var fds: [Int32] = [0, 0]
+    guard pipe(&fds) == 0 else { return nil }
+    var actions: posix_spawn_file_actions_t?
+    posix_spawn_file_actions_init(&actions)
+    defer { posix_spawn_file_actions_destroy(&actions) }
+    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+    posix_spawn_file_actions_adddup2(&actions, fds[1], 1)
+    posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+    posix_spawn_file_actions_addchdir_np(&actions, dir)
+
+    let argv = ([path] + args).map { strdup($0) } + [nil]
+    defer { argv.forEach { free($0) } }
+    var pid: pid_t = 0
+    let started = posix_spawn(&pid, path, &actions, &attr, argv, environ)
+    close(fds[1])
+    guard started == 0 else { close(fds[0]); return nil }
+
+    let killer = DispatchWorkItem { kill(pid, SIGTERM) }
+    DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+    let output = FileHandle(fileDescriptor: fds[0], closeOnDealloc: true).readDataToEndOfFile()
+    var status: Int32 = 0
+    waitpid(pid, &status, 0)
+    killer.cancel()
+    return String(data: output, encoding: .utf8)
 }

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Rebuild Lid Awake from the sources next to this script and install it.
 # Signs with the "Lid Awake Local Signing" certificate so macOS keeps the app's
-# Screen Recording and Accessibility permissions across updates.
+# Screen Recording and Accessibility permissions across updates, with the hardened
+# runtime on so no other program can load its own code into Lid Awake.
 set -e
 SRC="$(cd "$(dirname "$0")" && pwd)"
 APP="$HOME/Applications/Lid Awake.app"
@@ -11,12 +12,10 @@ TMP="$(mktemp -d)"
 swiftc -O -o "$TMP/LidAwake" "$SRC"/*.swift
 cp "$TMP/LidAwake" "$APP/Contents/MacOS/LidAwake"
 [ -f "$SRC/Info.plist" ] && cp "$SRC/Info.plist" "$APP/Contents/Info.plist"
-if [ "$SRC" != "$APP/Contents/Resources" ]; then
-  rm -f "$APP/Contents/Resources/"*.swift
-  cp "$SRC"/*.swift "$SRC/build.sh" "$APP/Contents/Resources/"
-fi
-codesign --force --sign "$CERT" --identifier local.lidawake "$APP"
-codesign --verify "$APP"
+# The sources live in ~/Developer/LidAwake only (older builds kept a copy inside the app).
+rm -f "$APP/Contents/Resources/"*.swift "$APP/Contents/Resources/build.sh"
+codesign --force --options runtime --sign "$CERT" --identifier local.lidawake "$APP"
+codesign --verify --strict "$APP"
 rm -rf "$TMP"
 
 # launchd restarts the app within a few seconds.

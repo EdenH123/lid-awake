@@ -26,6 +26,10 @@ Live check: Tailscale Serve is tailnet-only, Funnel OFF.
 - build.sh copies sources + build.sh into Contents/Resources; signing key likely usable without prompt. Stop copying; consider key ACL.
 - osascript admin fallback (main.swift:617) — drop, show "sudoers rule missing".
 
+### Pack 2 outcome (2026-10-09)
+Done: hardened runtime; claude runs disclaimed (posix_spawn + responsibility_spawnattrs_setdisclaim, CLOEXEC, fresh empty cwd, owner/permission check); no sources in the bundle; no osascript password fallback; notify() escapes quotes.
+Not done, by design: moving secrets to the Keychain. Tested: legacy keychain items created by a self-signed app need a password prompt after every rebuild (partition = cdhash; read returned -128), anyone can still overwrite them, and the data-protection keychain needs a team entitlement (-34018). Root cause: the "Lid Awake Local Signing" private key is usable by codesign without a prompt, so same-user malware can sign its own binary as Lid Awake and get its TCC rights directly. The only real fix is requiring approval on each use of that key (user's choice; each update would need a click). Detection instead: Pack 3 sign-in alerts + Pack 4 on-Mac "being viewed" indicator.
+
 ## Pack 3 — Sign-in upgrades
 - Face ID add needs only a cookie; no attestation; same credential ID overwrites (Passkeys:53); login-options leaks ids publicly. Require password to add, refuse existing IDs, push+notify on add, list/remove in menu, empty allowCredentials, stable user.id + excludeCredentials.
 - Lockout global + in-memory (resets on restart) → tailnet DoS / local reset. Persist; key on Tailscale-User-Login; menu "clear lockout".

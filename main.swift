@@ -135,6 +135,7 @@ func sleepDisabled() -> Bool {
 }
 
 func notify(_ message: String) {
+    let message = message.replacingOccurrences(of: "\\", with: "").replacingOccurrences(of: "\"", with: "'")
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
     p.arguments = ["-e", "display notification \"\(message)\" with title \"Lid Awake\""]
@@ -611,15 +612,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.isEnabled = false
         if !on { endDate = nil }
 
-        // Try passwordless sudo first (works once /etc/sudoers.d/lidawake allows
-        // this exact pmset command); otherwise fall back to the password prompt.
-        // osascript runs as a separate process so this app's main thread never
-        // blocks and the dialog can receive keyboard input.
-        let pmset = "/usr/bin/pmset -a disablesleep \(on ? 1 : 0)"
+        // Only through the permission rule that allows exactly this pmset command
+        // (/etc/sudoers.d/lidawake). No password prompt as a fallback: a prompt that appears on
+        // its own teaches people to type their password into prompts.
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "/usr/bin/sudo -n \(pmset) 2>/dev/null || /usr/bin/osascript -e 'do shell script \"\(pmset)\" with administrator privileges'"]
-        p.terminationHandler = { _ in
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        p.arguments = ["-n", "/usr/bin/pmset", "-a", "disablesleep", on ? "1" : "0"]
+        p.standardError = FileHandle.nullDevice
+        p.terminationHandler = { process in
+            if process.terminationStatus != 0 {
+                notify("Couldn't \(on ? "turn on" : "turn off") Lid Awake: its permission rule for pmset is missing.")
+            }
             DispatchQueue.main.async {
                 self.busy = false
                 self.toggle.isEnabled = true
