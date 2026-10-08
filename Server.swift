@@ -262,6 +262,24 @@ final class StatusServer: @unchecked Sendable {
             FrameStream.shared.wakeNow()
             reply(c, "204 No Content", "text/plain", Data())
 
+        case ("POST", "/quit-app"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            let result: Bool? = DispatchQueue.main.sync {
+                guard let path = PhoneApps.path(for: body?["id"] as? String ?? "") else { return nil }
+                return PhoneApps.quit(path)
+            }
+            switch result {
+            case nil: text(c, "404 Not Found", "That app isn't on your list any more.")
+            case false: text(c, "409 Conflict", "That app isn't open.")
+            default: reply(c, "204 No Content", "text/plain", Data())
+            }
+
+        case ("POST", "/apps-order"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard let ids = body?["ids"] as? [String] else { return text(c, "400 Bad Request", "Missing app order.") }
+            DispatchQueue.main.sync { PhoneApps.reorder(ids) }
+            reply(c, "204 No Content", "text/plain", Data())
+
         case ("POST", "/timer"):
             // Same choices as the menu's "Turn off after"; 0 = never.
             let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]

@@ -44,6 +44,16 @@ enum PhoneApps {
 
     static func path(for id: String) -> String? { paths.first { self.id($0) == id } }
 
+    // New order from the phone. Unknown ids are ignored; apps not mentioned keep their place at the end.
+    static func reorder(_ ids: [String]) {
+        var rest = paths
+        var ordered: [String] = []
+        for id in ids {
+            if let i = rest.firstIndex(where: { self.id($0) == id }) { ordered.append(rest.remove(at: i)) }
+        }
+        paths = ordered + rest
+    }
+
     // The app's icon as a 256×256 PNG (sharp at phone sizes).
     static func iconPNG(_ path: String) -> Data? {
         if let cached = iconCache[path] { return cached }
@@ -58,6 +68,14 @@ enum PhoneApps {
         let png = rep.representation(using: .png, properties: [:])
         iconCache[path] = png
         return png
+    }
+
+    // Asks the app to quit, the same as ⌘Q: it can still ask to save unsaved work.
+    // Returns false if it wasn't running.
+    static func quit(_ path: String) -> Bool {
+        let running = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == path }
+        running.forEach { $0.terminate() }
+        return !running.isEmpty
     }
 
     static func open(_ path: String) {

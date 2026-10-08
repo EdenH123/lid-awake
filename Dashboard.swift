@@ -251,6 +251,32 @@ let dashboardHTML = #"""
     transition: transform .2s cubic-bezier(.32,.72,0,1), opacity .2s ease;
   }
   .app:active { transform: scale(.9); }
+  .app { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; transition: transform .2s cubic-bezier(.32,.72,0,1), opacity .2s ease, scale .25s cubic-bezier(.32,.72,0,1); }
+  /* Hold an icon to rearrange: icons wiggle, the one under your finger lifts and follows it. */
+  .app-grid { position: relative; }
+  .app-grid.editing { touch-action: none; }
+  .app-grid.editing .app { animation: jiggle .25s ease-in-out infinite alternate; }
+  .app-grid.editing .app:nth-child(2n) { animation-duration: .23s; animation-delay: -.11s; }
+  .app-grid.editing .app:active { transform: none; }
+  .app.dragging { animation: none !important; scale: 1.12; z-index: 3; pointer-events: none; filter: drop-shadow(0 10px 18px rgba(0,0,0,.28)); }
+  @keyframes jiggle { from { rotate: -1.8deg; } to { rotate: 1.8deg; } }
+  /* While rearranging, open apps get a quit badge in the corner. */
+  .quit {
+    position: absolute; top: -7px; left: calc(50% - var(--icon-size, 68px) / 2 - 7px); z-index: 2;
+    width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; display: none; place-items: center; cursor: pointer;
+    background: rgba(118,118,128,.82); color: #fff; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  }
+  .quit svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+  .app-grid.editing .app.running .quit { display: grid; }
+  body:has(.app-grid.editing) .lock-btn { visibility: hidden; }
+  .app { position: relative; }
+  body.apps-full .app { --icon-size: var(--icon); }
+  .done-btn {
+    position: fixed; z-index: 12; top: max(10px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right));
+    font-size: 15px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 9px 20px; cursor: pointer;
+    box-shadow: var(--bar-shadow);
+  }
   .app.opening { opacity: .45; }
   .app img { width: 68px; height: 68px; display: block; -webkit-user-drag: none; pointer-events: none; }
   .app .name { font-size: 12px; letter-spacing: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -507,6 +533,7 @@ let dashboardHTML = #"""
   </div>
 
   <div class="tab" id="tab-apps" hidden>
+    <button type="button" class="done-btn" id="appsDone" hidden>Done</button>
     <div class="app-grid" id="appGrid"></div>
     <div class="apps-empty" id="appsEmpty" hidden>
       <h2>No apps yet</h2>
@@ -861,6 +888,7 @@ let dashboardHTML = #"""
     $("tab-status").hidden = name !== "status";
     $("tab-screen").hidden = name !== "screen";
     $("tab-apps").hidden = name !== "apps";
+    if (name !== "apps" && editingApps) setEditing(false);
     $("main").classList.toggle("wide", name === "screen");
     try { localStorage.setItem("tab", name); } catch (e) {}
     render();
@@ -1474,7 +1502,7 @@ let dashboardHTML = #"""
   function renderApps() {
     const apps = data.apps || [];
     const key = apps.map(a => a.id).join();
-    if (key !== appsKey) {
+    if (key !== appsKey && !editingApps) {
       appsKey = key;
       const grid = $("appGrid");
       grid.replaceChildren(...apps.map(a => {
@@ -1490,9 +1518,14 @@ let dashboardHTML = #"""
         name.textContent = a.name;
         const run = document.createElement("span");
         run.className = "run";
-        b.append(img, name, run);
+        const quit = document.createElement("span");
+        quit.className = "quit";
+        quit.setAttribute("role", "button");
+        quit.setAttribute("aria-label", "Quit " + a.name);
+        quit.innerHTML = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>';
+        b.append(quit, img, name, run);
         b.setAttribute("aria-label", "Open " + a.name);
-        b.addEventListener("click", () => openApp(a, b));
+        b.addEventListener("click", () => { if (!editingApps) openApp(a, b); });
         return b;
       }));
     }
@@ -1531,6 +1564,125 @@ let dashboardHTML = #"""
     poll();
   }
   $("openedShow").addEventListener("click", () => { $("openedBar").hidden = true; showTab("screen"); });
+
+  // ---------- Apps: hold an icon to rearrange ----------
+  let editingApps = false, appHoldTimer = null, drag = null;
+  const appGrid = $("appGrid"), APPS_FOOT = $("appsFoot").textContent;
+  const SPRING = "cubic-bezier(.32,.72,0,1)";
+  function setEditing(on) {
+    editingApps = on;
+    appGrid.classList.toggle("editing", on);
+    $("appsDone").hidden = !on;
+    $("appsFoot").textContent = on ? "Drag an app to move it. Tap × to quit an open app. Tap Done when you're finished." : APPS_FOOT;
+    if (!on && data) renderApps();
+  }
+  $("appsDone").addEventListener("click", () => setEditing(false));
+  // Tapping empty space also ends rearranging, as on the iPhone home screen.
+  $("tab-apps").addEventListener("click", e => {
+    if (editingApps && !e.target.closest(".app, .done-btn")) setEditing(false);
+  });
+  appGrid.addEventListener("contextmenu", e => e.preventDefault());
+  // Keep the page from scrolling while an icon is being dragged.
+  document.addEventListener("touchmove", e => { if (drag) e.preventDefault(); }, { passive: false });
+
+  appGrid.addEventListener("pointerdown", e => {
+    const app = e.target.closest(".app");
+    if (!app) return;
+    if (editingApps && e.target.closest(".quit")) return quitApp(app);
+    if (editingApps) return startDrag(app, e.pointerId, e.clientX, e.clientY);
+    // Not rearranging yet: a hold of about half a second starts it (moving the finger cancels).
+    const start = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    const stop = () => { clearTimeout(appHoldTimer); ["pointermove", "pointerup", "pointercancel"].forEach(t => removeEventListener(t, watch)); };
+    const watch = ev => {
+      if (ev.pointerId !== start.id) return;
+      if (ev.type === "pointermove") {
+        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 10) stop();
+        else { start.x = ev.clientX; start.y = ev.clientY; }
+      } else stop();
+    };
+    ["pointermove", "pointerup", "pointercancel"].forEach(t => addEventListener(t, watch));
+    appHoldTimer = setTimeout(() => {
+      stop();
+      setEditing(true);
+      startDrag(app, start.id, start.x, start.y);
+    }, 450);
+  });
+
+  function startDrag(app, pointerId, x, y) {
+    const g = appGrid.getBoundingClientRect();
+    drag = { app, id: pointerId, grabX: x - g.left - app.offsetLeft, grabY: y - g.top - app.offsetTop, moved: false };
+    app.classList.add("dragging");
+    try { appGrid.setPointerCapture(pointerId); } catch (e) {}
+  }
+  appGrid.addEventListener("pointermove", e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag.moved = true;
+    const g = appGrid.getBoundingClientRect();
+    const gx = e.clientX - g.left, gy = e.clientY - g.top;
+    // Which slot is the finger over? Layout positions ignore animations, so this doesn't flicker.
+    const over = [...appGrid.children].find(el => gx >= el.offsetLeft && gx < el.offsetLeft + el.offsetWidth
+                                               && gy >= el.offsetTop && gy < el.offsetTop + el.offsetHeight);
+    if (over && over !== drag.app) moveApp(drag.app, over);
+    drag.app.style.translate = `${gx - drag.grabX - drag.app.offsetLeft}px ${gy - drag.grabY - drag.app.offsetTop}px`;
+  });
+  // Move `app` into `over`'s place; the others slide to their new spots.
+  function moveApp(app, over) {
+    const items = [...appGrid.children];
+    const before = new Map(items.map(el => [el, { x: el.offsetLeft, y: el.offsetTop }]));
+    appGrid.insertBefore(app, items.indexOf(app) < items.indexOf(over) ? over.nextSibling : over);
+    for (const el of items) {
+      if (el === app) continue;
+      const b = before.get(el), dx = b.x - el.offsetLeft, dy = b.y - el.offsetTop;
+      if (dx || dy) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 320, easing: SPRING });
+    }
+  }
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { app, moved } = drag;
+    drag = null;
+    const from = app.style.translate;
+    app.classList.remove("dragging");
+    app.style.translate = "";
+    if (from) app.animate([{ translate: from }, { translate: "0px 0px" }], { duration: 320, easing: SPRING });
+    if (moved) saveAppOrder();
+  }
+  appGrid.addEventListener("pointerup", endDrag);
+  appGrid.addEventListener("pointercancel", endDrag);
+  async function quitApp(button) {
+    const app = (data.apps || []).find(a => a.id === button.dataset.id);
+    if (!app) return;
+    button.classList.remove("running");
+    let message = `Asked ${app.name} to quit`;
+    try {
+      const res = await fetch("quit-app", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ id: app.id }),
+      });
+      if (res.status === 401 || res.status === 423) return locked();
+      if (!res.ok) message = await res.text();
+    } catch (e) { message = "Can't reach your Mac."; }
+    $("openedText").textContent = message;
+    $("openedBar").hidden = false;
+    clearTimeout(openedTimer);
+    openedTimer = setTimeout(() => { $("openedBar").hidden = true; }, 5000);
+    // Apps can take a moment to close (or stop to ask about saving), so check again shortly.
+    setTimeout(poll, 1200);
+  }
+  async function saveAppOrder() {
+    const ids = [...appGrid.children].map(el => el.dataset.id);
+    appsKey = ids.join();
+    // Match the last status too, so nothing redraws the old order before the next update.
+    if (data && data.apps) data.apps.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    try {
+      const res = await fetch("apps-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ ids }),
+      });
+      if (res.status === 401 || res.status === 423) return locked();
+    } catch (e) {}
+  }
 
   // ---------- Timer ----------
   // Picking a length restarts the countdown from now, so it also works as "give me more time".
