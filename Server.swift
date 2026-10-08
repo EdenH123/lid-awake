@@ -106,9 +106,10 @@ final class StatusServer: @unchecked Sendable {
     private let remoteAllowed: () -> Bool
     private let awake: () -> Bool
     private let turnOff: () -> Void
+    private let setTimer: (Int) -> Bool
 
     init?(status: @escaping () -> Data, remoteAllowed: @escaping () -> Bool, awake: @escaping () -> Bool,
-          turnOff: @escaping () -> Void) {
+          turnOff: @escaping () -> Void, setTimer: @escaping (Int) -> Bool) {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: statusPort)!)
@@ -118,6 +119,7 @@ final class StatusServer: @unchecked Sendable {
         self.remoteAllowed = remoteAllowed
         self.awake = awake
         self.turnOff = turnOff
+        self.setTimer = setTimer
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return }
             connection.start(queue: self.queue)
@@ -239,6 +241,14 @@ final class StatusServer: @unchecked Sendable {
                 return text(c, "400 Bad Request", "Lid-awake can only be turned on from the Mac.")
             }
             DispatchQueue.main.async { self.turnOff() }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        case ("POST", "/timer"):
+            // Same choices as the menu's "Turn off after"; 0 = never.
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard let minutes = body?["minutes"] as? Int, setTimer(minutes) else {
+                return text(c, "400 Bad Request", "Unknown timer length.")
+            }
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("GET", "/status"):

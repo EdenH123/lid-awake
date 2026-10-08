@@ -80,8 +80,16 @@ let dashboardHTML = #"""
   .row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .value { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-  /* Status: the main switch, laid out like the account card at the top of Settings. */
-  .hero { display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
+  /* Status: the main switch, laid out like the account card at the top of Settings, with the timer below it. */
+  .hero-group { background: var(--card); border-radius: 26px; padding-left: 16px; overflow: hidden; }
+  .hero { display: flex; align-items: center; gap: 14px; padding: 14px 16px 14px 0; }
+  .hero + .row::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: .5px; background: var(--line); }
+  /* A pop-up row: the value with up/down chevrons; the iPhone's own picker opens on tap. */
+  .picker { cursor: pointer; }
+  .picker .value { color: var(--blue); transition: opacity .2s ease; }
+  .picker.saving .value { opacity: .4; }
+  .picker .chev { width: 9px; height: 15px; margin-left: -6px; fill: none; stroke: var(--blue); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .picker select { position: absolute; inset: 0; width: 100%; opacity: 0; font-size: 16px; cursor: pointer; -webkit-appearance: none; appearance: none; }
   .hero .app-icon {
     width: 58px; height: 58px; border-radius: 14px; flex: none; display: grid; place-items: center;
     background: var(--gray); color: #fff; transition: background .3s ease;
@@ -353,7 +361,8 @@ let dashboardHTML = #"""
 
   <div class="tab" id="tab-status">
     <div class="section">
-      <section class="card hero" id="statusCard">
+      <div class="hero-group">
+      <section class="hero" id="statusCard">
         <div class="app-icon" aria-hidden="true">
           <svg viewBox="0 0 34 34"><rect x="6" y="8" width="22" height="14.5" rx="1.8"/><path d="M3 26h28"/></svg>
         </div>
@@ -363,6 +372,15 @@ let dashboardHTML = #"""
         </div>
         <button class="awake-switch" id="awakeSwitch" role="switch" aria-label="Stay awake with lid closed"></button>
       </section>
+      <label class="row picker">
+        <span class="title">Turn off after</span>
+        <span class="value" id="timerRow">—</span><svg class="chev" viewBox="0 0 10 16" aria-hidden="true"><path d="M2 6l3-3 3 3M2 10l3 3 3-3"/></svg>
+        <select id="timerSelect" aria-label="Turn off after">
+          <option value="0">Never</option><option value="15">15 minutes</option><option value="30">30 minutes</option>
+          <option value="60">1 hour</option><option value="120">2 hours</option><option value="240">4 hours</option><option value="480">8 hours</option>
+        </select>
+      </label>
+      </div>
       <div class="section-foot" id="stateLabel"></div>
     </div>
 
@@ -430,12 +448,11 @@ let dashboardHTML = #"""
     <div class="section">
       <div class="section-head">Lid Awake settings</div>
       <div class="list">
-        <div class="row"><span class="title">Turn off after</span><span class="value" id="timerRow">—</span></div>
         <div class="row"><span class="title">Low-battery limit</span><span class="value" id="batteryGuardRow">—</span></div>
         <div class="row"><span class="title">Heat limit</span><span class="value" id="heatGuardRow">—</span></div>
         <div class="row"><span class="title">Mac heat</span><span class="value" id="thermal">—</span></div>
       </div>
-      <div class="section-foot">Change these from the Lid Awake menu on your Mac.</div>
+      <div class="section-foot">Change the limits from the Lid Awake menu on your Mac.</div>
     </div>
   </div>
 
@@ -602,7 +619,10 @@ let dashboardHTML = #"""
     const timerChoice = data.timerMinutes > 0
       ? (data.timerMinutes >= 60 ? `${data.timerMinutes / 60} hour${data.timerMinutes === 60 ? "" : "s"}` : `${data.timerMinutes} minutes`)
       : "Never";
-    $("timerRow").textContent = timerChoice;
+    if (!timerSaving) {
+      $("timerRow").textContent = timerChoice;
+      $("timerSelect").value = String(data.timerMinutes);
+    }
     $("batteryGuardRow").textContent = data.batteryGuard ? `Below ${data.batteryLimit}%` : "Off";
     $("heatGuardRow").textContent = data.heatGuard ? `Above ${data.maxBatteryTemp}°C` : "Off";
     const thermalText = { nominal: "Normal", fair: "Warm", serious: "Hot", critical: "Critical" }[data.thermalState] || "—";
@@ -1383,6 +1403,28 @@ let dashboardHTML = #"""
       });
     } catch (e) {}
     setTimeout(checkAuth, 1500);
+  });
+
+  // ---------- Timer ----------
+  // Picking a length restarts the countdown from now, so it also works as "give me more time".
+  let timerSaving = false;
+  $("timerSelect").addEventListener("change", async () => {
+    const select = $("timerSelect");
+    const minutes = Number(select.value);
+    timerSaving = true;
+    $("timerRow").textContent = select.options[select.selectedIndex].text;
+    select.closest(".picker").classList.add("saving");
+    try {
+      const res = await fetch("timer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ minutes }),
+      });
+      if (res.status === 401 || res.status === 423) { timerSaving = false; return locked(); }
+    } catch (e) {}
+    timerSaving = false;
+    select.closest(".picker").classList.remove("saving");
+    await poll();
   });
 
   // ---------- Start ----------

@@ -239,6 +239,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self, self.isOn, !self.busy else { return }
                 self.setAwake(false)
                 notify("Turned off from your phone. Your Mac will sleep normally again.")
+            },
+            setTimer: { [weak self] minutes in
+                guard timerChoices.contains(where: { $0.minutes == minutes }) else { return false }
+                DispatchQueue.main.sync { self?.setTimer(minutes: minutes) }
+                return true
             }
         )
         liveServer = LiveServer(checks: .init(
@@ -359,8 +364,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func pickTimer(_ sender: NSMenuItem) {
-        timerMinutes = timerChoices[sender.tag].minutes
-        // Changing the timer while on restarts the countdown from now.
+        setTimer(minutes: timerChoices[sender.tag].minutes)
+    }
+
+    // Used by the menu and the phone. Changing the timer while on restarts the countdown from now.
+    func setTimer(minutes: Int) {
+        timerMinutes = minutes
         if isOn {
             endDate = timerMinutes > 0 ? Date().addingTimeInterval(Double(timerMinutes) * 60) : nil
         }
