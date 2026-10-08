@@ -45,11 +45,84 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
 
     // MARK: Claude plan usage
 
-    // Written by the Claude Code status line script (~/.claude/statusline-lidawake.py) after each
-    // Claude reply: the 5-hour and weekly limits, as Claude Code reports them.
+    // Saved by the Claude Code status line script (~/.claude/statusline-lidawake.py) after each
+    // terminal reply, and by refreshClaudeUsage() below: the 5-hour and weekly limits.
+    private static let usageFile = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/LidAwake/claude-usage.json")
+    private var usageCheckedAt = Date.distantPast
+    private var usageChecking = false
+
+    // Asks Claude Code for the numbers ("/usage" sends no message and uses none of the limit).
+    // Called on each status request; runs at most every 3 minutes, in the background, so the
+    // numbers stay fresh while the phone is looking even when no terminal session is running.
+    func refreshClaudeUsage() {
+        guard !usageChecking, Date().timeIntervalSince(usageCheckedAt) > 180,
+              let claude = ["/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+                            NSHomeDirectory() + "/.local/bin/claude", NSHomeDirectory() + "/.claude/local/claude"]
+                .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+        usageChecking = true
+        usageCheckedAt = Date()
+        DispatchQueue.global(qos: .utility).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: claude)
+            // Skip the user's hooks and plugins, and don't save a session for this check.
+            p.arguments = ["-p", "/usage", "--setting-sources", "local", "--no-session-persistence"]
+            p.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = FileHandle.nullDevice
+            var text = ""
+            if (try? p.run()) != nil {
+                let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 45, execute: killer)
+                text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                p.waitUntilExit()
+                killer.cancel()
+            }
+            if let limits = Self.parseUsage(text),
+               let data = try? JSONSerialization.data(withJSONObject: ["rate_limits": limits, "updated": Int(Date().timeIntervalSince1970)]) {
+                try? FileManager.default.createDirectory(at: Self.usageFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? data.write(to: Self.usageFile, options: .atomic)
+            }
+            DispatchQueue.main.async { self.usageChecking = false }
+        }
+    }
+
+    // "Current session: 74% used · resets Oct 8 at 3:09pm (Asia/Jerusalem)" and
+    // "Current week (all models): 84% used · resets Oct 10 at 10:59pm (…)" → status-line format.
+    static func parseUsage(_ text: String) -> [String: Any]? {
+        var limits: [String: Any] = [:]
+        for (label, key) in [("Current session", "five_hour"), ("Current week (all models)", "seven_day")] {
+            guard let line = text.components(separatedBy: "\n").first(where: { $0.hasPrefix(label + ":") }),
+                  let pctRange = line.range(of: #"(\d+(\.\d+)?)% used"#, options: .regularExpression),
+                  let pct = Double(line[pctRange].dropLast(6)) else { continue }
+            var window: [String: Any] = ["used_percentage": pct]
+            if let r = line.range(of: #"resets (.+?) \("#, options: .regularExpression),
+               let date = resetDate(String(line[r].dropFirst(7).dropLast(2))) {
+                window["resets_at"] = Int(date.timeIntervalSince1970)
+            }
+            limits[key] = window
+        }
+        return limits.isEmpty ? nil : limits
+    }
+
+    // "Oct 8 at 3:09pm" or "Oct 10 at 11pm" (this year, local time).
+    private static func resetDate(_ s: String) -> Date? {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        let year = Calendar.current.component(.year, from: Date())
+        for format in ["MMM d 'at' h:mma yyyy", "MMM d 'at' ha yyyy"] {
+            f.dateFormat = format
+            if var d = f.date(from: s.uppercased().replacingOccurrences(of: " AT ", with: " at ") + " \(year)") {
+                if d < Date().addingTimeInterval(-86400 * 30) { d = Calendar.current.date(byAdding: .year, value: 1, to: d) ?? d }
+                return d
+            }
+        }
+        return nil
+    }
+
     func claudeUsage() -> [String: Any]? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/LidAwake/claude-usage.json")
+        let url = Self.usageFile
         guard let data = try? Data(contentsOf: url),
               let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let limits = saved["rate_limits"] as? [String: Any] else { return nil }

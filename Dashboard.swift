@@ -1545,7 +1545,7 @@ let dashboardHTML = #"""
     show(c.fiveHour, "claude5h", false);
     show(c.sevenDay, "claudeWeek", true);
     const ago = Math.max(0, Math.round((now - c.updated) / 60));
-    $("claudeFoot").textContent = "From your last Claude Code reply, " +
+    $("claudeFoot").textContent = "Updated " +
       (ago < 1 ? "just now." : ago < 60 ? `${ago} min ago.` : ago < 1440 ? `${Math.round(ago / 60)} h ago.` : "over a day ago.");
   }
 

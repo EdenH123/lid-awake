@@ -474,6 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func statusJSON() -> Data {
+        SystemInfo.shared.refreshClaudeUsage()
         let thermalNames = ["nominal", "fair", "serious", "critical"]
         var s: [String: Any] = [
             "host": computerName,
