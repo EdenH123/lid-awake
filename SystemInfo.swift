@@ -43,6 +43,25 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
         return ["mac": mac, "net": net]
     }
 
+    // MARK: Claude plan usage
+
+    // Written by the Claude Code status line script (~/.claude/statusline-lidawake.py) after each
+    // Claude reply: the 5-hour and weekly limits, as Claude Code reports them.
+    func claudeUsage() -> [String: Any]? {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/LidAwake/claude-usage.json")
+        guard let data = try? Data(contentsOf: url),
+              let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let limits = saved["rate_limits"] as? [String: Any] else { return nil }
+        var out: [String: Any] = ["updated": saved["updated"] ?? 0]
+        for (key, name) in [("five_hour", "fiveHour"), ("seven_day", "sevenDay")] {
+            if let w = limits[key] as? [String: Any], let pct = w["used_percentage"] as? Double {
+                out[name] = ["pct": pct, "resetsAt": w["resets_at"] ?? 0]
+            }
+        }
+        return out
+    }
+
     // MARK: Processor
 
     private func cpuPercent() -> Double? {

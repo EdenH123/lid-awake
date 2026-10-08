@@ -131,6 +131,14 @@ let dashboardHTML = #"""
   .scale i { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
     background: #fff; box-shadow: 0 0 0 2px var(--card), 0 1px 3px rgba(0,0,0,.3); transition: left .5s ease; }
 
+  /* Status: Claude plan usage, two meters in one card. */
+  .usage { display: grid; gap: 16px; padding: 16px; }
+  .usage-row { display: grid; gap: 0; }
+  .usage-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 17px; }
+  .usage-pct { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .usage .meter { margin-top: 8px; }
+  .usage-sub { font-size: 13px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+
   /* Wi-Fi signal glyph. */
   .bars { width: 22px; height: 16px; flex: none; }
   .bars rect { fill: var(--faint); transition: fill .3s ease; }
@@ -475,6 +483,23 @@ let dashboardHTML = #"""
       </section>
     </div>
 
+    <div class="section" id="claudeSection" hidden>
+      <div class="section-head">Claude</div>
+      <section class="card usage">
+        <div class="usage-row">
+          <div class="usage-top"><span>Current session</span><span class="usage-pct" id="claude5hPct">—</span></div>
+          <div class="meter"><div id="claude5hBar" style="width:0"></div></div>
+          <div class="usage-sub" id="claude5hSub"></div>
+        </div>
+        <div class="usage-row">
+          <div class="usage-top"><span>This week</span><span class="usage-pct" id="claudeWeekPct">—</span></div>
+          <div class="meter"><div id="claudeWeekBar" style="width:0"></div></div>
+          <div class="usage-sub" id="claudeWeekSub"></div>
+        </div>
+      </section>
+      <div class="section-foot" id="claudeFoot"></div>
+    </div>
+
     <div class="section">
       <div class="section-head">Mac</div>
       <div class="tiles">
@@ -703,6 +728,7 @@ let dashboardHTML = #"""
 
     renderHealth();
     renderApps();
+    renderClaude();
 
     const timerChoice = data.timerMinutes > 0
       ? (data.timerMinutes >= 60 ? `${data.timerMinutes / 60} hour${data.timerMinutes === 60 ? "" : "s"}` : `${data.timerMinutes} minutes`)
@@ -1495,6 +1521,33 @@ let dashboardHTML = #"""
     } catch (e) {}
     setTimeout(checkAuth, 1500);
   });
+
+  // ---------- Claude plan usage ----------
+  // Numbers come from Claude Code after each reply, so show how old they are.
+  function renderClaude() {
+    const c = data.claude;
+    $("claudeSection").hidden = !c || (!c.fiveHour && !c.sevenDay);
+    if ($("claudeSection").hidden) return;
+    const now = Date.now() / 1000;
+    const when = (t, long) => {
+      const d = new Date(t * 1000), time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      return long && d.toDateString() !== new Date().toDateString() ? d.toLocaleDateString([], { weekday: "short" }) + " " + time : time;
+    };
+    const show = (w, id, long) => {
+      if (!w) { $(id + "Pct").textContent = "—"; $(id + "Sub").textContent = ""; setBar(id + "Bar", 0, "var(--green)"); return; }
+      const over = w.resetsAt && w.resetsAt <= now;  // the window ended since the last reply: it starts again from 0
+      const pct = over ? 0 : Math.round(w.pct);
+      $(id + "Pct").textContent = pct + "%";
+      $(id + "Pct").className = "usage-pct " + (pct >= 90 ? "bad" : pct >= 75 ? "warn" : "");
+      setBar(id + "Bar", pct, pct >= 90 ? "var(--red)" : pct >= 75 ? "var(--amber)" : "var(--blue)");
+      $(id + "Sub").textContent = over ? "Reset — fresh limit" : `Resets ${when(w.resetsAt, long)}`;
+    };
+    show(c.fiveHour, "claude5h", false);
+    show(c.sevenDay, "claudeWeek", true);
+    const ago = Math.max(0, Math.round((now - c.updated) / 60));
+    $("claudeFoot").textContent = "From your last Claude Code reply, " +
+      (ago < 1 ? "just now." : ago < 60 ? `${ago} min ago.` : ago < 1440 ? `${Math.round(ago / 60)} h ago.` : "over a day ago.");
+  }
 
   // ---------- Apps ----------
   // The grid is rebuilt only when the list changes, so icons aren't downloaded again.

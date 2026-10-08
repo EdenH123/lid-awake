@@ -480,6 +480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "lidAwake": isOn,
             "timerMinutes": timerMinutes,
             "apps": PhoneApps.list(),
+            "claude": SystemInfo.shared.claudeUsage() ?? NSNull(),
             "batteryGuard": batteryGuard,
             "heatGuard": heatGuard,
             "batteryLimit": batteryLimit,
