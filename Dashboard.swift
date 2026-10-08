@@ -13,6 +13,7 @@ let dashboardHTML = #"""
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
+<script>try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
   /* iOS system colors and materials (light / dark), as in Settings, Battery and Weather. */
   :root {
@@ -24,8 +25,9 @@ let dashboardHTML = #"""
     --pad: #e5e5ea; --pad-on: #dcdce1;
     --mac-base: linear-gradient(#e6e6ea, #b8b8be); --mac-groove: #9a9aa1;
   }
+  /* Dark: follows the iPhone (Automatic), or chosen in Settings → Appearance. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #000000; --card: #1c1c1e; --card2: #2c2c2e; --text: #ffffff;
       --muted: rgba(235,235,245,.6); --faint: rgba(235,235,245,.3); --line: rgba(84,84,88,.65); --fill: rgba(120,120,128,.32);
       --green: #30d158; --amber: #ff9f0a; --red: #ff453a; --blue: #0a84ff; --gray: #8e8e93;
@@ -35,6 +37,19 @@ let dashboardHTML = #"""
       --mac-base: linear-gradient(#8e8e93, #5a5a5f); --mac-groove: #3a3a3c;
     }
   }
+  :root[data-theme="dark"] {
+      --bg: #000000; --card: #1c1c1e; --card2: #2c2c2e; --text: #ffffff;
+      --muted: rgba(235,235,245,.6); --faint: rgba(235,235,245,.3); --line: rgba(84,84,88,.65); --fill: rgba(120,120,128,.32);
+      --green: #30d158; --amber: #ff9f0a; --red: #ff453a; --blue: #0a84ff; --gray: #8e8e93;
+      --bar: rgba(30,30,32,.72); --bar-edge: rgba(255,255,255,.08); --bar-shadow: 0 6px 24px rgba(0,0,0,.5);
+      --kb: #2b2b2d; --key: #6b6b6e; --key-fn: #464649; --key-shadow: rgba(0,0,0,.6);
+      --pad: #2c2c2e; --pad-on: #3a3a3c;
+      --mac-base: linear-gradient(#8e8e93, #5a5a5f); --mac-groove: #3a3a3c;
+    }
+  :root { color-scheme: light dark; --seg-on: #ffffff; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; --seg-on: #636366; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --seg-on: #636366; } }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   /* No rubber-band bounce at the page's ends: on iPhone a fast fling bounced the floating
      tab bar along with the content. */
@@ -472,6 +487,11 @@ let dashboardHTML = #"""
   .alert-row .title small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
   .alerts-card.unavailable .alert-row { opacity: .45; }
   .limits-card .alert-row:first-of-type::before { display: none; }
+  /* iOS segmented control. */
+  .segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 3px; border-radius: 12px; background: var(--fill); }
+  .segmented button { border: 0; border-radius: 9px; padding: 8px 0; font-size: 15px; font-weight: 500; color: var(--text);
+    background: transparent; cursor: pointer; transition: background .2s ease, box-shadow .2s ease; }
+  .segmented button[aria-checked="true"] { background: var(--seg-on); font-weight: 600; box-shadow: 0 2px 6px rgba(0,0,0,.12), 0 0 0 .5px rgba(0,0,0,.04); }
   .alerts-note { margin: 0; padding: 10px 16px 14px; font-size: 13px; line-height: 1.38; color: var(--muted); border-top: .5px solid var(--line); }
   .mini-switch { position: relative; width: 63px; height: 28px; flex: none; border-radius: 99px; border: 0; padding: 0;
     margin-left: auto; background: var(--fill); cursor: pointer; transition: background .25s ease; }
@@ -656,6 +676,16 @@ let dashboardHTML = #"""
         <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the Mac overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
       </section>
       <div class="section-foot">Lid Awake turns itself off so your Mac can sleep safely. These are the same switches as in the Mac menu.</div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">Appearance</div>
+      <div class="segmented" role="radiogroup" aria-label="Appearance">
+        <button type="button" data-theme-choice="auto" role="radio">Automatic</button>
+        <button type="button" data-theme-choice="light" role="radio">Light</button>
+        <button type="button" data-theme-choice="dark" role="radio">Dark</button>
+      </div>
+      <div class="section-foot">Automatic follows your iPhone's light or dark setting.</div>
     </div>
   </div>
 
@@ -2152,6 +2182,23 @@ let dashboardHTML = #"""
     limitSaving = false;
     poll();
   }));
+
+  // ---------- Appearance ----------
+  function savedTheme() { try { return localStorage.getItem("theme") || "auto"; } catch (e) { return "auto"; } }
+  function applyTheme(choice) {
+    if (choice === "light" || choice === "dark") document.documentElement.dataset.theme = choice;
+    else delete document.documentElement.dataset.theme;
+    // The iPhone's status-bar colour follows the page.
+    const dark = choice === "dark" || (choice === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute("content", dark ? "#000000" : "#f2f2f7"));
+    document.querySelectorAll("[data-theme-choice]").forEach(b => b.setAttribute("aria-checked", b.dataset.themeChoice === choice));
+  }
+  document.querySelectorAll("[data-theme-choice]").forEach(b => b.addEventListener("click", () => {
+    try { localStorage.setItem("theme", b.dataset.themeChoice); } catch (e) {}
+    applyTheme(b.dataset.themeChoice);
+  }));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(savedTheme()));
+  applyTheme(savedTheme());
 
   // ---------- Timer ----------
   // Picking a length restarts the countdown from now, so it also works as "give me more time".
