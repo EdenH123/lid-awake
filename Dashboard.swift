@@ -36,6 +36,9 @@ let dashboardHTML = #"""
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* No rubber-band bounce at the page's ends: on iPhone a fast fling bounced the floating
+     tab bar along with the content. */
+  html, body { overscroll-behavior: none; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 17px/1.29 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
@@ -454,7 +457,21 @@ let dashboardHTML = #"""
   .row .title small { display: block; font-size: 13px; color: var(--muted); margin-top: 1px; white-space: normal; }
   .icon-list .row + .row::before, .icon-list .alert-rows .row::before { left: 42px; }
   .row-link.danger { color: var(--red); }
-  #alertTestList { margin-top: 12px; }
+  /* Alerts: one card with a title, then one row per alert. */
+  .alerts-card { background: var(--card); border-radius: 26px; overflow: hidden; }
+  .alerts-head { display: flex; gap: 12px; align-items: center; padding: 16px 16px 14px; }
+  .alerts-badge { width: 44px; height: 44px; border-radius: 12px; flex: none; display: grid; place-items: center; color: #fff;
+    background: linear-gradient(#ff5a4f, #ff3b30); }
+  .alerts-badge svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .alerts-head h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .alerts-head p { margin: 2px 0 0; font-size: 13px; line-height: 1.35; color: var(--muted); }
+  .alert-row { position: relative; display: flex; align-items: center; gap: 12px; padding: 11px 16px; min-height: 60px; }
+  .alert-row::before { content: ""; position: absolute; top: 0; left: 58px; right: 0; height: .5px; background: var(--line); }
+  .alert-row:first-of-type::before { left: 0; }
+  .alert-row .title { flex: 1; min-width: 0; font-size: 17px; line-height: 1.25; }
+  .alert-row .title small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .alerts-card.unavailable .alert-row { opacity: .45; }
+  .alerts-note { margin: 0; padding: 10px 16px 14px; font-size: 13px; line-height: 1.38; color: var(--muted); border-top: .5px solid var(--line); }
   .mini-switch { position: relative; width: 63px; height: 28px; flex: none; border-radius: 99px; border: 0; padding: 0;
     margin-left: auto; background: var(--fill); cursor: pointer; transition: background .25s ease; }
   .mini-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 37px; height: 24px; border-radius: 99px;
@@ -609,22 +626,17 @@ let dashboardHTML = #"""
   </div>
 
   <div class="tab" id="tab-settings" hidden>
-    <div class="section" id="alertsSection">
-      <div class="section-head">iPhone alerts</div>
-      <div class="list icon-list">
-        <div class="row"><span class="set-icon red"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></span><span class="title">Alerts</span>
-          <button type="button" class="row-link" id="alertsOn">Turn on</button>
-          <button type="button" class="mini-switch" id="alertsSwitch" role="switch" aria-label="iPhone alerts" hidden></button></div>
-        <div class="alert-rows" id="alertRows" hidden>
-          <div class="row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
-          <div class="row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
-          <div class="row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span><span class="title">Claude usage<small>Over 90% of a limit</small></span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch" aria-label="Claude usage"></button></div>
-          <div class="row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Mac warm<small>Battery at 37°C</small></span><button type="button" class="mini-switch" data-alert="warm" role="switch" aria-label="Mac warm"></button></div>
-        </div>
-      </div>
-      <div class="list" id="alertTestList" hidden><div class="row"><button type="button" class="row-link start" id="alertsTest">Send a test alert</button></div></div>
-      <div class="section-foot" id="alertsFoot">Arrives even when the app is closed.</div>
-    </div>
+    <section class="alerts-card" id="alertsSection">
+      <header class="alerts-head">
+        <div class="alerts-badge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></div>
+        <div><h2>Alerts</h2><p>Notifications on this iPhone, even when Lid Awake is closed.</p></div>
+      </header>
+      <div class="alert-row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, low battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
+      <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
+      <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span><span class="title">Claude usage<small>Over 90% of a limit</small></span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch" aria-label="Claude usage"></button></div>
+      <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Mac warm<small>Battery at 37°C</small></span><button type="button" class="mini-switch" data-alert="warm" role="switch" aria-label="Mac warm"></button></div>
+      <p class="alerts-note" id="alertsFoot" hidden></p>
+    </section>
 
     <div class="section">
       <div class="section-head">Sign-in</div>
@@ -2065,58 +2077,63 @@ let dashboardHTML = #"""
     const reg = await navigator.serviceWorker.getRegistration("/");
     return reg ? reg.pushManager.getSubscription() : null;
   }
+  let alertsReady = false;  // this iPhone is subscribed and allowed notifications
   async function renderAlerts() {
     const sub = await currentSubscription().catch(() => null);
-    const on = !!sub && Notification.permission === "granted";
-    $("alertsOn").hidden = on;
-    $("alertsSwitch").hidden = !on;
-    $("alertsSwitch").setAttribute("aria-checked", on);
-    $("alertRows").hidden = !on;
-    $("alertTestList").hidden = !on;
+    alertsReady = !!sub && Notification.permission === "granted";
     const off = alertsOff();
-    document.querySelectorAll("[data-alert]").forEach(b => b.setAttribute("aria-checked", !off.includes(b.dataset.alert)));
-    $("alertsFoot").textContent = on ? "Arrives even when the app is closed."
-      : !pushPossible() || !standalone() ? "To get alerts, open Lid Awake from its Home Screen icon (in Safari: Share → Add to Home Screen)."
+    document.querySelectorAll("[data-alert]").forEach(b =>
+      b.setAttribute("aria-checked", alertsReady && !off.includes(b.dataset.alert)));
+    const possible = pushPossible() && standalone();
+    $("alertsSection").classList.toggle("unavailable", !possible);
+    const note = !possible ? "To use alerts, open Lid Awake from its Home Screen icon (in Safari: Share → Add to Home Screen)."
       : Notification.permission === "denied" ? "Notifications are blocked. Allow them in iPhone Settings → Notifications → Lid Awake."
-      : "Arrives even when the app is closed.";
+      : "";
+    $("alertsFoot").textContent = note;
+    $("alertsFoot").hidden = !note;
   }
   async function postJSON(url, body) {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-LidAwake": "1" }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(await res.text());
   }
-  async function enableAlerts() {
-    if (!pushPossible() || !standalone()) return renderAlerts();
-    try {
-      if (await Notification.requestPermission() !== "granted") return renderAlerts();
-      const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-      await navigator.serviceWorker.ready;
-      const { key } = await (await fetch("push/key", { cache: "no-store" })).json();
-      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64u(key) });
-      await postJSON("push/subscribe", { ...sub.toJSON(), off: alertsOff() });
-    } catch (e) { $("alertsFoot").textContent = "Couldn't turn on alerts: " + (e.message || e); return; }
-    renderAlerts();
+  async function subscribeAlerts() {
+    if (await Notification.requestPermission() !== "granted") return false;
+    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+    const { key } = await (await fetch("push/key", { cache: "no-store" })).json();
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64u(key) });
+    await postJSON("push/subscribe", { ...sub.toJSON(), off: alertsOff() });
+    return true;
   }
-  async function disableAlerts() {
-    const sub = await currentSubscription().catch(() => null);
-    if (sub) { await postJSON("push/settings", { endpoint: sub.endpoint, enabled: false }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
-    renderAlerts();
-  }
-  $("alertsOn").addEventListener("click", enableAlerts);
-  $("alertsSwitch").addEventListener("click", disableAlerts);
+  function saveAlertsOff(off) { try { localStorage.setItem("alertsOff", JSON.stringify(off)); } catch (e) {} }
   document.querySelectorAll("[data-alert]").forEach(b => b.addEventListener("click", async () => {
-    const off = alertsOff().filter(k => k !== b.dataset.alert);
-    if (b.getAttribute("aria-checked") === "true") off.push(b.dataset.alert);
-    try { localStorage.setItem("alertsOff", JSON.stringify(off)); } catch (e) {}
+    if (!pushPossible() || !standalone()) return renderAlerts();
+    const kind = b.dataset.alert, wasOn = b.getAttribute("aria-checked") === "true";
+    try {
+      if (!alertsReady) {
+        // First alert turned on: ask the iPhone for permission and subscribe, with just this one on.
+        saveAlertsOff(ALERT_KINDS.filter(k => k !== kind));
+        if (!(await subscribeAlerts())) saveAlertsOff([]);
+      } else {
+        const off = wasOn ? [...new Set([...alertsOff(), kind])] : alertsOff().filter(k => k !== kind);
+        saveAlertsOff(off);
+        const sub = await currentSubscription();
+        if (off.length === ALERT_KINDS.length) {
+          // Everything off: stop alerts on this iPhone altogether.
+          await postJSON("push/settings", { endpoint: sub.endpoint, enabled: false }).catch(() => {});
+          await sub.unsubscribe().catch(() => {});
+          saveAlertsOff([]);
+        } else {
+          await postJSON("push/settings", { endpoint: sub.endpoint, off });
+        }
+      }
+    } catch (e) {
+      $("alertsFoot").textContent = "Couldn't change alerts: " + (e.message || e);
+      $("alertsFoot").hidden = false;
+      return;
+    }
     renderAlerts();
-    const sub = await currentSubscription().catch(() => null);
-    if (sub) postJSON("push/settings", { endpoint: sub.endpoint, off }).catch(() => {});
   }));
-  $("alertsTest").addEventListener("click", async () => {
-    // The Mac sends it in 5 seconds: enough time to close the app and see a real alert.
-    $("alertsTest").textContent = "Arrives in 5 seconds — you can close the app";
-    await postJSON("push/test", {}).catch(() => {});
-    setTimeout(() => { $("alertsTest").textContent = "Send a test alert"; }, 6000);
-  });
   renderAlerts();
 
   // ---------- Timer ----------

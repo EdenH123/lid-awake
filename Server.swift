@@ -267,7 +267,7 @@ final class StatusServer: @unchecked Sendable {
             else { return text(c, "400 Bad Request", "Couldn't turn on Face ID. Try again.") }
             reply(c, "204 No Content", "text/plain", Data())
 
-        // iPhone alerts: the Mac's public key, subscribing, which alerts, and a test.
+        // iPhone alerts: the Mac's public key, subscribing, and which alerts.
         case ("GET", "/push/key"):
             reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: ["key": WebPush.publicKey])) ?? Data())
 
@@ -286,13 +286,6 @@ final class StatusServer: @unchecked Sendable {
             guard let endpoint = body?["endpoint"] as? String else { return text(c, "400 Bad Request", "Missing phone.") }
             if body?["enabled"] as? Bool == false { WebPush.unsubscribe(endpoint: endpoint) }
             else { WebPush.setOff(endpoint: endpoint, off: body?["off"] as? [String] ?? []) }
-            reply(c, "204 No Content", "text/plain", Data())
-
-        case ("POST", "/push/test"):
-            // 5 s later, so there's time to close the app and see it arrive like a real alert.
-            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
-                WebPush.send(nil, title: "Lid Awake", body: "Alerts are working. You'll hear from your Mac here.")
-            }
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("POST", "/logout"):
