@@ -14,16 +14,19 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     enum Result { case frame(Data, id: Int), unchanged, unavailable }
 
     enum Preset: String {
-        case sharp, balanced, fast
+        case max, sharp, balanced, fast
         // Fast is sized for slow links (mobile data at 2–3 Mbit/s): about 20 KB a frame.
-        var maxWidth: Double { switch self { case .sharp: 1600; case .balanced: 1200; case .fast: 640 } }
-        var quality: Double { switch self { case .sharp: 0.7; case .balanced: 0.5; case .fast: 0.35 } }
-        var fps: Int32 { switch self { case .sharp: 12; case .balanced: 20; case .fast: 25 } }
+        // Max = the Mac's full Retina sharpness (widths are capped at the screen's real pixels).
+        var maxWidth: Double { switch self { case .max: 4096; case .sharp: 1600; case .balanced: 1200; case .fast: 640 } }
+        var quality: Double { switch self { case .max: 0.7; case .sharp: 0.7; case .balanced: 0.5; case .fast: 0.35 } }
+        var fps: Int32 { switch self { case .max: 6; case .sharp: 12; case .balanced: 20; case .fast: 25 } }
         // Video (pages that can play H.264): sharper and smoother for the same bandwidth.
         // The bitrate adapts to the link below these caps.
-        var videoWidth: Double { switch self { case .sharp: 1600; case .balanced: 1280; case .fast: 1024 } }
-        var videoFPS: Int32 { switch self { case .sharp: 20; case .balanced: 30; case .fast: 30 } }
-        var videoMaxBitrate: Int { switch self { case .sharp: 6_000_000; case .balanced: 4_000_000; case .fast: 2_500_000 } }
+        var videoWidth: Double { switch self { case .max: 4096; case .sharp: 1600; case .balanced: 1280; case .fast: 1024 } }
+        var videoFPS: Int32 { switch self { case .max: 15; case .sharp: 20; case .balanced: 30; case .fast: 30 } }
+        var videoMaxBitrate: Int {
+            switch self { case .max: 12_000_000; case .sharp: 6_000_000; case .balanced: 4_000_000; case .fast: 2_500_000 }
+        }
     }
 
     // A phone page that plays H.264. `send` gets the decoder setup (before the first keyframe
@@ -213,7 +216,8 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     private func configuration(for display: SCDisplay) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
         let video = !videoSinks.isEmpty
-        let scale = min(1, (video ? preset.videoWidth : preset.maxWidth) / Double(max(display.width, 1)))
+        // display.width is in points; Retina screens have 2 pixels per point, so allow up to that.
+        let scale = min(pixelsPerPoint(display), (video ? preset.videoWidth : preset.maxWidth) / Double(max(display.width, 1)))
         // Even sizes: the H.264 encoder needs them.
         config.width = Int(Double(display.width) * scale) / 2 * 2
         config.height = Int(Double(display.height) * scale) / 2 * 2
@@ -222,6 +226,11 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         config.showsCursor = true
         config.queueDepth = 3
         return config
+    }
+
+    private func pixelsPerPoint(_ display: SCDisplay) -> Double {
+        guard let mode = CGDisplayCopyDisplayMode(display.displayID) else { return 1 }
+        return Swift.max(1, Double(mode.pixelWidth) / Double(Swift.max(display.width, 1)))
     }
 
     private func expireWaiters() {

@@ -579,7 +579,7 @@ if CommandLine.arguments.contains("--selftest") {
                     sessionValid: { $0 == "selftest" }, awake: { true }, remoteAllowed: { true },
                     screenPermission: { true }, controlPermission: { true }))
                 Task {
-                    for preset in ["sharp", "balanced", "fast"] {
+                    for preset in ["max", "sharp", "balanced", "fast"] {
                         var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)
                         request.setValue("http://127.0.0.1:\(statusPort)", forHTTPHeaderField: "Origin")
                         request.setValue("\(Auth.cookieName)=selftest", forHTTPHeaderField: "Cookie")

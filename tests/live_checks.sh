@@ -13,9 +13,9 @@ expect "bad origin"  "400" "$(node ws_handshake.js 8788 127.0.0.1:8788 https://e
 
 LOG="$HOME/Library/Logs/LidAwake-selftest.log"; rm -f "$LOG"
 launchctl submit -l local.lidawake.selftest -- "$APP/Contents/MacOS/LidAwake" --selftest
-sleep 26; launchctl remove local.lidawake.selftest 2>/dev/null
+sleep 30; launchctl remove local.lidawake.selftest 2>/dev/null
 cat "$LOG"
-for p in sharp balanced fast; do
+for p in max sharp balanced fast; do
   line=$(grep "^live $p:" "$LOG")
   n=$(echo "$line" | sed -n 's/.* \([0-9][0-9]*\) frames.*/\1/p')
   if [ -n "$n" ] && [ "$n" -ge 1 ]; then echo "PASS live $p ($line)"; else echo "FAIL live $p: '$line'"; fail=1; fi
@@ -27,6 +27,10 @@ fastFirst=$(grep "^live fast:" "$LOG" | sed -n 's/.*first \([0-9]*\) bytes.*/\1/
 fastLast=$(grep "^live fast:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
 if [ -n "$sharp" ] && [ -n "$fastFirst" ] && [ "$sharp" -gt "$fastFirst" ]; then echo "PASS presets differ (sharp $sharp > fast $fastFirst)"
 else echo "FAIL presets: sharp '$sharp' vs fast '$fastFirst'"; fail=1; fi
+# Max sends the Mac's full Retina picture: bigger frames than Sharp.
+max=$(grep "^live max:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
+if [ -n "$max" ] && [ -n "$sharp" ] && [ "$max" -gt "$sharp" ]; then echo "PASS max is sharper (max $max > sharp $sharp bytes)"
+else echo "FAIL max: max '$max' vs sharp '$sharp'"; fail=1; fi
 # The still-frame check needs a calm screen. If the selftest saw real motion (>3% of the
 # picture changing) it can't judge, so it's skipped rather than failed.
 moving=$(grep "^live fast changed areas:" "$LOG" | tr ' ' '\n' | awk '$1+0 > 0.03 {n++} END {print n+0}')
