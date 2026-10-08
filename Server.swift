@@ -52,6 +52,73 @@ enum Tailnet {
     }
 
     static func isLoopback(_ host: String) -> Bool { host == "127.0.0.1" || host == "localhost" }
+
+    // MARK: How a device reaches this Mac
+
+    // Tailscale's view of each device (by its 100.x address): the direct address it's reached
+    // at, or the relay used instead. Refreshed in the background at most every 10 seconds.
+    private static var peers: [String: (direct: String, relay: String, active: Bool)] = [:]
+    private static var peersAt = Date.distantPast
+    private static var refreshing = false
+
+    private static func refreshPeers() {
+        lock.lock()
+        guard !refreshing, Date().timeIntervalSince(peersAt) > 10 else { lock.unlock(); return }
+        refreshing = true
+        lock.unlock()
+        DispatchQueue.global(qos: .utility).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+            p.arguments = ["status", "--json"]
+            var env = ProcessInfo.processInfo.environment
+            env["TAILSCALE_BE_CLI"] = "1"
+            p.environment = env
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = FileHandle.nullDevice
+            var found: [String: (direct: String, relay: String, active: Bool)] = [:]
+            if (try? p.run()) != nil {
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                for case let peer as [String: Any] in (json?["Peer"] as? [String: Any] ?? [:]).values {
+                    for ip in peer["TailscaleIPs"] as? [String] ?? [] {
+                        found[ip] = (peer["CurAddr"] as? String ?? "", peer["Relay"] as? String ?? "", peer["Active"] as? Bool ?? false)
+                    }
+                }
+            }
+            lock.lock()
+            if !found.isEmpty { peers = found }
+            peersAt = Date()
+            refreshing = false
+            lock.unlock()
+        }
+    }
+
+    // "Direct · same Wi-Fi", "Direct · over the internet" or "Through a relay in Paris", for the
+    // device at this Tailscale address (Tailscale Serve reports it; it can't be faked).
+    static func path(to ip: String?) -> String? {
+        refreshPeers()
+        guard let ip else { return nil }
+        lock.lock(); let peer = peers[ip]; lock.unlock()
+        // An idle device has no live path yet (the page is about to make one).
+        guard let peer, peer.active || !peer.direct.isEmpty else { return nil }
+        guard !peer.direct.isEmpty else {
+            let cities = ["par": "Paris", "fra": "Frankfurt", "ams": "Amsterdam", "lhr": "London", "mad": "Madrid",
+                          "waw": "Warsaw", "tlv": "Tel Aviv", "nyc": "New York", "sfo": "San Francisco", "sin": "Singapore"]
+            return cities[peer.relay].map { "Through a relay in \($0)" } ?? "Through a relay server"
+        }
+        // The address part of "1.2.3.4:41641" or "[fe80::1]:41641".
+        var address = peer.direct
+        if let colon = address.lastIndex(of: ":") { address = String(address[..<colon]) }
+        address = address.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if address.hasPrefix("172.20.10.") { return "Direct · iPhone hotspot" }
+        let octets = address.split(separator: ".").compactMap { Int($0) }
+        let privateV4 = octets.count == 4 && (octets[0] == 10 || (octets[0] == 192 && octets[1] == 168)
+            || (octets[0] == 172 && (16...31).contains(octets[1])) || (octets[0] == 169 && octets[1] == 254))
+        let privateV6 = address.lowercased().hasPrefix("fe80") || address.lowercased().hasPrefix("fd")
+        return privateV4 || privateV6 ? "Direct · same Wi-Fi" : "Direct · over the internet"
+    }
 }
 
 // Offer the private HTTPS link only while lid-awake is on. When on, restore the
@@ -520,7 +587,14 @@ final class StatusServer: @unchecked Sendable {
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("GET", "/status"):
-            reply(c, "200 OK", "application/json", status())
+            // Plus how this very device reaches the Mac (Serve says which device asked).
+            var data = status()
+            if let link = Tailnet.path(to: req.headers["x-forwarded-for"]),
+               var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                obj["link"] = link
+                data = (try? JSONSerialization.data(withJSONObject: obj)) ?? data
+            }
+            reply(c, "200 OK", "application/json", data)
 
         case ("GET", "/screen.jpg"):
             guard remoteAllowed() else {

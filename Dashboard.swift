@@ -636,6 +636,7 @@ let dashboardHTML = #"""
         <div class="row"><span class="title">Download</span><span class="value" id="netDown">—</span></div>
         <div class="row"><span class="title">Upload</span><span class="value" id="netUp">—</span></div>
         <div class="row"><span class="title">Response time to this iPhone</span><span class="value" id="netPing">—</span></div>
+        <div class="row"><span class="title">Connection to this iPhone</span><span class="value" id="netPath">—</span></div>
       </div>
     </div>
   </div>
@@ -953,6 +954,7 @@ let dashboardHTML = #"""
     $("netDown").textContent = fmtRate(net.down);
     $("netUp").textContent = fmtRate(net.up);
     $("netPing").textContent = pingMs == null ? "—" : Math.round(pingMs) + " ms";
+    $("netPath").textContent = data.link || "—";
   }
 
   // ---------- Lock ----------
