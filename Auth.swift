@@ -78,7 +78,8 @@ enum Auth {
         guard let token else { return }
         lock.lock(); defer { lock.unlock() }
         var sessions = storedSessions()
-        sessions[sha256(token)] = nil
+        // A made-up token signs nothing out (and mustn't disturb anyone's live screen).
+        guard sessions.removeValue(forKey: sha256(token)) != nil else { return }
         defaults.set(sessions, forKey: "sessions")
         NotificationCenter.default.post(name: sessionsChanged, object: nil)
     }

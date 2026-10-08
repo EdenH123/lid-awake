@@ -61,6 +61,23 @@ enum RemoteInput {
 
     // True while the phone's trackpad is holding the left button for a drag.
     private static var leftDown = false
+    // Longest text typed in one go (a long paste is refused rather than typed for minutes).
+    static let maxText = 2000
+
+    // Lets go of a button the phone was holding (it disconnected, or control was turned off).
+    static func releaseButtons() {
+        guard leftDown else { return }
+        leftDown = false
+        let at = CGEvent(source: nil)?.location ?? .zero
+        CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: .leftMouseUp,
+                mouseCursorPosition: at, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+
+    // A number from the phone, kept to a sane range so odd values can't crash the app.
+    private static func number(_ value: Any?, limit: Double = 10_000) -> Double {
+        guard let v = value as? Double, v.isFinite else { return 0 }
+        return min(max(v, -limit), limit)
+    }
 
     static func perform(_ cmd: [String: Any]) {
         let src = CGEventSource(stateID: .hidSystemState)
@@ -68,7 +85,7 @@ enum RemoteInput {
         // A tap on the screen picture sends x/y (0…1); the trackpad sends none,
         // meaning "where the pointer is now".
         var point: CGPoint? {
-            guard let x = cmd["x"] as? Double, let y = cmd["y"] as? Double else { return nil }
+            guard let x = cmd["x"] as? Double, let y = cmd["y"] as? Double, x.isFinite, y.isFinite else { return nil }
             return CGPoint(x: bounds.minX + min(max(x, 0), 1) * bounds.width,
                            y: bounds.minY + min(max(y, 0), 1) * bounds.height)
         }
@@ -87,7 +104,7 @@ enum RemoteInput {
 
         switch cmd["type"] as? String {
         case "move":
-            let dx = cmd["dx"] as? Double ?? 0, dy = cmd["dy"] as? Double ?? 0
+            let dx = number(cmd["dx"]), dy = number(cmd["dy"])
             let p = CGPoint(x: min(max(current.x + dx, bounds.minX), bounds.maxX - 1),
                             y: min(max(current.y + dy, bounds.minY), bounds.maxY - 1))
             CGEvent(mouseEventSource: src, mouseType: leftDown ? .leftMouseDragged : .mouseMoved,
@@ -103,7 +120,7 @@ enum RemoteInput {
         case "click":
             let p = point ?? current
             let right = (cmd["button"] as? String) == "right"
-            let count = Int64(cmd["count"] as? Int ?? 1)
+            let count = Int64(min(max(cmd["count"] as? Int ?? 1, 1), 3))
             let button: CGMouseButton = right ? .right : .left
             CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
                 .post(tap: .cghidEventTap)
@@ -119,12 +136,12 @@ enum RemoteInput {
                 CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
                     .post(tap: .cghidEventTap)
             }
-            let dx = Int32(cmd["dx"] as? Double ?? 0), dy = Int32(cmd["dy"] as? Double ?? 0)
+            let dx = Int32(number(cmd["dx"])), dy = Int32(number(cmd["dy"]))
             CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)?
                 .post(tap: .cghidEventTap)
 
         case "text":
-            guard let text = cmd["text"] as? String else { return }
+            guard let text = cmd["text"] as? String, text.count <= maxText else { return }
             for ch in text {
                 let units = Array(String(ch).utf16)
                 for down in [true, false] {

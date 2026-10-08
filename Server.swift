@@ -52,6 +52,13 @@ func ensureTailscaleServe(enabled: Bool) {
     let status = run(["serve", "status", "--json"])
     let servingPage = status.contains("127.0.0.1:\(statusPort)")
     let servingLive = status.contains("127.0.0.1:\(livePort)")
+    // Funnel would put the page on the open internet. Never allow it for this address.
+    if let json = (try? JSONSerialization.jsonObject(with: Data(status.utf8))) as? [String: Any],
+       let funnel = json["AllowFunnel"] as? [String: Any], funnel.values.contains(where: { $0 as? Bool == true }) {
+        _ = run(["funnel", "--https=443", "off"])
+        StreamStats.shared.note("Tailscale Funnel was on for this Mac; turned it off")
+        notify("Tailscale Funnel was on, which would put your phone page on the open internet. Lid Awake turned it off.")
+    }
     if enabled {
         if !servingPage { _ = run(["serve", "--bg", "\(statusPort)"]) }
         if !servingLive { _ = run(["serve", "--bg", "--set-path", "/live", "http://127.0.0.1:\(livePort)"]) }
@@ -67,32 +74,43 @@ struct HTTPRequest {
     let headers: [String: String]
     let body: Data
 
-    // Returns nil until the full request (headers and body) has arrived.
-    init?(_ data: Data) {
-        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)),
-              let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8) else { return nil }
+    static let maxHeader = 16 * 1024
+    static let maxBody = 64 * 1024
+
+    enum Parse { case incomplete, bad, request(HTTPRequest) }
+
+    // Waits for the whole request; anything malformed or too big is refused outright.
+    static func parse(_ data: Data) -> Parse {
+        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else {
+            return data.count > maxHeader ? .bad : .incomplete
+        }
+        guard headerEnd.lowerBound <= maxHeader,
+              let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8) else { return .bad }
         let lines = head.components(separatedBy: "\r\n")
         let parts = lines.first?.split(separator: " ") ?? []
-        guard parts.count >= 2 else { return nil }
+        guard parts.count >= 2 else { return .bad }
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
             headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        let length = Int(headers["content-length"] ?? "") ?? 0
+        // Only plain bodies with a sane, non-negative length.
+        guard headers["transfer-encoding"] == nil else { return .bad }
+        var length = 0
+        if let text = headers["content-length"] {
+            guard text.allSatisfy({ $0.isASCII && $0.isNumber }), text.count <= 6, let n = Int(text), n <= maxBody else { return .bad }
+            length = n
+        }
         let body = data[headerEnd.upperBound...]
-        guard body.count >= length else { return nil }
-        method = String(parts[0])
+        guard body.count >= length else { return .incomplete }
         let target = parts[1].split(separator: "?", maxSplits: 1)
-        path = target.first.map(String.init) ?? "/"
         var query: [String: String] = [:]
         for pair in (target.count > 1 ? target[1] : "").split(separator: "&") {
             let kv = pair.split(separator: "=", maxSplits: 1)
             if kv.count == 2 { query[String(kv[0])] = String(kv[1]) }
         }
-        self.query = query
-        self.headers = headers
-        self.body = Data(body.prefix(length))
+        return .request(HTTPRequest(method: String(parts[0]), path: target.first.map(String.init) ?? "/",
+                                    query: query, headers: headers, body: Data(body.prefix(length))))
     }
 }
 
@@ -123,24 +141,50 @@ final class StatusServer: @unchecked Sendable {
         self.turnOff = turnOff
         self.setTimer = setTimer
         self.setLimit = setLimit
-        listener.newConnectionHandler = { [weak self] connection in
-            guard let self else { return }
-            connection.start(queue: self.queue)
-            self.read(connection, Data())
-        }
+        listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         listener.start(queue: queue)
+    }
+
+    // Each request gets 10 seconds to arrive in full, and only so many may be open at once,
+    // so slow or stuck connections can't pile up and starve the app.
+    private var live = Set<ObjectIdentifier>()       // open connections
+    private var answering = Set<ObjectIdentifier>()  // whose request arrived (a screen request may wait a while)
+    private static let maxOpen = 64
+
+    private func accept(_ connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        guard live.count < Self.maxOpen else { return connection.cancel() }
+        live.insert(id)
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .failed:
+                connection.cancel()
+            case .cancelled:
+                self?.live.remove(id)
+                self?.answering.remove(id)
+            default: break
+            }
+        }
+        connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak connection] in
+            guard let self, let connection, self.live.contains(id), !self.answering.contains(id) else { return }
+            connection.cancel()
+        }
+        read(connection, Data())
     }
 
     private func read(_ connection: NWConnection, _ buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, done, error in
             var buffer = buffer
             if let data { buffer.append(data) }
-            if let request = HTTPRequest(buffer) {
+            switch HTTPRequest.parse(buffer) {
+            case .request(let request):
+                self.answering.insert(ObjectIdentifier(connection))
                 self.route(request, connection)
-            } else if done || error != nil || buffer.count > 256 * 1024 {
-                connection.cancel()
-            } else {
-                self.read(connection, buffer)
+            case .bad:
+                self.text(connection, "400 Bad Request", "Bad request")
+            case .incomplete:
+                if done || error != nil { connection.cancel() } else { self.read(connection, buffer) }
             }
         }
     }
@@ -162,6 +206,10 @@ final class StatusServer: @unchecked Sendable {
         // so a website using DNS rebinding can't reach the server from a browser here.
         let host = (req.headers["host"] ?? "").split(separator: ":").first.map(String.init) ?? ""
         guard host == "127.0.0.1" || host == "localhost" || host.hasSuffix(".ts.net") else {
+            return text(c, "403 Forbidden", "Forbidden")
+        }
+        // Tailscale marks requests that came from the public internet (Funnel): never answer those.
+        guard req.headers["tailscale-funnel-request"] == nil else {
             return text(c, "403 Forbidden", "Forbidden")
         }
 
@@ -392,6 +440,9 @@ final class StatusServer: @unchecked Sendable {
             }
             guard let cmd = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any] else {
                 return text(c, "400 Bad Request", "Bad request")
+            }
+            if let typed = cmd["text"] as? String, typed.count > RemoteInput.maxText {
+                return text(c, "413 Payload Too Large", "That's too much text to type at once.")
             }
             FrameStream.shared.wakeNow()
             DispatchQueue.main.async { RemoteInput.perform(cmd) }

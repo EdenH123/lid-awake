@@ -570,7 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func toggleRemote() {
         remoteScreen.toggle()
-        if remoteScreen { requestRemotePermissions() }
+        if remoteScreen { requestRemotePermissions() } else { liveServer?.closeAll() }
         refresh()
     }
 
@@ -606,6 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func setAwake(_ on: Bool) {
+        if !on { liveServer?.closeAll() }
         busy = true
         toggle.isEnabled = false
         if !on { endDate = nil }
@@ -650,6 +651,8 @@ if CommandLine.arguments.contains("--battery") {
 // Self-check, run under launchd so macOS judges permissions for the app itself:
 // reports both permissions and tries to capture one frame (nothing is clicked).
 if CommandLine.arguments.contains("--selftest") {
+    // A fresh secret each run: the test socket accepts nothing else.
+    let selftestToken = (0..<32).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
     let how = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] ?? "none"
     var lines = ["\(Date()) launched-by=\(how) pid=\(getpid())",
                  "screenPermission \(screenPermission())",
@@ -681,13 +684,13 @@ if CommandLine.arguments.contains("--selftest") {
                 // so no real login is created. For each preset, reports the frames received
                 // in 3 s and the size of the last one (Sharp should be largest, Fast smallest).
                 let test = LiveServer(port: 18788, checks: .init(
-                    sessionValid: { $0 == "selftest" }, awake: { true }, remoteAllowed: { true },
+                    sessionValid: { $0 == selftestToken }, awake: { true }, remoteAllowed: { true },
                     screenPermission: { true }, controlPermission: { true }))
                 Task {
                     for preset in ["max", "sharp", "balanced", "fast"] {
                         var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)
                         request.setValue("http://127.0.0.1:\(statusPort)", forHTTPHeaderField: "Origin")
-                        request.setValue("\(Auth.cookieName)=selftest", forHTTPHeaderField: "Cookie")
+                        request.setValue("\(Auth.cookieName)=\(selftestToken)", forHTTPHeaderField: "Cookie")
                         let socket = URLSession.shared.webSocketTask(with: request)
                         socket.resume()
                         try? await socket.send(.string(#"{"quality":"\#(preset)"}"#))
@@ -721,7 +724,7 @@ if CommandLine.arguments.contains("--selftest") {
                     do {
                         var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)
                         request.setValue("http://127.0.0.1:\(statusPort)", forHTTPHeaderField: "Origin")
-                        request.setValue("\(Auth.cookieName)=selftest", forHTTPHeaderField: "Cookie")
+                        request.setValue("\(Auth.cookieName)=\(selftestToken)", forHTTPHeaderField: "Cookie")
                         let socket = URLSession.shared.webSocketTask(with: request)
                         socket.resume()
                         try? await socket.send(.string(#"{"quality":"fast","acks":true}"#))
@@ -754,7 +757,7 @@ if CommandLine.arguments.contains("--selftest") {
                     do {
                         var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)
                         request.setValue("http://127.0.0.1:\(statusPort)", forHTTPHeaderField: "Origin")
-                        request.setValue("\(Auth.cookieName)=selftest", forHTTPHeaderField: "Cookie")
+                        request.setValue("\(Auth.cookieName)=\(selftestToken)", forHTTPHeaderField: "Cookie")
                         let socket = URLSession.shared.webSocketTask(with: request)
                         socket.resume()
                         try? await socket.send(.string(#"{"quality":"fast","acks":true,"video":true}"#))

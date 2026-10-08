@@ -19,7 +19,9 @@ final class LiveServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue: DispatchQueue
     private let checks: Checks
-    private var sockets: [UUID: NWConnection] = [:]
+    private var sockets: [ObjectIdentifier: NWConnection] = [:]  // every connection, from its first byte
+    private var handshakeTokens: [String?] = []                  // accepted handshakes, oldest first
+    private static let maxSockets = 8
     private var observer: NSObjectProtocol?
     private var timer: DispatchSourceTimer?
 
@@ -29,9 +31,13 @@ final class LiveServer: @unchecked Sendable {
         ws.autoReplyPing = true
         ws.maximumMessageSize = 64 * 1024
         // The handshake check must be in place before the listener starts.
+        // (Each accepted handshake is followed by that connection becoming ready, in the same
+        // order on this queue, so the session it used can be tied to the socket.)
+        var tokens: (String?) -> Void = { _ in }
         ws.setClientRequestHandler(queue) { _, headers in
-            let ok = LiveServer.handshakeAllowed(headers, checks)
-            return NWProtocolWebSocket.Response(status: ok ? .accept : .reject, subprotocol: nil)
+            let token = LiveServer.handshakeToken(headers, checks)
+            if let token { tokens(token) }
+            return NWProtocolWebSocket.Response(status: token != nil ? .accept : .reject, subprotocol: nil)
         }
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
@@ -42,26 +48,33 @@ final class LiveServer: @unchecked Sendable {
         self.queue = queue
         self.checks = checks
 
+        tokens = { [weak self] in self?.handshakeTokens.append($0) }
         listener.newConnectionHandler = { [weak self] connection in self?.open(connection) }
         listener.start(queue: queue)
 
-        // Revoked sessions (new password, logout): drop every open socket; the page reconnects
-        // and is asked to log in again.
+        // Revoked sessions (new password, logout, expired): close the sockets they opened; the
+        // page reconnects and is asked to sign in again.
         observer = NotificationCenter.default.addObserver(forName: Auth.sessionsChanged, object: nil, queue: nil) { [weak self] _ in
-            self?.queue.async { self?.closeAll() }
+            self?.queue.async { self?.closeRevoked() }
         }
-        // Lid-awake turned off or screen access withdrawn: close sockets within 5 s.
+        // Lid-awake turned off or screen access withdrawn: close sockets within 2 s (the menu
+        // also closes them right away). Expired sessions and stuck sockets go too.
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.schedule(deadline: .now() + 2, repeating: 2)
         timer.setEventHandler { [weak self] in
             guard let self, !self.sockets.isEmpty else { return }
-            if !self.checks.awake() || !self.checks.remoteAllowed() { self.closeAll() }
+            if !self.checks.awake() || !self.checks.remoteAllowed() { return self.closeAll() }
+            self.closeRevoked()
+            for peer in self.peers.values where peer.sending && Date().timeIntervalSince(peer.lastProgress) > 15 {
+                peer.connection.cancel()  // the phone stopped reading
+            }
         }
         timer.resume()
         self.timer = timer
     }
 
-    private static func handshakeAllowed(_ headers: [(name: String, value: String)], _ checks: Checks) -> Bool {
+    // The session token of an allowed handshake, or nil to refuse it.
+    private static func handshakeToken(_ headers: [(name: String, value: String)], _ checks: Checks) -> String? {
         func header(_ name: String) -> String? { headers.first { $0.name.lowercased() == name }?.value }
         let host = (header("host") ?? "").split(separator: ":").first.map(String.init) ?? ""
         let hostOK = host == "127.0.0.1" || host == "localhost" || host.hasSuffix(".ts.net")
@@ -73,8 +86,9 @@ final class LiveServer: @unchecked Sendable {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .first { $0.hasPrefix(Auth.cookieName + "=") }
             .map { String($0.dropFirst(Auth.cookieName.count + 1)) }
-        return hostOK && originOK && checks.sessionValid(token)
-            && checks.awake() && checks.remoteAllowed() && checks.screenPermission()
+        guard hostOK && originOK && checks.sessionValid(token)
+            && checks.awake() && checks.remoteAllowed() && checks.screenPermission() else { return nil }
+        return token
     }
 
     // One phone connection. A send "completes" once the frame is handed to the network, not
@@ -90,18 +104,25 @@ final class LiveServer: @unchecked Sendable {
         var outbox: [(data: Data, text: Bool)] = [] // video: setup and frames, all in order
         var flowControl = false
         var video = false
+        var token: String?
+        var lastProgress = Date()                   // last send that completed
+        var inputs = 0, inputWindow = Date()        // input messages this second
+        var usedInput = false
         // Read from FrameStream's queue too (VideoSink.ready), hence the lock.
         let lock = NSLock()
         var unconfirmed = 0
         var waitingSince = Date()
         var sentAt: [(at: Date, bytes: Int, key: Bool)] = []  // unconfirmed frames
         var minDelay = 0.3                          // usual send → confirm time on this link
+        var backlog = 0                             // video messages queued or being sent
         init(_ id: UUID, _ connection: NWConnection) { self.id = id; self.connection = connection }
 
         // Video: may the next screen frame be encoded? Only while little is unconfirmed and the
         // oldest unconfirmed frame isn't stuck, so frames never queue up on a slow link.
         func videoReady() -> Bool {
             lock.lock(); defer { lock.unlock() }
+            // A phone that stopped reading (locked, backgrounded) gets no new frames to queue up.
+            guard backlog < 4 else { return false }
             guard let oldest = sentAt.first else { return true }
             let age = Date().timeIntervalSince(oldest.at)
             if age > 3 { unconfirmed = 0; sentAt.removeAll(); return true }  // page stopped confirming
@@ -115,6 +136,7 @@ final class LiveServer: @unchecked Sendable {
         var item: (data: Data, text: Bool, key: Bool)
         if !peer.outbox.isEmpty {
             let next = peer.outbox.removeFirst()
+            peer.lock.lock(); peer.backlog = peer.outbox.count + 1; peer.lock.unlock()
             item = (next.data, next.text, next.data.first == 1)
         } else if let next = peer.pending {
             if peer.flowControl {
@@ -143,6 +165,8 @@ final class LiveServer: @unchecked Sendable {
                              isComplete: true, completion: .contentProcessed { [weak self] error in
             self?.queue.async {
                 peer.sending = false
+                peer.lastProgress = Date()
+                peer.lock.lock(); peer.backlog = peer.outbox.count; peer.lock.unlock()
                 if error == nil { self?.pump(peer) }
             }
         })
@@ -163,10 +187,20 @@ final class LiveServer: @unchecked Sendable {
             data.append(k.data)
             peer.outbox.append((data, false))
         }
+        // Never let video pile up for a phone that isn't reading: drop it and start over
+        // from a keyframe once it catches up.
+        if peer.outbox.count > 60 {
+            peer.outbox.removeAll()
+            FrameStream.shared.restartVideo(peer.id)
+        }
+        peer.lock.lock(); peer.backlog = peer.outbox.count + (peer.sending ? 1 : 0); peer.lock.unlock()
         pump(peer)
     }
 
     private func open(_ connection: NWConnection) {
+        let key = ObjectIdentifier(connection)
+        guard sockets.count < Self.maxSockets else { return connection.cancel() }
+        sockets[key] = connection
         let id = UUID()
         let peer = Peer(id, connection)
         func sendFrame(_ jpeg: Data) {
@@ -178,21 +212,30 @@ final class LiveServer: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
-                self.sockets[id] = connection
-                self.peers[ObjectIdentifier(connection)] = peer
+                peer.token = self.handshakeTokens.isEmpty ? nil : self.handshakeTokens.removeFirst()
+                self.peers[key] = peer
                 FrameStream.shared.subscribe(id,
                     frame: { jpeg in self.queue.async { sendFrame(jpeg) } },
                     unavailable: { self.queue.async { self.sendText(connection, ["error": "Waking the Mac's screen… This usually takes a few seconds."]) } })
                 self.receive(connection)
-            case .failed, .cancelled:
-                self.sockets[id] = nil
-                self.peers[ObjectIdentifier(connection)] = nil
-                FrameStream.shared.unsubscribe(id)
+            case .failed:
+                connection.cancel()
+            case .cancelled:
+                self.sockets[key] = nil
+                if self.peers.removeValue(forKey: key) != nil {
+                    FrameStream.shared.unsubscribe(id)
+                    // Don't leave a mouse button held down if the phone was mid-drag.
+                    if peer.usedInput { DispatchQueue.main.async { RemoteInput.releaseButtons() } }
+                }
             default:
                 break
             }
         }
         connection.start(queue: queue)
+        // The handshake must finish quickly.
+        queue.asyncAfter(deadline: .now() + 10) { [weak self] in
+            if self?.peers[key] == nil, connection.state != .cancelled { connection.cancel() }
+        }
     }
 
     private func receive(_ connection: NWConnection) {
@@ -207,11 +250,12 @@ final class LiveServer: @unchecked Sendable {
     }
 
     private func handle(_ message: [String: Any], from connection: NWConnection) {
-        if let peer = peers[ObjectIdentifier(connection)] {
+        let peer = peers[ObjectIdentifier(connection)]
+        if let peer {
             if message["acks"] as? Bool == true { peer.flowControl = true }
             // The page can play H.264 (true), or its decoder failed and it wants JPEGs again (false).
             if let wantsVideo = message["video"] as? Bool {
-                StreamStats.shared.note("phone video: \(wantsVideo ? "on" : "off")" + ((message["why"] as? String).map { " (\($0))" } ?? ""))
+                StreamStats.shared.note("phone video: \(wantsVideo ? "on" : "off")" + Self.why(message))
             }
             if let wantsVideo = message["video"] as? Bool, wantsVideo != peer.video {
                 peer.video = wantsVideo
@@ -221,7 +265,7 @@ final class LiveServer: @unchecked Sendable {
                 if !wantsVideo { peer.outbox.removeAll() }
             }
             if message["videoRestart"] != nil {
-                StreamStats.shared.note("phone video: restarting decoder" + ((message["why"] as? String).map { " (\($0))" } ?? ""))
+                StreamStats.shared.note("phone video: restarting decoder" + Self.why(message))
                 FrameStream.shared.restartVideo(peer.id)
                 return
             }
@@ -254,6 +298,16 @@ final class LiveServer: @unchecked Sendable {
         guard checks.controlPermission() else {
             return sendText(connection, ["error": "On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility."])
         }
+        // Input limits: a burst of messages or a huge paste can't flood the Mac.
+        if let peer {
+            if Date().timeIntervalSince(peer.inputWindow) >= 1 { peer.inputWindow = Date(); peer.inputs = 0 }
+            peer.inputs += 1
+            if peer.inputs > 240 { return }
+            peer.usedInput = true
+        }
+        if let text = message["text"] as? String, text.count > RemoteInput.maxText {
+            return sendText(connection, ["error": "That's too much text to type at once."])
+        }
         FrameStream.shared.wakeNow()
         // "ping" isn't an input command (RemoteInput ignores it); it lets the selftest
         // check the input path end-to-end.
@@ -268,9 +322,23 @@ final class LiveServer: @unchecked Sendable {
                         isComplete: true, completion: .contentProcessed { _ in })
     }
 
-    private func closeAll() {
-        sockets.values.forEach { $0.cancel() }
-        sockets.removeAll()
+    // The page's reason for a video change, made safe for the log: one short line.
+    private static func why(_ message: [String: Any]) -> String {
+        guard let why = message["why"] as? String else { return "" }
+        let clean = String(why.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(100))
+        return " (\(clean))"
+    }
+
+    // Sockets whose session was signed out, replaced or expired.
+    private func closeRevoked() {
+        for peer in peers.values where !checks.sessionValid(peer.token) { peer.connection.cancel() }
+    }
+
+    func closeAll() {
+        queue.async {
+            self.sockets.values.forEach { $0.cancel() }
+            DispatchQueue.main.async { RemoteInput.releaseButtons() }
+        }
     }
 }
 

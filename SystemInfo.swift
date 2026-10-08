@@ -123,13 +123,19 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
 
     func claudeUsage() -> [String: Any]? {
         let url = Self.usageFile
-        guard let data = try? Data(contentsOf: url),
+        // A small, ordinary file only; the numbers are checked below so odd values can't crash anything.
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+              size.isRegularFile == true, (size.fileSize ?? 0) < 64 * 1024,
+              let data = try? Data(contentsOf: url),
               let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let limits = saved["rate_limits"] as? [String: Any] else { return nil }
-        var out: [String: Any] = ["updated": saved["updated"] ?? 0]
+        let updated = (saved["updated"] as? Double).flatMap { $0.isFinite && $0 > 0 && $0 < 1e11 ? Int($0) : nil } ?? 0
+        var out: [String: Any] = ["updated": updated]
         for (key, name) in [("five_hour", "fiveHour"), ("seven_day", "sevenDay")] {
-            if let w = limits[key] as? [String: Any], let pct = w["used_percentage"] as? Double {
-                out[name] = ["pct": pct, "resetsAt": w["resets_at"] ?? 0]
+            if let w = limits[key] as? [String: Any], let pct = w["used_percentage"] as? Double,
+               pct.isFinite, (0...1000).contains(pct) {
+                let resets = (w["resets_at"] as? Double).flatMap { $0.isFinite && $0 > 0 && $0 < 1e11 ? Int($0) : nil } ?? 0
+                out[name] = ["pct": pct, "resetsAt": resets]
             }
         }
         return out
@@ -166,7 +172,7 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
         }
         guard ok == KERN_SUCCESS else { return nil }
         let page = UInt64(vm_kernel_page_size)
-        let app = UInt64(stats.internal_page_count) - UInt64(stats.purgeable_count)
+        let app = UInt64(stats.internal_page_count) &- min(UInt64(stats.purgeable_count), UInt64(stats.internal_page_count))
         return (app + UInt64(stats.wire_count) + UInt64(stats.compressor_page_count)) * page
     }
 

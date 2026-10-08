@@ -11,6 +11,15 @@ expect "fake cookie" "400" "$(node ws_handshake.js 8788 127.0.0.1:8788 http://12
 expect "bad host"    "400" "$(node ws_handshake.js 8788 evil.example.com http://127.0.0.1:8787 la_session=deadbeef)"
 expect "bad origin"  "400" "$(node ws_handshake.js 8788 127.0.0.1:8788 https://evil.example.com la_session=deadbeef)"
 
+# Malformed requests are refused without crashing the app (same process before and after).
+pid=$(pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" | head -1)
+probe() { printf "$1" | nc -w 3 127.0.0.1 8787 | head -1 | tr -d '\r'; }
+expect "negative length" "400" "$(probe 'POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: -1\r\n\r\n')"
+expect "chunked body"    "400" "$(probe 'POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\n\r\n')"
+expect "huge body"       "400" "$(probe 'POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 99999999\r\n\r\n')"
+expect "funnel request"  "403" "$(probe 'GET /auth HTTP/1.1\r\nHost: s-macbook-pro.tail039789.ts.net\r\nTailscale-Funnel-Request: ?1\r\n\r\n')"
+expect "still running"   "$pid" "$(pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" | head -1)"
+
 LOG="$HOME/Library/Logs/LidAwake-selftest.log"; rm -f "$LOG"
 launchctl submit -l local.lidawake.selftest -- "$APP/Contents/MacOS/LidAwake" --selftest
 # Wait for the selftest's log (it writes once at the end), up to 90 s on a busy Mac.

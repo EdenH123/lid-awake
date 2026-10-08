@@ -29,6 +29,10 @@ enum Passkeys {
         lock.lock(); defer { lock.unlock() }
         let now = Date()
         challenges = challenges.filter { $0.value.expires > now }
+        // Only a handful are ever needed; drop the oldest so requests can't pile them up.
+        while challenges.count >= 32, let oldest = challenges.min(by: { $0.value.expires < $1.value.expires }) {
+            challenges[oldest.key] = nil
+        }
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let value = base64url(Data(bytes))
