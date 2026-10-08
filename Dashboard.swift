@@ -156,10 +156,42 @@ let dashboardHTML = #"""
   }
   .screen-wrap img { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none; transform-origin: 0 0; }
 
-  /* Screen: iOS segmented control for picture quality. */
-  .quality { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--fill); border-radius: 9px; padding: 2px; justify-self: center; width: min(100%, 320px); }
-  .quality button { font-size: 13px; font-weight: 500; background: none; border: 0; padding: 6px 0; border-radius: 7px; cursor: pointer; }
-  .quality button.active { background: var(--seg-on); font-weight: 600; box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04); }
+  /* Screen: picture-quality slider (Sharp ← Balanced → Fast) with a springy knob. */
+  .qslider { display: grid; gap: 6px; padding: 2px 4px; }
+  .qs-row { display: grid; grid-template-columns: 22px 1fr 22px; align-items: center; gap: 14px; }
+  .qs-end { width: 22px; height: 22px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    transition: stroke .35s ease, transform .35s cubic-bezier(.34,1.56,.64,1); }
+  .qs-end.on { transform: scale(1.18); }
+  .qs-end.sharp.on { stroke: #5e5ce6; }
+  .qs-end.fast.on { stroke: var(--green); }
+  .qs-track { position: relative; height: 34px; touch-action: none; cursor: pointer; outline: none; -webkit-user-select: none; user-select: none; }
+  .qs-track::before {
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 6px; margin-top: -3px; border-radius: 99px;
+    background: linear-gradient(90deg, #5e5ce6, #0a84ff 50%, var(--green));
+  }
+  .qs-track:focus-visible::before { box-shadow: 0 0 0 3px rgba(10,132,255,.35); }
+  .qs-stop { position: absolute; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%;
+    background: rgba(255,255,255,.9); box-shadow: 0 0 0 .5px rgba(0,0,0,.15); pointer-events: none; }
+  .qs-knob {
+    position: absolute; top: 50%; left: 50%; width: 32px; height: 32px; margin: -16px 0 0 -16px; border-radius: 50%;
+    background: #fff; display: grid; place-items: center; pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.2), 0 0 0 .5px rgba(0,0,0,.06);
+    transition: left .55s cubic-bezier(.34,1.56,.64,1), transform .25s ease, box-shadow .25s ease;
+  }
+  .qs-knob.dragging { transition: transform .25s ease, box-shadow .25s ease; transform: scale(1.15);
+    box-shadow: 0 8px 20px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2); }
+  .qs-knob svg { width: 16px; height: 16px; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    transition: stroke .35s ease, transform .35s ease; }
+  .qs-knob.swap svg { transform: scale(.4) rotate(-40deg); }
+  .qs-labels { display: grid; grid-template-columns: 1fr 1fr 1fr; margin: 0 36px; }
+  .qs-labels button { background: none; border: 0; padding: 2px 0; font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer;
+    transition: color .3s ease, transform .35s cubic-bezier(.34,1.56,.64,1); }
+  .qs-labels button:first-child { text-align: left; transform-origin: left; }
+  .qs-labels button:nth-child(2) { text-align: center; }
+  .qs-labels button:last-child { text-align: right; transform-origin: right; }
+  .qs-labels button.active { color: var(--text); font-weight: 700; transform: scale(1.06); }
+  .qs-caption { text-align: center; font-size: 13px; color: var(--muted); min-height: 1.35em; transition: opacity .2s ease, transform .2s ease; }
+  .qs-caption.fade { opacity: 0; transform: translateY(3px); }
   .zoombar { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--muted); }
   .zoombar button { font-size: 13px; font-weight: 600; color: var(--blue); background: var(--fill); border: 0; border-radius: 99px; padding: 4px 12px; cursor: pointer; }
   .hint { font-size: 13px; color: var(--muted); text-align: center; line-height: 1.4; }
@@ -406,11 +438,20 @@ let dashboardHTML = #"""
       </div>
       <div class="base"></div>
     </div>
-    <nav class="quality" id="quality" aria-label="Picture quality">
-      <button data-quality="sharp">Sharp</button>
-      <button data-quality="balanced">Balanced</button>
-      <button data-quality="fast">Fast</button>
-    </nav>
+    <div class="qslider">
+      <div class="qs-row">
+        <svg class="qs-end sharp" id="qsEndSharp" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/></svg>
+        <div class="qs-track" id="qsTrack" role="slider" tabindex="0" aria-label="Picture quality" aria-valuemin="0" aria-valuemax="2">
+          <span class="qs-stop" style="left:0%"></span><span class="qs-stop" style="left:50%"></span><span class="qs-stop" style="left:100%"></span>
+          <div class="qs-knob" id="qsKnob"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="qsKnobIcon" d=""/></svg></div>
+        </div>
+        <svg class="qs-end fast" id="qsEndFast" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
+      </div>
+      <div class="qs-labels">
+        <button type="button" data-q="sharp">Sharp</button><button type="button" data-q="balanced">Balanced</button><button type="button" data-q="fast">Fast</button>
+      </div>
+      <div class="qs-caption" id="qsCaption"></div>
+    </div>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="hint" id="hint">Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom</div>
     <div class="panel-row">
@@ -736,8 +777,42 @@ let dashboardHTML = #"""
   try { quality = localStorage.getItem("quality") || "balanced"; } catch (e) {}
   const QUALITY_BADGE = { sharp: "HD", balanced: "SD", fast: "LOW" };
   const QUALITY_NAME = { sharp: "Sharp", balanced: "Balanced", fast: "Fast" };
+  // Slider look per mode: knob icon path, its color, and the one-line description.
+  const Q_ORDER = ["sharp", "balanced", "fast"];
+  const Q_STYLE = {
+    sharp:    { color: "#5e5ce6", icon: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z", caption: "Clearest picture · about 12 frames a second" },
+    balanced: { color: "#0a84ff", icon: "M12 4v16M5 8h14M7 8l-3 7h6zM17 8l-3 7h6z", caption: "Everyday · clear and smooth" },
+    fast:     { color: "#30d158", icon: "M13 2L4 14h7l-1 8 9-12h-7z", caption: "Smoothest · sharpens when the screen is still" },
+  };
+  let shownQuality = null;
+  function placeKnob(fraction, animate) {
+    const knob = $("qsKnob");
+    knob.classList.toggle("dragging", !animate);
+    knob.style.left = (Math.min(1, Math.max(0, fraction)) * 100) + "%";
+  }
+  function showSlider(q) {
+    const style = Q_STYLE[q], knob = $("qsKnob");
+    placeKnob(Q_ORDER.indexOf(q) / 2, true);
+    document.querySelectorAll("[data-q]").forEach(b => b.classList.toggle("active", b.dataset.q === q));
+    $("qsEndSharp").classList.toggle("on", q === "sharp");
+    $("qsEndFast").classList.toggle("on", q === "fast");
+    $("qsTrack").setAttribute("aria-valuenow", Q_ORDER.indexOf(q));
+    $("qsTrack").setAttribute("aria-valuetext", QUALITY_NAME[q]);
+    if (shownQuality === q) return;
+    // Spin the knob icon out, swap it, spin it back in; cross-fade the description.
+    knob.classList.add("swap");
+    $("qsCaption").classList.add("fade");
+    setTimeout(() => {
+      $("qsKnobIcon").setAttribute("d", style.icon);
+      knob.querySelector("svg").style.stroke = style.color;
+      $("qsCaption").textContent = style.caption;
+      knob.classList.remove("swap");
+      $("qsCaption").classList.remove("fade");
+    }, shownQuality ? 160 : 0);
+    shownQuality = q;
+  }
   function showQuality() {
-    document.querySelectorAll("[data-quality]").forEach(b => b.classList.toggle("active", b.dataset.quality === quality));
+    showSlider(quality);
     $("qualityFloat").firstElementChild.textContent = QUALITY_BADGE[quality];
     $("qualityFloat").setAttribute("aria-label", "Picture quality: " + QUALITY_NAME[quality]);
   }
@@ -747,7 +822,41 @@ let dashboardHTML = #"""
     showQuality();
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ quality }));
   }
-  document.querySelectorAll("[data-quality]").forEach(b => b.addEventListener("click", () => setQuality(b.dataset.quality)));
+  document.querySelectorAll("[data-q]").forEach(b => b.addEventListener("click", () => setQuality(b.dataset.q)));
+  // Drag or tap the track: the knob follows the finger, then springs to the nearest stop.
+  (() => {
+    const track = $("qsTrack");
+    let dragging = false;
+    const fractionAt = e => { const r = track.getBoundingClientRect(); return (e.clientX - r.left) / r.width; };
+    const preview = f => {
+      const q = Q_ORDER[Math.round(Math.min(1, Math.max(0, f)) * 2)];
+      document.querySelectorAll("[data-q]").forEach(b => b.classList.toggle("active", b.dataset.q === q));
+    };
+    track.addEventListener("pointerdown", e => {
+      dragging = true;
+      track.setPointerCapture(e.pointerId);
+      placeKnob(fractionAt(e), false);
+      preview(fractionAt(e));
+    });
+    track.addEventListener("pointermove", e => {
+      if (!dragging) return;
+      placeKnob(fractionAt(e), false);
+      preview(fractionAt(e));
+    });
+    const release = e => {
+      if (!dragging) return;
+      dragging = false;
+      const q = Q_ORDER[Math.round(Math.min(1, Math.max(0, fractionAt(e))) * 2)];
+      if (q === quality) showSlider(q); else setQuality(q);
+    };
+    track.addEventListener("pointerup", release);
+    track.addEventListener("pointercancel", release);
+    track.addEventListener("keydown", e => {
+      const i = Q_ORDER.indexOf(quality);
+      if (e.key === "ArrowLeft" && i > 0) { e.preventDefault(); setQuality(Q_ORDER[i - 1]); }
+      if (e.key === "ArrowRight" && i < 2) { e.preventDefault(); setQuality(Q_ORDER[i + 1]); }
+    });
+  })();
   // Landscape toolbar: one badge that steps LOW → SD → HD → LOW.
   $("qualityFloat").addEventListener("click", () => setQuality({ fast: "balanced", balanced: "sharp", sharp: "fast" }[quality]));
   showQuality();
