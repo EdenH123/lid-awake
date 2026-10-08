@@ -60,6 +60,10 @@ let dashboardHTML = #"""
     color: var(--text); background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); cursor: pointer;
   }
+  .top-actions { display: flex; gap: 10px; margin-left: auto; }
+  .back-btn { display: flex; align-items: center; gap: 4px; margin-left: -6px; padding: 8px 6px; border: 0; background: none;
+    color: var(--blue); font-size: 17px; cursor: pointer; }
+  .back-btn svg { width: 12px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
   .lock-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
   .titles { margin-bottom: -6px; }
   .titles h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.012em; margin: 0; line-height: 1.2; }
@@ -123,7 +127,7 @@ let dashboardHTML = #"""
   .health-list .row .title { flex: 0 0 88px; }
   .health-list .meter { flex: 1; margin: 0; }
   .health-list .value { flex: 0 0 96px; }
-  .health-list .row:last-child .value { flex: 1; }
+  .health-list .row.plain .value { flex: 1; }
   .tile-detail { font-size: 15px; color: var(--text); line-height: 1.3; margin-top: auto; padding-top: 8px; text-wrap: pretty; }
   .tile-detail.muted { color: var(--muted); }
   .bolt { width: 13px; height: 20px; fill: var(--green); }
@@ -439,6 +443,16 @@ let dashboardHTML = #"""
   .faceid-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
   .faceid-actions button { font-size: 15px; font-weight: 600; border: 0; border-radius: 99px; padding: 8px 16px; cursor: pointer; color: var(--blue); background: var(--fill); }
   .faceid-actions button.primary { color: #fff; background: var(--blue); }
+  /* Settings rows with a small colored icon, like iPhone Settings. */
+  .set-icon { width: 30px; height: 30px; border-radius: 8px; flex: none; display: grid; place-items: center; color: #fff; }
+  .set-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .set-icon.red { background: #ff3b30; } .set-icon.indigo { background: #5856d6; } .set-icon.green { background: #34c759; }
+  .set-icon.clay { background: #d97757; } .set-icon.orange { background: #ff9500; } .set-icon.blue { background: var(--blue); }
+  .set-icon.gray { background: #8e8e93; }
+  .row .title small { display: block; font-size: 13px; color: var(--muted); margin-top: 1px; white-space: normal; }
+  .icon-list .row + .row::before, .icon-list .alert-rows .row::before { left: 42px; }
+  .row-link.danger { color: var(--red); }
+  #alertTestList { margin-top: 12px; }
   .mini-switch { position: relative; width: 63px; height: 28px; flex: none; border-radius: 99px; border: 0; padding: 0;
     margin-left: auto; background: var(--fill); cursor: pointer; transition: background .25s ease; }
   .mini-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 37px; height: 24px; border-radius: 99px;
@@ -455,9 +469,13 @@ let dashboardHTML = #"""
 <body>
 <main id="main">
   <div class="topbar">
+    <button type="button" class="back-btn" id="settingsBack" hidden><svg viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8"/></svg>Status</button>
     <div class="live" id="live"><span class="dot"></span><span id="liveText">Connecting…</span></div>
+    <div class="top-actions">
+    <button type="button" class="lock-btn" id="settingsBtn" aria-label="Settings" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.00 4.60 L13.87 2.58 L15.67 3.13 L16.11 5.85 L17.23 6.77 L19.98 6.67 L20.87 8.33 L19.26 10.56 L19.40 12.00 L21.42 13.87 L20.87 15.67 L18.15 16.11 L17.23 17.23 L17.33 19.98 L15.67 20.87 L13.44 19.26 L12.00 19.40 L10.13 21.42 L8.33 20.87 L7.89 18.15 L6.77 17.23 L4.02 17.33 L3.13 15.67 L4.74 13.44 L4.60 12.00 L2.58 10.13 L3.13 8.33 L5.85 7.89 L6.77 6.77 L6.67 4.02 L8.33 3.13 L10.56 4.74Z"/><circle cx="12" cy="12" r="3"/></svg></button>
     <button class="lock-btn" id="lockBtn" aria-label="Lock this page" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+    </div>
   </div>
   <div class="titles">
     <h1 id="pageTitle">Lid Awake</h1>
@@ -554,7 +572,8 @@ let dashboardHTML = #"""
         <div class="row"><span class="title">Processor</span><div class="meter"><div id="cpuBar" style="width:0"></div></div><span class="value" id="cpuValue">—</span></div>
         <div class="row"><span class="title">Memory</span><div class="meter"><div id="memBar" style="width:0"></div></div><span class="value" id="memValue">—</span></div>
         <div class="row"><span class="title">Storage</span><div class="meter"><div id="diskBar" style="width:0"></div></div><span class="value" id="diskValue">—</span></div>
-        <div class="row"><span class="title">Running</span><span class="value" id="uptimeValue">—</span></div>
+        <div class="row plain"><span class="title">Heat</span><span class="value" id="thermal">—</span></div>
+        <div class="row plain"><span class="title">Running</span><span class="value" id="uptimeValue">—</span></div>
       </div>
     </div>
 
@@ -574,33 +593,6 @@ let dashboardHTML = #"""
         <div class="row"><span class="title">Response time to this iPhone</span><span class="value" id="netPing">—</span></div>
       </div>
     </div>
-
-    <div class="section">
-      <div class="section-head">Lid Awake settings</div>
-      <div class="list">
-        <div class="row"><span class="title">Low-battery limit</span><span class="value" id="batteryGuardRow">—</span></div>
-        <div class="row"><span class="title">Heat limit</span><span class="value" id="heatGuardRow">—</span></div>
-        <div class="row"><span class="title">Mac heat</span><span class="value" id="thermal">—</span></div>
-        <div class="row" id="faceIdRow" hidden><span class="title">Face ID sign-in</span><button type="button" class="row-link" id="faceIdRowBtn">Set up</button></div>
-      </div>
-      <div class="section-foot">Change the limits from the Lid Awake menu on your Mac.</div>
-    </div>
-
-    <div class="section" id="alertsSection">
-      <div class="section-head">iPhone alerts</div>
-      <div class="list">
-        <div class="row"><span class="title">Alerts</span><button type="button" class="row-link" id="alertsOn">Turn on</button>
-          <button type="button" class="mini-switch" id="alertsSwitch" role="switch" aria-label="iPhone alerts" hidden></button></div>
-        <div class="alert-rows" id="alertRows" hidden>
-          <div class="row"><span class="title">Lid Awake turns off</span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch"></button></div>
-          <div class="row"><span class="title">Battery getting low</span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch"></button></div>
-          <div class="row"><span class="title">Claude usage over 90%</span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch"></button></div>
-          <div class="row"><span class="title">Mac getting warm</span><button type="button" class="mini-switch" data-alert="warm" role="switch"></button></div>
-          <div class="row"><button type="button" class="row-link start" id="alertsTest">Send a test alert</button></div>
-        </div>
-      </div>
-      <div class="section-foot" id="alertsFoot">Notifications on this iPhone, even when the page is closed.</div>
-    </div>
   </div>
 
   <div class="tab" id="tab-apps" hidden>
@@ -612,6 +604,44 @@ let dashboardHTML = #"""
     </div>
     <div class="section-foot" id="appsFoot" hidden>Tap an app to open it on your Mac. A dot means it's already open. To change this list, use Apps on phone in the Lid Awake menu on your Mac.</div>
     <div class="opened" id="openedBar" hidden><span id="openedText"></span><button type="button" id="openedShow">Show screen</button></div>
+  </div>
+
+  <div class="tab" id="tab-settings" hidden>
+    <div class="section" id="alertsSection">
+      <div class="section-head">iPhone alerts</div>
+      <div class="list icon-list">
+        <div class="row"><span class="set-icon red"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></span><span class="title">Alerts</span>
+          <button type="button" class="row-link" id="alertsOn">Turn on</button>
+          <button type="button" class="mini-switch" id="alertsSwitch" role="switch" aria-label="iPhone alerts" hidden></button></div>
+        <div class="alert-rows" id="alertRows" hidden>
+          <div class="row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
+          <div class="row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
+          <div class="row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span><span class="title">Claude usage<small>Over 90% of a limit</small></span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch" aria-label="Claude usage"></button></div>
+          <div class="row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Mac warm<small>Battery at 37°C</small></span><button type="button" class="mini-switch" data-alert="warm" role="switch" aria-label="Mac warm"></button></div>
+        </div>
+      </div>
+      <div class="list" id="alertTestList" hidden><div class="row"><button type="button" class="row-link start" id="alertsTest">Send a test alert</button></div></div>
+      <div class="section-foot" id="alertsFoot">Arrives even when the app is closed.</div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">Sign-in</div>
+      <div class="list icon-list">
+        <div class="row" id="faceIdRow" hidden><span class="set-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></span><span class="title">Face ID</span>
+          <span class="value" id="faceIdState" hidden>On</span><button type="button" class="row-link" id="faceIdRowBtn">Set up</button></div>
+        <div class="row"><span class="set-icon gray"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><button type="button" class="row-link start danger" id="lockNowBtn">Lock this page now</button></div>
+      </div>
+      <div class="section-foot">You stay signed in on this iPhone for 7 days. Change the password from the Lid Awake menu on your Mac.</div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">On your Mac</div>
+      <div class="list">
+        <div class="row"><span class="title">Low-battery limit</span><span class="value" id="batteryGuardRow">—</span></div>
+        <div class="row"><span class="title">Heat limit</span><span class="value" id="heatGuardRow">—</span></div>
+      </div>
+      <div class="section-foot">Change these from the Lid Awake menu on your Mac.</div>
+    </div>
   </div>
 
   <div class="tab" id="tab-screen" hidden>
@@ -731,7 +761,8 @@ let dashboardHTML = #"""
     const stale = !lastOk || ago > 10;
     $("live").classList.toggle("stale", stale);
     $("liveText").textContent = !lastOk ? "Can't reach Mac" : stale ? `Last seen ${ago}s ago` : "Live";
-    $("pageTitle").textContent = { screen: "Screen", apps: "Apps" }[currentTab] || "Lid Awake";
+    $("pageTitle").textContent = { screen: "Screen", apps: "Apps", settings: "Settings" }[currentTab] || "Lid Awake";
+    $("settingsBtn").hidden = currentTab !== "status" || $("lockBtn").hidden;
     if (!data) return;
 
     $("host").textContent = data.host || "";
@@ -984,7 +1015,7 @@ let dashboardHTML = #"""
       if (!res.ok) throw new Error(await res.text());
       setFaceIDState("on");
       $("faceIdOffer").hidden = true;
-      $("faceIdRow").hidden = true;
+      renderFaceIDRow();
     } catch (e) {
       if (e.name !== "NotAllowedError") {
         $("faceIdOffer").hidden = false;
@@ -994,10 +1025,20 @@ let dashboardHTML = #"""
   }
   // After a password sign-in, offer it once (and keep a "Set up" row in settings if declined).
   function offerFaceID() {
+    renderFaceIDRow();
     if (!faceIDPossible() || faceIDState() === "on") return;
-    $("faceIdRow").hidden = false;
     if (faceIDState() !== "declined") $("faceIdOffer").hidden = false;
   }
+  function renderFaceIDRow() {
+    const on = faceIDState() === "on";
+    $("faceIdRow").hidden = !faceIDPossible();
+    $("faceIdState").hidden = !on;
+    $("faceIdRowBtn").hidden = on;
+  }
+  renderFaceIDRow();
+  $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
+  $("settingsBtn").addEventListener("click", () => { showTab("settings"); scrollTo(0, 0); });
+  $("settingsBack").addEventListener("click", () => { showTab("status"); scrollTo(0, 0); });
   $("faceIdOn").addEventListener("click", faceIDSetup);
   $("faceIdRowBtn").addEventListener("click", faceIDSetup);
   $("faceIdLater").addEventListener("click", () => { setFaceIDState("declined"); $("faceIdOffer").hidden = true; });
@@ -1029,10 +1070,13 @@ let dashboardHTML = #"""
   const tabButtons = document.querySelectorAll(".tabs button");
   function showTab(name) {
     currentTab = name;
-    tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+    tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (name === "settings" ? "status" : name)));
+    $("settingsBack").hidden = name !== "settings";
+    $("live").hidden = name === "settings";
     $("tab-status").hidden = name !== "status";
     $("tab-screen").hidden = name !== "screen";
     $("tab-apps").hidden = name !== "apps";
+    $("tab-settings").hidden = name !== "settings";
     if (name !== "apps" && editingApps) setEditing(false);
     $("main").classList.toggle("wide", name === "screen");
     try { localStorage.setItem("tab", name); } catch (e) {}
@@ -2026,12 +2070,13 @@ let dashboardHTML = #"""
     $("alertsSwitch").hidden = !on;
     $("alertsSwitch").setAttribute("aria-checked", on);
     $("alertRows").hidden = !on;
+    $("alertTestList").hidden = !on;
     const off = alertsOff();
     document.querySelectorAll("[data-alert]").forEach(b => b.setAttribute("aria-checked", !off.includes(b.dataset.alert)));
-    $("alertsFoot").textContent = on ? "Notifications on this iPhone, even when the page is closed."
+    $("alertsFoot").textContent = on ? "Arrives even when the app is closed."
       : !pushPossible() || !standalone() ? "To get alerts, open Lid Awake from its Home Screen icon (in Safari: Share → Add to Home Screen)."
       : Notification.permission === "denied" ? "Notifications are blocked. Allow them in iPhone Settings → Notifications → Lid Awake."
-      : "Notifications on this iPhone, even when the page is closed.";
+      : "Arrives even when the app is closed.";
   }
   async function postJSON(url, body) {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-LidAwake": "1" }, body: JSON.stringify(body) });
@@ -2119,7 +2164,7 @@ let dashboardHTML = #"""
     if (document.hidden) { stopLive(); return; }
     checkAuth();
   });
-  try { const saved = localStorage.getItem("tab"); if (saved === "screen" || saved === "apps") currentTab = saved; } catch (e) {}
+  try { const saved = localStorage.getItem("tab"); if (["screen", "apps", "settings"].includes(saved)) currentTab = saved; } catch (e) {}
   showTab(currentTab);
   checkAuth();
 </script>
