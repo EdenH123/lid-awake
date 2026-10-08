@@ -471,6 +471,7 @@ let dashboardHTML = #"""
   .alert-row .title { flex: 1; min-width: 0; font-size: 17px; line-height: 1.25; }
   .alert-row .title small { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
   .alerts-card.unavailable .alert-row { opacity: .45; }
+  .limits-card .alert-row:first-of-type::before { display: none; }
   .alerts-note { margin: 0; padding: 10px 16px 14px; font-size: 13px; line-height: 1.38; color: var(--muted); border-top: .5px solid var(--line); }
   .mini-switch { position: relative; width: 63px; height: 28px; flex: none; border-radius: 99px; border: 0; padding: 0;
     margin-left: auto; background: var(--fill); cursor: pointer; transition: background .25s ease; }
@@ -649,12 +650,12 @@ let dashboardHTML = #"""
     </div>
 
     <div class="section">
-      <div class="section-head">On your Mac</div>
-      <div class="list">
-        <div class="row"><span class="title">Low-battery limit</span><span class="value" id="batteryGuardRow">—</span></div>
-        <div class="row"><span class="title">Heat limit</span><span class="value" id="heatGuardRow">—</span></div>
-      </div>
-      <div class="section-foot">Change these from the Lid Awake menu on your Mac.</div>
+      <div class="section-head">Safety limits</div>
+      <section class="alerts-card limits-card">
+        <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Low battery<small id="batteryLimitText">Turns off below 10% on battery</small></span><button type="button" class="mini-switch" data-limit="battery" role="switch" aria-label="Turn off at low battery"></button></div>
+        <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the Mac overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
+      </section>
+      <div class="section-foot">Lid Awake turns itself off so your Mac can sleep safely. These are the same switches as in the Mac menu.</div>
     </div>
   </div>
 
@@ -836,8 +837,12 @@ let dashboardHTML = #"""
       $("timerRow").textContent = timerChoice;
       $("timerSelect").value = String(data.timerMinutes);
     }
-    $("batteryGuardRow").textContent = data.batteryGuard ? `Below ${data.batteryLimit}%` : "Off";
-    $("heatGuardRow").textContent = data.heatGuard ? `Above ${data.maxBatteryTemp}°C` : "Off";
+    if (!limitSaving) {
+      document.querySelector('[data-limit="battery"]').setAttribute("aria-checked", !!data.batteryGuard);
+      document.querySelector('[data-limit="heat"]').setAttribute("aria-checked", !!data.heatGuard);
+    }
+    $("batteryLimitText").textContent = `Turns off below ${data.batteryLimit}% on battery`;
+    $("heatLimitText").textContent = `Turns off above ${data.maxBatteryTemp}°C or if the Mac overheats`;
     const thermalText = { nominal: "Normal", fair: "Warm", serious: "Hot", critical: "Critical" }[data.thermalState] || "—";
     $("thermal").textContent = thermalText;
     $("thermal").className = "value " + (data.thermalState === "serious" || data.thermalState === "critical" ? "bad" : data.thermalState === "fair" ? "warn" : "");
@@ -2135,6 +2140,18 @@ let dashboardHTML = #"""
     renderAlerts();
   }));
   renderAlerts();
+
+  // ---------- Safety limits (same as the Mac menu) ----------
+  let limitSaving = false;
+  document.querySelectorAll("[data-limit]").forEach(b => b.addEventListener("click", async () => {
+    const on = b.getAttribute("aria-checked") !== "true";
+    b.setAttribute("aria-checked", on);
+    limitSaving = true;
+    try { await postJSON("limits", { name: b.dataset.limit, on }); }
+    catch (e) { b.setAttribute("aria-checked", !on); }
+    limitSaving = false;
+    poll();
+  }));
 
   // ---------- Timer ----------
   // Picking a length restarts the countdown from now, so it also works as "give me more time".

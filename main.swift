@@ -269,6 +269,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.setAwake(false)
                 notify("Turned off from your phone. Your Mac will sleep normally again.")
             },
+            setLimit: { [weak self] name, on in
+                DispatchQueue.main.sync {
+                    guard let self else { return false }
+                    switch name {
+                    case "battery": self.batteryGuard = on
+                    case "heat": self.heatGuard = on
+                    default: return false
+                    }
+                    self.tick()  // same as ticking it in the menu: applies right away
+                    return true
+                }
+            },
             setTimer: { [weak self] minutes in
                 guard timerChoices.contains(where: { $0.minutes == minutes }) else { return false }
                 DispatchQueue.main.sync { self?.setTimer(minutes: minutes) }

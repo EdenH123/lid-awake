@@ -107,9 +107,11 @@ final class StatusServer: @unchecked Sendable {
     private let awake: () -> Bool
     private let turnOff: () -> Void
     private let setTimer: (Int) -> Bool
+    private let setLimit: (String, Bool) -> Bool
 
     init?(status: @escaping () -> Data, remoteAllowed: @escaping () -> Bool, awake: @escaping () -> Bool,
-          turnOff: @escaping () -> Void, setTimer: @escaping (Int) -> Bool) {
+          turnOff: @escaping () -> Void, setLimit: @escaping (String, Bool) -> Bool,
+          setTimer: @escaping (Int) -> Bool) {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: statusPort)!)
@@ -120,6 +122,7 @@ final class StatusServer: @unchecked Sendable {
         self.awake = awake
         self.turnOff = turnOff
         self.setTimer = setTimer
+        self.setLimit = setLimit
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return }
             connection.start(queue: self.queue)
@@ -339,6 +342,13 @@ final class StatusServer: @unchecked Sendable {
             let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
             guard let ids = body?["ids"] as? [String] else { return text(c, "400 Bad Request", "Missing app order.") }
             DispatchQueue.main.sync { PhoneApps.reorder(ids) }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        // Safety limits (same switches as the Mac menu): "battery" or "heat", on or off.
+        case ("POST", "/limits"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard let name = body?["name"] as? String, let on = body?["on"] as? Bool, setLimit(name, on)
+            else { return text(c, "400 Bad Request", "Unknown limit.") }
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("POST", "/timer"):
