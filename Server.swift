@@ -309,7 +309,7 @@ final class StatusServer: @unchecked Sendable {
                     case .unchanged:
                         self.reply(c, "204 No Content", "text/plain", Data())
                     case .unavailable:
-                        self.text(c, "503 Service Unavailable", "Waking the Mac's screen… If this stays, the lid may be closed with no monitor attached, so there's no screen to show.")
+                        self.text(c, "503 Service Unavailable", "Waking the Mac's screen… This usually takes a few seconds.")
                     }
                 }
             }

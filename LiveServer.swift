@@ -182,7 +182,7 @@ final class LiveServer: @unchecked Sendable {
                 self.peers[ObjectIdentifier(connection)] = peer
                 FrameStream.shared.subscribe(id,
                     frame: { jpeg in self.queue.async { sendFrame(jpeg) } },
-                    unavailable: { self.queue.async { self.sendText(connection, ["error": "Waking the Mac's screen… If this stays, the lid may be closed with no monitor attached, so there's no screen to show."]) } })
+                    unavailable: { self.queue.async { self.sendText(connection, ["error": "Waking the Mac's screen… This usually takes a few seconds."]) } })
                 self.receive(connection)
             case .failed, .cancelled:
                 self.sockets[id] = nil
