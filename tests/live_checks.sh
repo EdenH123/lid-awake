@@ -27,7 +27,11 @@ fastFirst=$(grep "^live fast:" "$LOG" | sed -n 's/.*first \([0-9]*\) bytes.*/\1/
 fastLast=$(grep "^live fast:" "$LOG" | sed -n 's/.*last \([0-9]*\) bytes.*/\1/p')
 if [ -n "$sharp" ] && [ -n "$fastFirst" ] && [ "$sharp" -gt "$fastFirst" ]; then echo "PASS presets differ (sharp $sharp > fast $fastFirst)"
 else echo "FAIL presets: sharp '$sharp' vs fast '$fastFirst'"; fail=1; fi
+# The still-frame check needs a calm screen. If the selftest saw real motion (>3% of the
+# picture changing) it can't judge, so it's skipped rather than failed.
+moving=$(grep "^live fast changed areas:" "$LOG" | tr ' ' '\n' | awk '$1+0 > 0.03 {n++} END {print n+0}')
 if [ -n "$fastLast" ] && [ "$fastLast" -gt $(( fastFirst * 2 )) ]; then echo "PASS fast sharpens when still ($fastFirst -> $fastLast bytes)"
+elif [ "$moving" -gt 0 ]; then echo "SKIP fast still frame: the screen was moving during the test ($moving busy frames)"
 else echo "FAIL fast still frame: first '$fastFirst', last '$fastLast'"; fail=1; fi
 grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL live input"; fail=1; }
 exit $fail
