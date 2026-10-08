@@ -943,9 +943,9 @@ let dashboardHTML = #"""
   // Slider: one footnote per mode.
   const Q_ORDER = ["sharp", "balanced", "fast"];
   const Q_CAPTION = {
-    sharp: "Clearest picture, about 12 frames a second.",
+    sharp: "Clearest text, up to 20 frames a second.",
     balanced: "Clear and smooth, for everyday use.",
-    fast: "Smoothest motion. Sharpens when the screen is still.",
+    fast: "Smoothest and lightest on data, for mobile networks.",
   };
   let shownQuality = null;
   function placeKnob(fraction, animate) {
