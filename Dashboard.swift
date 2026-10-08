@@ -61,6 +61,8 @@ let dashboardHTML = #"""
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); cursor: pointer;
   }
   .top-actions { display: flex; gap: 10px; margin-left: auto; }
+  /* Locking lives in Settings ("Lock this page now"); this button only keeps the sign-in state. */
+  #lockBtn { display: none !important; }
   .back-btn { display: flex; align-items: center; gap: 4px; margin-left: -6px; padding: 8px 6px; border: 0; background: none;
     color: var(--blue); font-size: 17px; cursor: pointer; }
   .back-btn svg { width: 12px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
