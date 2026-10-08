@@ -51,15 +51,21 @@ let dashboardHTML = #"""
   :root[data-theme="dark"] { color-scheme: dark; --seg-on: #636366; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --seg-on: #636366; } }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  /* No rubber-band bounce at the page's ends: on iPhone a fast fling bounced the floating
-     tab bar along with the content. */
-  html, body { overscroll-behavior: none; }
+  /* The page itself never scrolls (or zooms sideways): the content scrolls inside #scroller,
+     and the floating tab bar sits outside it, so it stays at exactly the same spot on every
+     page, whatever the page's length or a fast fling. */
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 17px/1.29 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased; letter-spacing: -0.022em;
+  }
+  #scroller {
+    position: fixed; inset: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
     padding: max(10px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom));
   }
+  body.apps-full #scroller, body.landscape-full #scroller { padding: 0; overflow: hidden; }
   button { font: inherit; color: inherit; letter-spacing: inherit; -webkit-user-select: none; user-select: none; }
   button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   main { max-width: 480px; margin: 0 auto; display: grid; gap: 20px; }
@@ -348,16 +354,34 @@ let dashboardHTML = #"""
   .tabbar {
     position: fixed; z-index: 10; left: 50%; transform: translateX(-50%);
     bottom: max(4px, calc(env(safe-area-inset-bottom) - 22px));
-    display: flex; gap: 2px; padding: 4px; border-radius: 99px;
+    display: flex; gap: 2px; padding: 4px; border-radius: 99px; isolation: isolate;
     background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
   }
   .tabbar button {
     width: 84px; height: 54px; background: none; border: 0; border-radius: 99px; display: grid; justify-items: center; align-content: center; gap: 1px;
-    font-size: 10px; font-weight: 600; letter-spacing: 0; color: var(--text); cursor: pointer; padding: 0; transition: background .25s ease, color .25s ease;
+    font-size: 10px; font-weight: 600; letter-spacing: 0; color: var(--text); cursor: pointer; padding: 0; transition: color .3s ease;
+    position: relative; z-index: 1;
+  }
+  .tabbar button svg { transition: transform .35s cubic-bezier(.32,.72,0,1); }
+  .tabbar button:active svg { transform: scale(.86); }
+  /* The soft pill behind the current tab glides to the tab you pick. */
+  .tab-pill {
+    position: absolute; z-index: 0; top: 4px; left: 0; width: 84px; height: 54px; border-radius: 99px;
+    background: var(--fill); pointer-events: none;
+    transition: transform .5s cubic-bezier(.32,.72,0,1), width .5s cubic-bezier(.32,.72,0,1);
+  }
+  .tabbar.no-anim .tab-pill { transition: none; }
+  /* A new page fades in (opacity only: a moving page would carry its floating bars with it). */
+  .tab-enter { animation: tab-enter .3s ease-out; }
+  @keyframes tab-enter { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .tab-pill, .tabbar button svg { transition: none; }
+    .tab-enter { animation: none; }
   }
   .tabbar svg { width: 26px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .tabbar button.active { color: var(--blue); background: var(--fill); }
+  .tabbar button.active { color: var(--blue); }
+  body:has(#app[hidden]) .tabbar { display: none; }
 
   /* Screen: the overlay shown while the Mac's screen is off. */
   .screen-off {
@@ -512,6 +536,7 @@ let dashboardHTML = #"""
 </style>
 </head>
 <body>
+<div id="scroller">
 <main id="main">
   <div class="topbar">
     <button type="button" class="back-btn" id="settingsBack" hidden><svg viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8"/></svg>Status</button>
@@ -540,14 +565,6 @@ let dashboardHTML = #"""
   </section>
 
   <div class="tab" id="app" hidden>
-  <nav class="tabbar tabs" aria-label="Pages">
-    <button data-tab="status" class="active">
-      <svg viewBox="0 0 26 24" aria-hidden="true"><path d="M3 17a10 10 0 1 1 20 0"/><path d="M13 17l5-6"/><circle cx="13" cy="17" r="1.6"/></svg>Status</button>
-    <button data-tab="screen">
-      <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="4" width="18" height="12" rx="1.8"/><path d="M1.5 19.5h23"/></svg>Screen</button>
-    <button data-tab="apps">
-      <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="2.5" width="8" height="8" rx="2.4"/><rect x="14" y="2.5" width="8" height="8" rx="2.4"/><rect x="4" y="12.5" width="8" height="8" rx="2.4"/><rect x="14" y="12.5" width="8" height="8" rx="2.4"/></svg>Apps</button>
-  </nav>
 
   <div class="tab" id="tab-status">
     <section class="card faceid-offer" id="faceIdOffer" hidden>
@@ -799,6 +816,16 @@ let dashboardHTML = #"""
   </div>
   </div>
 </main>
+</div>
+  <nav class="tabbar tabs" aria-label="Pages">
+    <span class="tab-pill" id="tabPill" aria-hidden="true"></span>
+    <button data-tab="status" class="active">
+      <svg viewBox="0 0 26 24" aria-hidden="true"><path d="M3 17a10 10 0 1 1 20 0"/><path d="M13 17l5-6"/><circle cx="13" cy="17" r="1.6"/></svg>Status</button>
+    <button data-tab="screen">
+      <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="4" width="18" height="12" rx="1.8"/><path d="M1.5 19.5h23"/></svg>Screen</button>
+    <button data-tab="apps">
+      <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="2.5" width="8" height="8" rx="2.4"/><rect x="14" y="2.5" width="8" height="8" rx="2.4"/><rect x="4" y="12.5" width="8" height="8" rx="2.4"/><rect x="14" y="12.5" width="8" height="8" rx="2.4"/></svg>Apps</button>
+  </nav>
 <input class="live-input" id="liveInput" aria-label="Type directly on your Mac"
        autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="go">
 <script>
@@ -1005,6 +1032,7 @@ let dashboardHTML = #"""
       unlocked = true;
       $("gate").hidden = true;
       $("app").hidden = false;
+      requestAnimationFrame(() => movePill(false));
       $("lockBtn").hidden = false;
       poll();
       if (currentTab === "screen") startFrames();
@@ -1251,8 +1279,8 @@ let dashboardHTML = #"""
   }
   renderFaceIDRow();
   $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
-  $("settingsBtn").addEventListener("click", () => { showTab("settings"); scrollTo(0, 0); loadDevices(); loadActivity(); });
-  $("settingsBack").addEventListener("click", () => { showTab("status"); scrollTo(0, 0); });
+  $("settingsBtn").addEventListener("click", () => { showTab("settings"); $("scroller").scrollTo(0, 0); loadDevices(); loadActivity(); });
+  $("settingsBack").addEventListener("click", () => { showTab("status"); $("scroller").scrollTo(0, 0); });
   $("faceIdOn").addEventListener("click", faceIDSetup);
   $("faceIdRowBtn").addEventListener("click", faceIDSetup);
   $("faceIdLater").addEventListener("click", () => { setFaceIDState("declined"); $("faceIdOffer").hidden = true; });
@@ -1282,9 +1310,28 @@ let dashboardHTML = #"""
 
   // ---------- Tabs ----------
   const tabButtons = document.querySelectorAll(".tabs button");
+  // The highlight glides to the current tab (jumps without animating the first time).
+  function movePill(animate) {
+    const active = document.querySelector(".tabs button.active");
+    if (!active) return;
+    const bar = document.querySelector(".tabbar");
+    bar.classList.toggle("no-anim", !animate);
+    $("tabPill").style.width = active.offsetWidth + "px";
+    $("tabPill").style.transform = `translateX(${active.offsetLeft}px)`;
+  }
+  let pillPlaced = false;
+  addEventListener("resize", () => movePill(false));
   function showTab(name) {
+    const changed = currentTab !== name;
     currentTab = name;
     tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (name === "settings" ? "status" : name)));
+    requestAnimationFrame(() => { movePill(pillPlaced); pillPlaced = true; });
+    const page = $("tab-" + name);
+    if (changed && page) {
+      page.classList.remove("tab-enter");
+      void page.offsetWidth;  // restart the animation
+      page.classList.add("tab-enter");
+    }
     $("settingsBack").hidden = name !== "settings";
     $("live").hidden = name === "settings";
     $("tab-status").hidden = name !== "status";
