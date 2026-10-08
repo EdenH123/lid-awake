@@ -302,7 +302,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         // About 1600 px wide: clearly sharper than Fast's moving frames, still light enough
         // for mobile data.
         let config = SCStreamConfiguration()
-        let scale = min(1, 1600 / Double(max(display.width, 1)))
+        let scale = min(1, 1280 / Double(max(display.width, 1)))
         config.width = Int(Double(display.width) * scale)
         config.height = Int(Double(display.height) * scale)
         config.showsCursor = true
@@ -312,7 +312,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
                   let jpeg = ciContext.jpegRepresentation(
                       of: CIImage(cgImage: image),
                       colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-                      options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.7])
+                      options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.6])
             else { return }
             queue.async {
                 // Skip it if something moved meanwhile; the next pause sharpens again.

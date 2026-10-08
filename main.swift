@@ -611,6 +611,40 @@ if CommandLine.arguments.contains("--selftest") {
                         socket.cancel(with: .normalClosure, reason: nil)
                         try? await Task.sleep(nanoseconds: 300_000_000)
                     }
+                    // Flow control: with acks on and none sent, the Mac stops after 2 frames;
+                    // confirming lets frames flow again.
+                    do {
+                        var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)
+                        request.setValue("http://127.0.0.1:\(statusPort)", forHTTPHeaderField: "Origin")
+                        request.setValue("\(Auth.cookieName)=selftest", forHTTPHeaderField: "Cookie")
+                        let socket = URLSession.shared.webSocketTask(with: request)
+                        socket.resume()
+                        try? await socket.send(.string(#"{"quality":"fast","acks":true}"#))
+                        func count(for seconds: Double, ack: Bool) async -> Int {
+                            var n = 0
+                            let end = Date().addingTimeInterval(seconds)
+                            while Date() < end {
+                                let message = try? await withThrowingTaskGroup(of: URLSessionWebSocketTask.Message?.self) { group in
+                                    group.addTask { try await socket.receive() }
+                                    group.addTask { try await Task.sleep(nanoseconds: 300_000_000); return nil }
+                                    let first = try await group.next() ?? nil
+                                    group.cancelAll()
+                                    return first
+                                }
+                                if case .data? = message {
+                                    n += 1
+                                    if ack { try? await socket.send(.string(#"{"ack":1}"#)) }
+                                }
+                            }
+                            return n
+                        }
+                        let held = await count(for: 2, ack: false)
+                        try? await socket.send(.string(#"{"ack":1}"#))
+                        try? await socket.send(.string(#"{"ack":1}"#))
+                        let flowing = await count(for: 2, ack: true)
+                        lines.append("live flow: \(held) frames unconfirmed, \(flowing) after confirming")
+                        socket.cancel(with: .normalClosure, reason: nil)
+                    }
                     _ = test
                     done.signal()
                 }

@@ -408,6 +408,8 @@ let dashboardHTML = #"""
     background: rgba(30,30,32,.72); color: #fff; padding: 4px 6px 4px 12px; border-radius: 99px;
     -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
   }
+  body.landscape-full #zoomBar { transition: opacity .6s ease; }
+  body.landscape-full #zoomBar.faded { opacity: 0; pointer-events: none; }
   body.landscape-full #screenMsg { position: fixed; z-index: 15; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 80vw; }
 
   /* Locked / off screen: a plain sign-in sheet. */
@@ -1048,11 +1050,15 @@ let dashboardHTML = #"""
     ws = socket;
     socket.onopen = () => {
       opened = true; wsFailures = 0;
-      socket.send(JSON.stringify({ quality }));
+      socket.send(JSON.stringify({ quality, acks: true }));
       pumpInput();
     };
     socket.onmessage = e => {
-      if (typeof e.data !== "string") return showFrame(e.data);
+      if (typeof e.data !== "string") {
+        // Confirm each frame so the Mac never queues up more than the network can carry.
+        if (socket.readyState === 1) socket.send('{"ack":1}');
+        return showFrame(e.data);
+      }
       try { const m = JSON.parse(e.data); if (m.error) setScreenMsg(m.error); } catch (err) {}
     };
     socket.onclose = () => {
@@ -1162,6 +1168,7 @@ let dashboardHTML = #"""
 
   // ----- Zoom (phone only: the Mac's screen isn't changed) -----
   let zoom = 1, panX = 0, panY = 0;
+  let shownZoom = 1, zoomFadeTimer = null;
   function applyZoom() {
     const w = wrap.clientWidth, h = wrap.clientHeight;
     zoom = Math.min(5, Math.max(1, zoom));
@@ -1171,6 +1178,14 @@ let dashboardHTML = #"""
     $("screenImg").style.transform = zoom === 1 ? "" : `translate(${panX}px, ${panY}px) scale(${zoom})`;
     $("zoomBar").hidden = zoom === 1;
     $("zoomLevel").textContent = zoom.toFixed(1) + "×";
+    // Sideways, the zoom bubble fades after 2.5 s without a zoom change (panning doesn't count)
+    // and comes back with the next pinch.
+    if (Math.abs(zoom - shownZoom) > 0.01) {
+      shownZoom = zoom;
+      $("zoomBar").classList.remove("faded");
+      clearTimeout(zoomFadeTimer);
+      zoomFadeTimer = setTimeout(() => $("zoomBar").classList.add("faded"), 2500);
+    }
   }
   $("zoomReset").addEventListener("click", () => { zoom = 1; panX = panY = 0; applyZoom(); });
 

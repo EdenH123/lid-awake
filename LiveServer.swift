@@ -77,23 +77,49 @@ final class LiveServer: @unchecked Sendable {
             && checks.awake() && checks.remoteAllowed() && checks.screenPermission()
     }
 
-    private func open(_ connection: NWConnection) {
-        let id = UUID()
+    // One phone connection. A send "completes" once the frame is handed to the network, not
+    // when the phone has it, so on a slow link frames would pile up in buffers along the way and
+    // the picture would fall seconds behind. Pages that confirm each frame ("acks") get at most
+    // two unconfirmed frames on the way: one being shown, one travelling. Newer frames replace
+    // the waiting one, so the phone always gets the latest picture, at whatever rate the link allows.
+    private final class Peer {
+        let connection: NWConnection
         var sending = false
         var pending: Data?
+        var flowControl = false
+        var unconfirmed = 0
+        var waitingSince = Date()
+        init(_ connection: NWConnection) { self.connection = connection }
+    }
+    private var peers: [ObjectIdentifier: Peer] = [:]
 
+    private func pump(_ peer: Peer) {
+        guard !peer.sending, let next = peer.pending else { return }
+        if peer.flowControl && peer.unconfirmed >= 2 {
+            // A page that stopped confirming (e.g. backgrounded) shouldn't freeze the stream forever.
+            guard Date().timeIntervalSince(peer.waitingSince) > 3 else { return }
+            peer.unconfirmed = 0
+        }
+        peer.pending = nil
+        peer.sending = true
+        if peer.unconfirmed == 0 { peer.waitingSince = Date() }
+        peer.unconfirmed += 1
+        let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
+        peer.connection.send(content: next, contentContext: .init(identifier: "frame", metadata: [meta]),
+                             isComplete: true, completion: .contentProcessed { [weak self] error in
+            self?.queue.async {
+                peer.sending = false
+                if error == nil { self?.pump(peer) }
+            }
+        })
+    }
+
+    private func open(_ connection: NWConnection) {
+        let id = UUID()
+        let peer = Peer(connection)
         func sendFrame(_ jpeg: Data) {
-            // Latest-wins: while one frame is on its way, keep only the newest next one.
-            if sending { pending = jpeg; return }
-            sending = true
-            let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
-            connection.send(content: jpeg, contentContext: .init(identifier: "frame", metadata: [meta]),
-                            isComplete: true, completion: .contentProcessed { [weak self] error in
-                self?.queue.async {
-                    sending = false
-                    if error == nil, let next = pending { pending = nil; sendFrame(next) }
-                }
-            })
+            peer.pending = jpeg
+            pump(peer)
         }
 
         connection.stateUpdateHandler = { [weak self] state in
@@ -101,12 +127,14 @@ final class LiveServer: @unchecked Sendable {
             switch state {
             case .ready:
                 self.sockets[id] = connection
+                self.peers[ObjectIdentifier(connection)] = peer
                 FrameStream.shared.subscribe(id,
                     frame: { jpeg in self.queue.async { sendFrame(jpeg) } },
                     unavailable: { self.queue.async { self.sendText(connection, ["error": "Waking the Mac's screen… If this stays, the lid may be closed with no monitor attached, so there's no screen to show."]) } })
                 self.receive(connection)
             case .failed, .cancelled:
                 self.sockets[id] = nil
+                self.peers[ObjectIdentifier(connection)] = nil
                 FrameStream.shared.unsubscribe(id)
             default:
                 break
@@ -127,6 +155,14 @@ final class LiveServer: @unchecked Sendable {
     }
 
     private func handle(_ message: [String: Any], from connection: NWConnection) {
+        if let peer = peers[ObjectIdentifier(connection)] {
+            if message["acks"] as? Bool == true { peer.flowControl = true }
+            if message["ack"] != nil {
+                peer.unconfirmed = max(0, peer.unconfirmed - 1)
+                peer.waitingSince = Date()
+                return pump(peer)
+            }
+        }
         if let name = message["quality"] as? String, let preset = FrameStream.Preset(rawValue: name) {
             FrameStream.shared.setPreset(preset)
             return

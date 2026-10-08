@@ -13,7 +13,7 @@ expect "bad origin"  "400" "$(node ws_handshake.js 8788 127.0.0.1:8788 https://e
 
 LOG="$HOME/Library/Logs/LidAwake-selftest.log"; rm -f "$LOG"
 launchctl submit -l local.lidawake.selftest -- "$APP/Contents/MacOS/LidAwake" --selftest
-sleep 16; launchctl remove local.lidawake.selftest 2>/dev/null
+sleep 22; launchctl remove local.lidawake.selftest 2>/dev/null
 cat "$LOG"
 for p in sharp balanced fast; do
   line=$(grep "^live $p:" "$LOG")
@@ -30,8 +30,13 @@ else echo "FAIL presets: sharp '$sharp' vs fast '$fastFirst'"; fail=1; fi
 # The still-frame check needs a calm screen. If the selftest saw real motion (>3% of the
 # picture changing) it can't judge, so it's skipped rather than failed.
 moving=$(grep "^live fast changed areas:" "$LOG" | tr ' ' '\n' | awk '$1+0 > 0.03 {n++} END {print n+0}')
-if [ -n "$fastLast" ] && [ "$fastLast" -gt $(( fastFirst * 2 )) ]; then echo "PASS fast sharpens when still ($fastFirst -> $fastLast bytes)"
+# (The clear frame is 1280 px at 0.6 quality, so it's at least ~1.2× a moving frame.)
+if [ -n "$fastLast" ] && [ "$fastLast" -gt $(( fastFirst * 6 / 5 )) ]; then echo "PASS fast sharpens when still ($fastFirst -> $fastLast bytes)"
 elif [ "$moving" -gt 0 ]; then echo "SKIP fast still frame: the screen was moving during the test ($moving busy frames)"
 else echo "FAIL fast still frame: first '$fastFirst', last '$fastLast'"; fail=1; fi
 grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL live input"; fail=1; }
+# Flow control: a page that confirms frames never has more than 2 waiting on the way.
+held=$(grep "^live flow:" "$LOG" | sed -n 's/^live flow: \([0-9]*\) frames.*/\1/p')
+if [ -n "$held" ] && [ "$held" -le 2 ]; then echo "PASS flow control ($(grep '^live flow:' "$LOG" | cut -c12-))"
+else echo "FAIL flow control: '$(grep '^live flow:' "$LOG")'"; fail=1; fi
 exit $fail
