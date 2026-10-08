@@ -24,8 +24,9 @@ enum Auth {
         lock.lock(); defer { lock.unlock() }
         defaults.set(salt, forKey: "pwSalt")
         defaults.set(derive(password, salt: salt), forKey: "pwHash")
-        // A new password logs out every device.
+        // A new password logs out every device and forgets Face ID sign-ins.
         defaults.removeObject(forKey: "sessions")
+        Passkeys.removeAll()
         failures = 0
         lockedUntil = .distantPast
         NotificationCenter.default.post(name: sessionsChanged, object: nil)
@@ -48,11 +49,22 @@ enum Auth {
             return .wrong
         }
         failures = 0
+        return .ok(token: makeSession())
+    }
+
+    // Face ID sign-in (Passkeys verified the signature): a session like a password login.
+    static func loginWithPasskey() -> String {
+        lock.lock(); defer { lock.unlock() }
+        failures = 0
+        return makeSession()
+    }
+
+    private static func makeSession() -> String {
         let token = randomBytes(32).map { String(format: "%02x", $0) }.joined()
         var sessions = storedSessions()
         sessions[sha256(token)] = Date().addingTimeInterval(sessionDays * 86400).timeIntervalSince1970
         defaults.set(sessions, forKey: "sessions")
-        return .ok(token: token)
+        return token
     }
 
     static func isValid(_ token: String?) -> Bool {

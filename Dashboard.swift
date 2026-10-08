@@ -428,6 +428,18 @@ let dashboardHTML = #"""
   .gate button { font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 15px; cursor: pointer; }
   .gate button:active { opacity: .7; }
   .gate button:disabled { opacity: .5; }
+  /* With Face ID offered, it's the main button and the password button steps back. */
+  .gate:has(#faceIdBtn:not([hidden])) #unlockBtn { background: var(--fill); color: var(--blue); }
+  .faceid-btn { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .faceid-btn svg, .faceid-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .faceid-offer { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: center; padding: 14px 16px; }
+  .faceid-icon { width: 42px; height: 42px; border-radius: 11px; background: var(--blue); color: #fff; display: grid; place-items: center; }
+  .faceid-text { display: grid; gap: 2px; font-size: 15px; }
+  .faceid-text span { color: var(--muted); font-size: 13px; line-height: 1.35; }
+  .faceid-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+  .faceid-actions button { font-size: 15px; font-weight: 600; border: 0; border-radius: 99px; padding: 8px 16px; cursor: pointer; color: var(--blue); background: var(--fill); }
+  .faceid-actions button.primary { color: #fff; background: var(--blue); }
+  .row-link { margin-left: auto; font-size: 17px; color: var(--blue); background: none; border: 0; padding: 0; cursor: pointer; }
   .gate .error { color: var(--red); font-size: 15px; min-height: 1.3em; }
 </style>
 </head>
@@ -448,6 +460,7 @@ let dashboardHTML = #"""
     <h2 id="gateTitle">Locked</h2>
     <p id="gateText"></p>
     <form id="loginForm">
+      <button type="button" class="faceid-btn" id="faceIdBtn" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg>Sign in with Face ID</button>
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
       <button id="unlockBtn">Unlock</button>
       <div class="error" id="loginError"></div>
@@ -465,6 +478,11 @@ let dashboardHTML = #"""
   </nav>
 
   <div class="tab" id="tab-status">
+    <section class="card faceid-offer" id="faceIdOffer" hidden>
+      <div class="faceid-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></div>
+      <div class="faceid-text"><b>Sign in with Face ID?</b><span>Skip the password next time. Your face never leaves this iPhone.</span></div>
+      <div class="faceid-actions"><button type="button" id="faceIdLater">Not now</button><button type="button" class="primary" id="faceIdOn">Turn on</button></div>
+    </section>
     <div class="section">
       <div class="hero-group">
       <section class="hero" id="statusCard">
@@ -554,6 +572,7 @@ let dashboardHTML = #"""
         <div class="row"><span class="title">Low-battery limit</span><span class="value" id="batteryGuardRow">—</span></div>
         <div class="row"><span class="title">Heat limit</span><span class="value" id="heatGuardRow">—</span></div>
         <div class="row"><span class="title">Mac heat</span><span class="value" id="thermal">—</span></div>
+        <div class="row" id="faceIdRow" hidden><span class="title">Face ID sign-in</span><button type="button" class="row-link" id="faceIdRowBtn">Set up</button></div>
       </div>
       <div class="section-foot">Change the limits from the Lid Awake menu on your Mac.</div>
     </div>
@@ -586,6 +605,7 @@ let dashboardHTML = #"""
       <div class="lid">
         <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"><canvas id="screenCanvas" hidden aria-label="Mac screen"></canvas></div>
         <div class="screen-off" id="screenOffOverlay" hidden><span>Your Mac's screen is off</span><button type="button" id="wakeBtn">Wake screen</button></div>
+        <div class="screen-off" id="pausedOverlay" hidden><span>Paused to save data and battery</span><button type="button" id="resumeBtn">Continue</button></div>
       </div>
       <div class="base"></div>
     </div>
@@ -852,7 +872,8 @@ let dashboardHTML = #"""
     $("liveText").textContent = "Locked";
     if (auth.hasPassword) {
       $("gateTitle").textContent = "Locked";
-      $("gateText").textContent = "Enter your Lid Awake password.";
+      $("faceIdBtn").hidden = !(auth.faceID && faceIDPossible());
+      $("gateText").textContent = $("faceIdBtn").hidden ? "Enter your Lid Awake password." : "Use Face ID, or enter your Lid Awake password.";
       $("loginForm").hidden = false;
     } else {
       $("gateTitle").textContent = "Set a password first";
@@ -879,6 +900,7 @@ let dashboardHTML = #"""
       if (res.ok) {
         $("password").value = "";
         await checkAuth();
+        offerFaceID();
       } else {
         $("loginError").textContent = await res.text();
         $("password").select();
@@ -888,6 +910,72 @@ let dashboardHTML = #"""
     }
     $("unlockBtn").disabled = false;
   });
+
+  // ---------- Face ID (passkeys) ----------
+  // Works on the Tailscale https address. The iPhone keeps the key; the Mac only checks signatures.
+  const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const fromB64u = t => Uint8Array.from(atob(t.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - t.length % 4) % 4)), ch => ch.charCodeAt(0));
+  function faceIDPossible() { return location.protocol === "https:" && "PublicKeyCredential" in window; }
+  function faceIDState() { try { return localStorage.getItem("faceid") || ""; } catch (e) { return ""; } }
+  function setFaceIDState(v) { try { localStorage.setItem("faceid", v); } catch (e) {} }
+
+  async function faceIDLogin() {
+    $("loginError").textContent = "";
+    try {
+      const o = await (await fetch("passkey/login-options", { cache: "no-store" })).json();
+      const cred = await navigator.credentials.get({ publicKey: {
+        challenge: fromB64u(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000,
+        allowCredentials: o.ids.map(id => ({ type: "public-key", id: fromB64u(id) })),
+      } });
+      const r = cred.response;
+      const res = await fetch("passkey/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ id: b64u(cred.rawId), clientData: b64u(r.clientDataJSON),
+                               authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature) }),
+      });
+      if (res.ok) return checkAuth();
+      $("loginError").textContent = await res.text();
+    } catch (e) {
+      if (e.name !== "NotAllowedError") $("loginError").textContent = "Face ID didn't work. Use your password.";
+    }
+  }
+  $("faceIdBtn").addEventListener("click", faceIDLogin);
+
+  async function faceIDSetup() {
+    try {
+      const o = await (await fetch("passkey/register-options", { cache: "no-store" })).json();
+      const cred = await navigator.credentials.create({ publicKey: {
+        challenge: fromB64u(o.challenge), rp: { name: "Lid Awake", id: o.rpId },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "Lid Awake", displayName: "Lid Awake" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }], attestation: "none", timeout: 60000,
+        authenticatorSelection: { authenticatorAttachment: "platform", residentKey: "preferred", userVerification: "required" },
+      } });
+      const res = await fetch("passkey/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ clientData: b64u(cred.response.clientDataJSON), attestation: b64u(cred.response.attestationObject) }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setFaceIDState("on");
+      $("faceIdOffer").hidden = true;
+      $("faceIdRow").hidden = true;
+    } catch (e) {
+      if (e.name !== "NotAllowedError") {
+        $("faceIdOffer").hidden = false;
+        $("faceIdOffer").querySelector(".faceid-text span").textContent = "Couldn't turn on Face ID: " + (e.message || e);
+      }
+    }
+  }
+  // After a password sign-in, offer it once (and keep a "Set up" row in settings if declined).
+  function offerFaceID() {
+    if (!faceIDPossible() || faceIDState() === "on") return;
+    $("faceIdRow").hidden = false;
+    if (faceIDState() !== "declined") $("faceIdOffer").hidden = false;
+  }
+  $("faceIdOn").addEventListener("click", faceIDSetup);
+  $("faceIdRowBtn").addEventListener("click", faceIDSetup);
+  $("faceIdLater").addEventListener("click", () => { setFaceIDState("declined"); $("faceIdOffer").hidden = true; });
 
   $("lockBtn").addEventListener("click", async () => {
     stopLive();
@@ -1097,7 +1185,37 @@ let dashboardHTML = #"""
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false, why: videoProblem }));
   }
 
-  function watching() { return unlocked && currentTab === "screen" && !document.hidden; }
+  function watching() { return unlocked && currentTab === "screen" && !document.hidden && !streamPaused; }
+
+  // ----- Pause when nobody is using it -----
+  // The page keeps the iPhone awake, so an untouched Screen tab would stream forever. After 3
+  // minutes without a touch or key, stop the stream and let the iPhone dim; Continue resumes.
+  let streamPaused = false, lastScreenUse = Date.now();
+  const PAUSE_AFTER = 3 * 60 * 1000;
+  for (const type of ["pointerdown", "keydown", "wheel"]) addEventListener(type, () => {
+    lastScreenUse = Date.now();
+    // Any touch on the Screen tab (picture, trackpad, keys) picks up where it left off.
+    if (streamPaused && currentTab === "screen") resumeStream();
+  }, true);
+  setInterval(() => {
+    if (streamPaused || currentTab !== "screen" || !unlocked || document.hidden) return;
+    if (Date.now() - lastScreenUse > PAUSE_AFTER) pauseStream();
+  }, 10000);
+  function pauseStream() {
+    streamPaused = true;
+    stopLive();
+    $("pausedOverlay").hidden = false;
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+  function resumeStream() {
+    if (!streamPaused) return;
+    streamPaused = false;
+    lastScreenUse = Date.now();
+    $("pausedOverlay").hidden = true;
+    startFrames();
+    keepPhoneAwake();
+  }
+  $("resumeBtn").addEventListener("click", resumeStream);
   function stopLive() { if (ws) { ws.onclose = null; ws.close(); ws = null; } }
 
   // Opens the socket; after 3 failed tries falls back to long-polling and retries the socket every 30 s.
@@ -1880,6 +1998,7 @@ let dashboardHTML = #"""
   async function keepPhoneAwake() {
     if (!unlocked && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; return; }
     if (!("wakeLock" in navigator) || document.hidden || !unlocked || wakeLock) return;
+    if (streamPaused && currentTab === "screen") return;  // paused: let the phone dim
     try {
       wakeLock = await navigator.wakeLock.request("screen");
       wakeLock.addEventListener("release", () => { wakeLock = null; });

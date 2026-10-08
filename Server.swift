@@ -194,6 +194,7 @@ final class StatusServer: @unchecked Sendable {
         let token = cookies[Auth.cookieName]
         // The page and its login calls are open; everything else needs a valid session.
         let isPublic = req.path == "/" || req.path == "/auth" || req.path == "/login" || req.path == "/logout"
+            || req.path == "/passkey/login-options" || req.path == "/passkey/login"
         if !isPublic && !Auth.isValid(token) {
             return text(c, "401 Unauthorized", "Locked")
         }
@@ -207,7 +208,9 @@ final class StatusServer: @unchecked Sendable {
             reply(c, "200 OK", "text/html; charset=utf-8", Data(dashboardHTML.utf8))
 
         case ("GET", "/auth"):
-            let info: [String: Any] = ["hasPassword": Auth.hasPassword, "loggedIn": Auth.isValid(token)]
+            // Face ID needs HTTPS, so it's only offered on the Tailscale address.
+            let info: [String: Any] = ["hasPassword": Auth.hasPassword, "loggedIn": Auth.isValid(token),
+                                       "faceID": host.hasSuffix(".ts.net") && Passkeys.count > 0]
             reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: info)) ?? Data())
 
         case ("POST", "/login"):
@@ -226,6 +229,40 @@ final class StatusServer: @unchecked Sendable {
             case .noPassword:
                 text(c, "409 Conflict", "No password is set yet.")
             }
+
+        // Face ID (passkeys). Signing in: a one-time challenge, then the phone's signature.
+        case ("GET", "/passkey/login-options"):
+            let options: [String: Any] = ["challenge": Passkeys.challenge("get"), "rpId": host,
+                                          "ids": Passkeys.credentialIDs]
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: options)) ?? Data())
+
+        case ("POST", "/passkey/login"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard Auth.hasPassword,
+                  let id = body?["id"] as? String,
+                  let clientData = (body?["clientData"] as? String).flatMap(Passkeys.fromBase64url),
+                  let authData = (body?["authenticatorData"] as? String).flatMap(Passkeys.fromBase64url),
+                  let signature = (body?["signature"] as? String).flatMap(Passkeys.fromBase64url),
+                  Passkeys.verify(credentialID: id, clientData: clientData, authenticatorData: authData,
+                                  signature: signature, host: host)
+            else { return text(c, "401 Unauthorized", "Face ID sign-in didn't work. Use your password.") }
+            reply(c, "204 No Content", "text/plain", Data(), extraHeaders: [
+                "Set-Cookie: \(Auth.cookieName)=\(Auth.loginWithPasskey()); Path=/; Max-Age=\(Int(Auth.sessionDays * 86400)); HttpOnly; SameSite=Strict; Secure",
+            ])
+
+        // Adding Face ID (already signed in with the password).
+        case ("GET", "/passkey/register-options"):
+            guard host.hasSuffix(".ts.net") else { return text(c, "400 Bad Request", "Face ID works on the Tailscale address only.") }
+            let options: [String: Any] = ["challenge": Passkeys.challenge("create"), "rpId": host]
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: options)) ?? Data())
+
+        case ("POST", "/passkey/register"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard let clientData = (body?["clientData"] as? String).flatMap(Passkeys.fromBase64url),
+                  let attestation = (body?["attestation"] as? String).flatMap(Passkeys.fromBase64url),
+                  Passkeys.register(clientData: clientData, attestation: attestation, host: host)
+            else { return text(c, "400 Bad Request", "Couldn't turn on Face ID. Try again.") }
+            reply(c, "204 No Content", "text/plain", Data())
 
         case ("POST", "/logout"):
             Auth.logout(token)

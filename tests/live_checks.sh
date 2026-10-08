@@ -47,4 +47,8 @@ else echo "FAIL flow control: '$(grep '^live flow:' "$LOG")'"; fail=1; fi
 video=$(grep "^live video:" "$LOG")
 if echo "$video" | grep -q "setup avc1" && echo "$video" | grep -q "first is keyframe"; then echo "PASS live video (${video#live video: })"
 else echo "FAIL live video: '$video'"; fail=1; fi
+# Face ID sign-in checks (no phone needed).
+if sh ./passkeys_check.sh > /tmp/lidawake-passkeys.$$ 2>&1; then echo "PASS face id ($(grep -c '^PASS' /tmp/lidawake-passkeys.$$) checks)"
+else echo "FAIL face id:"; grep -v '^PASS' /tmp/lidawake-passkeys.$$; fail=1; fi
+rm -f /tmp/lidawake-passkeys.$$
 exit $fail

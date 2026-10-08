@@ -140,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let remoteItem = NSMenuItem(title: "Allow screen & control from phone", action: nil, keyEquivalent: "")
     let passwordItem = NSMenuItem(title: "Set phone password…", action: nil, keyEquivalent: "")
     let appsMenu = NSMenu()
+    let faceIDItem = NSMenuItem(title: "Remove Face ID sign-ins", action: nil, keyEquivalent: "")
     let defaults = UserDefaults.standard
     var busy = false
     var isOn = false
@@ -228,6 +229,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         passwordItem.target = self
         passwordItem.action = #selector(setPhonePassword)
         menu.addItem(passwordItem)
+        faceIDItem.target = self
+        faceIDItem.action = #selector(removeFaceID)
+        menu.addItem(faceIDItem)
         let appsItem = NSMenuItem(title: "Apps on phone", action: nil, keyEquivalent: "")
         appsItem.submenu = appsMenu
         menu.addItem(appsItem)
@@ -288,7 +292,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusLine.title = "Turns off in \(formatRemaining(r))"
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh(); rebuildAppsMenu() }
+    func menuWillOpen(_ menu: NSMenu) {
+        refresh()
+        rebuildAppsMenu()
+        faceIDItem.isHidden = Passkeys.count == 0
+    }
+
+    // Forget every phone's Face ID sign-in (they can add it again after a password sign-in).
+    @objc func removeFaceID() {
+        Passkeys.removeAll()
+        notify("Face ID sign-ins removed. The phone page will ask for the password.")
+    }
 
     // "Apps on phone": add apps, or click one to take it off the phone's Apps page.
     func rebuildAppsMenu() {
