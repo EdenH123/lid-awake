@@ -155,6 +155,16 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         }
     }
 
+    // The page's decoder failed: send it the setup and a keyframe again.
+    func restartVideo(_ id: UUID) {
+        queue.async {
+            guard let sink = self.videoSinks[id] else { return }
+            sink.needsKey = true
+            sink.config = nil
+            self.encoder.requestKeyframe()
+        }
+    }
+
     // A subscriber switches to video (sink) or back to JPEG frames (nil).
     func setVideo(_ id: UUID, _ sink: VideoSink?) {
         queue.async { self.setVideoSink(id, sink) }
@@ -228,6 +238,15 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         return config
     }
 
+    private var lastStartFailureNote = Date.distantPast
+
+    static func lidClosed() -> Bool {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        defer { IOObjectRelease(service) }
+        let value = IORegistryEntryCreateCFProperty(service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)
+        return (value?.takeRetainedValue() as? Bool) ?? false
+    }
+
     private func pixelsPerPoint(_ display: SCDisplay) -> Double {
         guard let mode = CGDisplayCopyDisplayMode(display.displayID) else { return 1 }
         return Swift.max(1, Double(mode.pixelWidth) / Double(Swift.max(display.width, 1)))
@@ -260,7 +279,16 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
                     self.starting = false
                 }
             } catch {
-                // No display (e.g. lid closed with no monitor, display asleep) or no permission.
+                // No display or no permission. Note why (and the lid/display state) in the stream log,
+                // at most once a minute while it keeps failing; housekeeping retries every 5 s.
+                let now = Date()
+                if now.timeIntervalSince(self.lastStartFailureNote) > 60 {
+                    self.lastStartFailureNote = now
+                    let shown = (try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true))?.displays.count
+                    StreamStats.shared.note("screen capture couldn't start: \(error.localizedDescription) · "
+                        + "displays \(shown.map(String.init) ?? "?") · lid \(Self.lidClosed() ? "closed" : "open") · "
+                        + "display \(CGDisplayIsAsleep(CGMainDisplayID()) != 0 ? "asleep" : "awake")")
+                }
                 queue.async {
                     self.starting = false
                     let now = self.waiters

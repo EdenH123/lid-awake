@@ -1132,6 +1132,7 @@ let dashboardHTML = #"""
   // Much smaller than JPEGs while things move. If the phone can't play it, the page asks the
   // Mac for JPEGs again (for the rest of this visit).
   let decoder = null, videoConfigured = false, videoBacklog = [], videoBroken = false;
+  let videoNeedsKey = true, videoRestarts = [];
   const canvas = $("screenCanvas");
   const canvasCtx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   function canPlayVideo() { return "VideoDecoder" in window && !videoBroken; }
@@ -1158,6 +1159,8 @@ let dashboardHTML = #"""
   }
   function decodeVideo(bytes) {
     if (videoBroken) return;
+    // After a (re)start, frames only make sense from a keyframe on.
+    if (videoNeedsKey) { if (bytes[0] !== 1) return; videoNeedsKey = false; }
     if (!videoConfigured) { videoBacklog.push(bytes); return; }
     try {
       decoder.decode(new EncodedVideoChunk({
@@ -1179,8 +1182,19 @@ let dashboardHTML = #"""
   }
   function videoFailed(e) {
     if (videoBroken) return;
-    videoBroken = true;
     videoProblem = String(e && e.message || e);
+    try { decoder && decoder.state !== "closed" && decoder.close(); } catch (err) {}
+    decoder = null; videoConfigured = false; videoBacklog = []; videoNeedsKey = true;
+    // iPhones sometimes reset the decoder (e.g. after the page was in the background):
+    // ask the Mac for a fresh start, up to 3 times a minute, before falling back to JPEGs.
+    const now = Date.now();
+    videoRestarts = videoRestarts.filter(t => now - t < 60000);
+    if (videoRestarts.length < 3 && ws && ws.readyState === 1) {
+      videoRestarts.push(now);
+      ws.send(JSON.stringify({ videoRestart: true, why: videoProblem }));
+      return;
+    }
+    videoBroken = true;
     try { decoder && decoder.state !== "closed" && decoder.close(); } catch (err) {}
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false, why: videoProblem }));
   }
@@ -1229,7 +1243,7 @@ let dashboardHTML = #"""
     ws = socket;
     socket.onopen = () => {
       opened = true; wsFailures = 0;
-      videoConfigured = false; videoBacklog = [];
+      videoConfigured = false; videoBacklog = []; videoNeedsKey = true;
       socket.send(JSON.stringify({ quality, acks: true, video: canPlayVideo(), why: videoWhy() }));
       pumpInput();
     };

@@ -220,6 +220,11 @@ final class LiveServer: @unchecked Sendable {
                     ready: { peer.videoReady() }) : nil)
                 if !wantsVideo { peer.outbox.removeAll() }
             }
+            if message["videoRestart"] != nil {
+                StreamStats.shared.note("phone video: restarting decoder" + ((message["why"] as? String).map { " (\($0))" } ?? ""))
+                FrameStream.shared.restartVideo(peer.id)
+                return
+            }
             if message["ack"] != nil {
                 peer.lock.lock()
                 peer.unconfirmed = max(0, peer.unconfirmed - 1)
