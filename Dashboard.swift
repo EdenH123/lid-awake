@@ -1521,6 +1521,23 @@ let dashboardHTML = #"""
     await poll();
   });
 
+  // ---------- Keep the iPhone screen on ----------
+  // While this page is open and unlocked, ask the phone not to dim or lock (Screen Wake Lock).
+  // iOS drops the lock whenever the page is hidden, so take it again on return.
+  let wakeLock = null;
+  async function keepPhoneAwake() {
+    if (!unlocked && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; return; }
+    if (!("wakeLock" in navigator) || document.hidden || !unlocked || wakeLock) return;
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } catch (e) { wakeLock = null; }
+  }
+  document.addEventListener("visibilitychange", keepPhoneAwake);
+  // Safari only grants it after the person has touched the page, so also try on each tap.
+  document.addEventListener("pointerup", keepPhoneAwake);
+  setInterval(keepPhoneAwake, 5000);
+
   // ---------- Start ----------
   setInterval(poll, 3000);
   setInterval(() => { if (unlocked) render(); }, 1000);
