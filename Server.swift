@@ -304,6 +304,7 @@ final class StatusServer: @unchecked Sendable {
                 self.queue.async {
                     switch result {
                     case .frame(let jpeg, let id):
+                        StreamStats.shared.polled(bytes: jpeg.count)
                         self.reply(c, "200 OK", "image/jpeg", jpeg, extraHeaders: ["X-Frame-Id: \(id)"])
                     case .unchanged:
                         self.reply(c, "204 No Content", "text/plain", Data())

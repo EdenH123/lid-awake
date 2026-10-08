@@ -89,21 +89,26 @@ final class LiveServer: @unchecked Sendable {
         var flowControl = false
         var unconfirmed = 0
         var waitingSince = Date()
+        var sentAt: [(at: Date, bytes: Int)] = []  // unconfirmed frames, for the speed estimate
         init(_ connection: NWConnection) { self.connection = connection }
     }
     private var peers: [ObjectIdentifier: Peer] = [:]
+
 
     private func pump(_ peer: Peer) {
         guard !peer.sending, let next = peer.pending else { return }
         if peer.flowControl && peer.unconfirmed >= 2 {
             // A page that stopped confirming (e.g. backgrounded) shouldn't freeze the stream forever.
-            guard Date().timeIntervalSince(peer.waitingSince) > 3 else { return }
+            guard Date().timeIntervalSince(peer.waitingSince) > 3 else { return StreamStats.shared.heldBack() }
             peer.unconfirmed = 0
+            peer.sentAt.removeAll()
         }
         peer.pending = nil
         peer.sending = true
         if peer.unconfirmed == 0 { peer.waitingSince = Date() }
         peer.unconfirmed += 1
+        if peer.flowControl { peer.sentAt.append((Date(), next.count)) }
+        StreamStats.shared.sent(bytes: next.count)
         let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
         peer.connection.send(content: next, contentContext: .init(identifier: "frame", metadata: [meta]),
                              isComplete: true, completion: .contentProcessed { [weak self] error in
@@ -159,6 +164,11 @@ final class LiveServer: @unchecked Sendable {
             if message["acks"] as? Bool == true { peer.flowControl = true }
             if message["ack"] != nil {
                 peer.unconfirmed = max(0, peer.unconfirmed - 1)
+                if !peer.sentAt.isEmpty {
+                    let frame = peer.sentAt.removeFirst(), seconds = Date().timeIntervalSince(frame.at)
+                    StreamStats.shared.acked(after: seconds)
+                    LinkSpeed.record(bytes: frame.bytes, seconds: seconds)
+                }
                 peer.waitingSince = Date()
                 return pump(peer)
             }
@@ -190,5 +200,25 @@ final class LiveServer: @unchecked Sendable {
     private func closeAll() {
         sockets.values.forEach { $0.cancel() }
         sockets.removeAll()
+    }
+}
+
+// How fast frames reach the phone, from "sent" to "confirmed" (bytes per second, smoothed).
+// It includes the round trip, so it errs on the slow side. nil when no page confirmed lately.
+enum LinkSpeed {
+    private static let lock = NSLock()
+    private static var rate: Double?
+    private static var updated = Date.distantPast
+
+    static func record(bytes: Int, seconds: Double) {
+        lock.lock(); defer { lock.unlock() }
+        let sample = Double(bytes) / max(seconds, 0.02)
+        rate = rate.map { $0 * 0.7 + sample * 0.3 } ?? sample
+        updated = Date()
+    }
+
+    static var bytesPerSecond: Double? {
+        lock.lock(); defer { lock.unlock() }
+        return Date().timeIntervalSince(updated) < 30 ? rate : nil
     }
 }

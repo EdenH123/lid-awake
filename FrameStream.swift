@@ -15,8 +15,9 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
 
     enum Preset: String {
         case sharp, balanced, fast
-        var maxWidth: Double { switch self { case .sharp: 1600; case .balanced: 1200; case .fast: 800 } }
-        var quality: Double { switch self { case .sharp: 0.7; case .balanced: 0.5; case .fast: 0.4 } }
+        // Fast is sized for slow links (mobile data at 2–3 Mbit/s): about 20 KB a frame.
+        var maxWidth: Double { switch self { case .sharp: 1600; case .balanced: 1200; case .fast: 640 } }
+        var quality: Double { switch self { case .sharp: 0.7; case .balanced: 0.5; case .fast: 0.35 } }
         var fps: Int32 { switch self { case .sharp: 12; case .balanced: 20; case .fast: 25 } }
     }
 
@@ -200,17 +201,24 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
                 as? [[SCStreamFrameInfo: Any]],
               let rawStatus = attachments.first?[.status] as? Int,
               SCFrameStatus(rawValue: rawStatus) == .complete,
-              let pixels = sampleBuffer.imageBuffer,
-              let jpeg = ciContext.jpegRepresentation(
+              let pixels = sampleBuffer.imageBuffer else { return }
+        let lag = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()),
+                                                  CMSampleBufferGetPresentationTimeStamp(sampleBuffer)))
+        let encodeStart = Date()
+        guard let jpeg = ciContext.jpegRepresentation(
                   of: CIImage(cvPixelBuffer: pixels),
                   colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
                   options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: preset.quality])
         else { return }
+        let encode = Date().timeIntervalSince(encodeStart)
 
         // A frame after "Screen off" (past the last one in flight) means someone woke the
         // Mac at the keyboard, so the phone may keep it awake again.
         if let since = wakeSuppressedSince, Date().timeIntervalSince(since) > 3 { wakeSuppressedSince = nil }
-        handleFrame(jpeg, changed: changedFraction(pixels))
+        let diffStart = Date()
+        let changed = changedFraction(pixels)
+        StreamStats.shared.captured(preset: preset.rawValue, lag: lag, encode: encode, diff: Date().timeIntervalSince(diffStart))
+        handleFrame(jpeg, changed: changed)
     }
 
     // Share of the picture that visibly changed since the last frame, measured on a tiny
@@ -258,6 +266,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     }
 
     private func deliver(_ jpeg: Data) {
+        StreamStats.shared.delivered(bytes: jpeg.count)
         latest = jpeg
         latestID += 1
         let ready = waiters.filter { $0.after < latestID }
@@ -299,8 +308,10 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         }
         lastSharpen = Date()
         let motionAtStart = motionCount
-        // About 1600 px wide: clearly sharper than Fast's moving frames, still light enough
-        // for mobile data.
+        // The clear frame must not hold up the next moving frame for long: on a slow link a big
+        // one takes most of a second, and moving again would wait behind it. So pick the
+        // clearest version that arrives in about 0.35 s at the link's measured speed, or none.
+        let budget = LinkSpeed.bytesPerSecond.map { $0 * 0.35 } ?? .infinity
         let config = SCStreamConfiguration()
         let scale = min(1, 1280 / Double(max(display.width, 1)))
         config.width = Int(Double(display.width) * scale)
@@ -308,12 +319,21 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         config.showsCursor = true
         let filter = SCContentFilter(display: display, excludingWindows: [])
         Task {
-            guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config),
-                  let jpeg = ciContext.jpegRepresentation(
-                      of: CIImage(cgImage: image),
-                      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-                      options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.6])
+            guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
             else { return }
+            let full = CIImage(cgImage: image)
+            var chosen: Data?
+            for (width, quality) in [(1280.0, 0.6), (1024.0, 0.5), (800.0, 0.5)] {
+                let s = min(1, width / full.extent.width)
+                guard let jpeg = self.ciContext.jpegRepresentation(
+                        of: full.transformed(by: CGAffineTransform(scaleX: s, y: s)),
+                        colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                        options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality])
+                else { continue }
+                if Double(jpeg.count) <= budget { chosen = jpeg; break }
+            }
+            // Too slow for any clear frame right now: keep the moving frames (small changes still show).
+            guard let jpeg = chosen else { return }
             queue.async {
                 // Skip it if something moved meanwhile; the next pause sharpens again.
                 guard self.motionCount == motionAtStart, self.preset == .fast, self.stream != nil else { return }
