@@ -55,8 +55,8 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
     // Asks Claude Code for the numbers ("/usage" sends no message and uses none of the limit).
     // Called on each status request; runs at most every 3 minutes, in the background, so the
     // numbers stay fresh while the phone is looking even when no terminal session is running.
-    func refreshClaudeUsage() {
-        guard !usageChecking, Date().timeIntervalSince(usageCheckedAt) > 180,
+    func refreshClaudeUsage(every interval: TimeInterval = 180) {
+        guard !usageChecking, Date().timeIntervalSince(usageCheckedAt) > interval,
               let claude = ["/opt/homebrew/bin/claude", "/usr/local/bin/claude",
                             NSHomeDirectory() + "/.local/bin/claude", NSHomeDirectory() + "/.claude/local/claude"]
                 .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }

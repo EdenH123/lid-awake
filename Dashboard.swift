@@ -439,6 +439,15 @@ let dashboardHTML = #"""
   .faceid-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
   .faceid-actions button { font-size: 15px; font-weight: 600; border: 0; border-radius: 99px; padding: 8px 16px; cursor: pointer; color: var(--blue); background: var(--fill); }
   .faceid-actions button.primary { color: #fff; background: var(--blue); }
+  .mini-switch { position: relative; width: 63px; height: 28px; flex: none; border-radius: 99px; border: 0; padding: 0;
+    margin-left: auto; background: var(--fill); cursor: pointer; transition: background .25s ease; }
+  .mini-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 37px; height: 24px; border-radius: 99px;
+    background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.15); transition: transform .3s cubic-bezier(.32,.72,0,1); }
+  .mini-switch[aria-checked="true"] { background: var(--green); }
+  .mini-switch[aria-checked="true"]::after { transform: translateX(22px); }
+  .alert-rows .row::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: .5px; background: var(--line); }
+  .alert-rows .row { position: relative; }
+  .row-link.start { margin-left: 0; }
   .row-link { margin-left: auto; font-size: 17px; color: var(--blue); background: none; border: 0; padding: 0; cursor: pointer; }
   .gate .error { color: var(--red); font-size: 15px; min-height: 1.3em; }
 </style>
@@ -575,6 +584,22 @@ let dashboardHTML = #"""
         <div class="row" id="faceIdRow" hidden><span class="title">Face ID sign-in</span><button type="button" class="row-link" id="faceIdRowBtn">Set up</button></div>
       </div>
       <div class="section-foot">Change the limits from the Lid Awake menu on your Mac.</div>
+    </div>
+
+    <div class="section" id="alertsSection">
+      <div class="section-head">iPhone alerts</div>
+      <div class="list">
+        <div class="row"><span class="title">Alerts</span><button type="button" class="row-link" id="alertsOn">Turn on</button>
+          <button type="button" class="mini-switch" id="alertsSwitch" role="switch" aria-label="iPhone alerts" hidden></button></div>
+        <div class="alert-rows" id="alertRows" hidden>
+          <div class="row"><span class="title">Lid Awake turns off</span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch"></button></div>
+          <div class="row"><span class="title">Battery getting low</span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch"></button></div>
+          <div class="row"><span class="title">Claude usage over 90%</span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch"></button></div>
+          <div class="row"><span class="title">Mac getting warm</span><button type="button" class="mini-switch" data-alert="warm" role="switch"></button></div>
+          <div class="row"><button type="button" class="row-link start" id="alertsTest">Send a test alert</button></div>
+        </div>
+      </div>
+      <div class="section-foot" id="alertsFoot">Notifications on this iPhone, even when the page is closed.</div>
     </div>
   </div>
 
@@ -1982,6 +2007,69 @@ let dashboardHTML = #"""
       if (res.status === 401 || res.status === 423) return locked();
     } catch (e) {}
   }
+
+  // ---------- iPhone alerts (Web Push) ----------
+  // Works from the Home Screen icon. The Mac encrypts each alert for this iPhone only.
+  const ALERT_KINDS = ["turnedOff", "lowBattery", "claudeUsage", "warm"];
+  const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const pushPossible = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  function alertsOff() { try { return JSON.parse(localStorage.getItem("alertsOff") || "[]"); } catch (e) { return []; } }
+  async function currentSubscription() {
+    if (!pushPossible()) return null;
+    const reg = await navigator.serviceWorker.getRegistration("/");
+    return reg ? reg.pushManager.getSubscription() : null;
+  }
+  async function renderAlerts() {
+    const sub = await currentSubscription().catch(() => null);
+    const on = !!sub && Notification.permission === "granted";
+    $("alertsOn").hidden = on;
+    $("alertsSwitch").hidden = !on;
+    $("alertsSwitch").setAttribute("aria-checked", on);
+    $("alertRows").hidden = !on;
+    const off = alertsOff();
+    document.querySelectorAll("[data-alert]").forEach(b => b.setAttribute("aria-checked", !off.includes(b.dataset.alert)));
+    $("alertsFoot").textContent = on ? "Notifications on this iPhone, even when the page is closed."
+      : !pushPossible() || !standalone() ? "To get alerts, open Lid Awake from its Home Screen icon (in Safari: Share → Add to Home Screen)."
+      : Notification.permission === "denied" ? "Notifications are blocked. Allow them in iPhone Settings → Notifications → Lid Awake."
+      : "Notifications on this iPhone, even when the page is closed.";
+  }
+  async function postJSON(url, body) {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-LidAwake": "1" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(await res.text());
+  }
+  async function enableAlerts() {
+    if (!pushPossible() || !standalone()) return renderAlerts();
+    try {
+      if (await Notification.requestPermission() !== "granted") return renderAlerts();
+      const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      await navigator.serviceWorker.ready;
+      const { key } = await (await fetch("push/key", { cache: "no-store" })).json();
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64u(key) });
+      await postJSON("push/subscribe", { ...sub.toJSON(), off: alertsOff() });
+    } catch (e) { $("alertsFoot").textContent = "Couldn't turn on alerts: " + (e.message || e); return; }
+    renderAlerts();
+  }
+  async function disableAlerts() {
+    const sub = await currentSubscription().catch(() => null);
+    if (sub) { await postJSON("push/settings", { endpoint: sub.endpoint, enabled: false }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
+    renderAlerts();
+  }
+  $("alertsOn").addEventListener("click", enableAlerts);
+  $("alertsSwitch").addEventListener("click", disableAlerts);
+  document.querySelectorAll("[data-alert]").forEach(b => b.addEventListener("click", async () => {
+    const off = alertsOff().filter(k => k !== b.dataset.alert);
+    if (b.getAttribute("aria-checked") === "true") off.push(b.dataset.alert);
+    try { localStorage.setItem("alertsOff", JSON.stringify(off)); } catch (e) {}
+    renderAlerts();
+    const sub = await currentSubscription().catch(() => null);
+    if (sub) postJSON("push/settings", { endpoint: sub.endpoint, off }).catch(() => {});
+  }));
+  $("alertsTest").addEventListener("click", async () => {
+    $("alertsTest").textContent = "Sending…";
+    await postJSON("push/test", {}).catch(() => {});
+    setTimeout(() => { $("alertsTest").textContent = "Send a test alert"; }, 1500);
+  });
+  renderAlerts();
 
   // ---------- Timer ----------
   // Picking a length restarts the countdown from now, so it also works as "give me more time".

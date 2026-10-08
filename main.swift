@@ -346,13 +346,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func tick() {
         refresh()
-        guard isOn, !busy else { return }
+        guard isOn, !busy, !stopping else { return }
         if let end = endDate, Date() >= end {
-            setAwake(false)
-            notify("Timer finished. Your Mac will sleep normally again.")
+            stopWithAlert("Timer finished. Your Mac will sleep normally again.")
         } else if let reason = safetyStop(batteryGuard: batteryGuard, heatGuard: heatGuard) {
-            setAwake(false)
-            notify("\(reason) Turned off so your Mac can sleep.")
+            stopWithAlert("\(reason) Turned off so your Mac can sleep.")
+        } else {
+            checkAlerts()
+        }
+    }
+
+    // MARK: iPhone alerts
+
+    private var stopping = false
+    private var lowBatteryAlerted = false
+    private var warmAlerted = false
+
+    // Tell the phone first (the Mac may sleep right after), then turn off.
+    func stopWithAlert(_ message: String) {
+        stopping = true
+        WebPush.send(.turnedOff, title: "Lid Awake turned off", body: message) { [weak self] in
+            guard let self else { return }
+            self.stopping = false
+            self.setAwake(false)
+            notify(message)
+        }
+    }
+
+    // Early warnings while Lid Awake is on: each fires once until things recover.
+    private func checkAlerts() {
+        if let b = batteryStatus() {
+            if b.onBattery && b.percent <= 20 && !lowBatteryAlerted {
+                lowBatteryAlerted = true
+                WebPush.send(.lowBattery, title: "Mac battery at \(b.percent)%",
+                             body: batteryGuard ? "Lid Awake turns off at \(batteryLimit)%. Plug in the charger to keep it awake."
+                                                : "Plug in the charger to keep your Mac running.")
+            } else if !b.onBattery || b.percent > 25 { lowBatteryAlerted = false }
+        }
+        if let t = batteryTemperature() {
+            if t >= maxBatteryTemp - 3 && !warmAlerted {
+                warmAlerted = true
+                WebPush.send(.warm, title: "Mac is getting warm",
+                             body: String(format: "Battery at %.1f°C.", t) + (heatGuard ? " Lid Awake turns off at \(Int(maxBatteryTemp))°C." : ""))
+            } else if t < maxBatteryTemp - 5 { warmAlerted = false }
+        }
+        // Claude plan usage: once per limit window when it passes 90%. Checked every 10 minutes
+        // even with no phone watching (asking for usage sends no message and uses none of it).
+        SystemInfo.shared.refreshClaudeUsage(every: 600)
+        if let usage = SystemInfo.shared.claudeUsage() {
+            for (key, label) in [("fiveHour", "5-hour"), ("sevenDay", "weekly")] {
+                guard let w = usage[key] as? [String: Any], let pct = w["pct"] as? Double, pct >= 90,
+                      let resets = w["resetsAt"] as? Int, resets > Int(Date().timeIntervalSince1970),
+                      defaults.integer(forKey: "claudeAlerted.\(key)") != resets else { continue }
+                defaults.set(resets, forKey: "claudeAlerted.\(key)")
+                let when = DateFormatter.localizedString(from: Date(timeIntervalSince1970: Double(resets)),
+                                                         dateStyle: key == "sevenDay" ? .short : .none, timeStyle: .short)
+                WebPush.send(.claudeUsage, title: "Claude usage at \(Int(pct))%",
+                             body: "You've used \(Int(pct))% of your \(label) limit. It resets \(when).")
+            }
         }
     }
 

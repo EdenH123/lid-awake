@@ -13,7 +13,9 @@ expect "bad origin"  "400" "$(node ws_handshake.js 8788 127.0.0.1:8788 https://e
 
 LOG="$HOME/Library/Logs/LidAwake-selftest.log"; rm -f "$LOG"
 launchctl submit -l local.lidawake.selftest -- "$APP/Contents/MacOS/LidAwake" --selftest
-sleep 30; launchctl remove local.lidawake.selftest 2>/dev/null
+# Wait for the selftest's log (it writes once at the end), up to 90 s on a busy Mac.
+i=0; while [ ! -s "$LOG" ] && [ $i -lt 90 ]; do sleep 1; i=$((i + 1)); done; sleep 1
+launchctl remove local.lidawake.selftest 2>/dev/null
 cat "$LOG"
 for p in max sharp balanced fast; do
   line=$(grep "^live $p:" "$LOG")
@@ -51,4 +53,8 @@ else echo "FAIL live video: '$video'"; fail=1; fi
 if sh ./passkeys_check.sh > /tmp/lidawake-passkeys.$$ 2>&1; then echo "PASS face id ($(grep -c '^PASS' /tmp/lidawake-passkeys.$$) checks)"
 else echo "FAIL face id:"; grep -v '^PASS' /tmp/lidawake-passkeys.$$; fail=1; fi
 rm -f /tmp/lidawake-passkeys.$$
+# iPhone alerts: encryption read back by an independent decoder.
+if sh ./webpush_check.sh > /tmp/lidawake-push.$$ 2>&1; then echo "PASS alert encryption"
+else echo "FAIL alert encryption:"; cat /tmp/lidawake-push.$$; fail=1; fi
+rm -f /tmp/lidawake-push.$$
 exit $fail

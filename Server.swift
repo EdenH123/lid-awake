@@ -168,6 +168,9 @@ final class StatusServer: @unchecked Sendable {
             return reply(c, "200 OK", "image/png", appIcon180)
         case "/icon-512.png":
             return reply(c, "200 OK", "image/png", appIcon512)
+        case "/sw.js":
+            // Shows the Mac's alerts on the phone (also while the page is closed).
+            return reply(c, "200 OK", "text/javascript; charset=utf-8", Data(serviceWorkerJS.utf8))
         case "/manifest.webmanifest":
             let manifest = ##"{"name":"Lid Awake","short_name":"Lid Awake","start_url":"/","display":"standalone","background_color":"#000000","theme_color":"#000000","icons":[{"src":"/apple-touch-icon.png","sizes":"180x180","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}]}"##
             return reply(c, "200 OK", "application/manifest+json", Data(manifest.utf8))
@@ -262,6 +265,31 @@ final class StatusServer: @unchecked Sendable {
                   let attestation = (body?["attestation"] as? String).flatMap(Passkeys.fromBase64url),
                   Passkeys.register(clientData: clientData, attestation: attestation, host: host)
             else { return text(c, "400 Bad Request", "Couldn't turn on Face ID. Try again.") }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        // iPhone alerts: the Mac's public key, subscribing, which alerts, and a test.
+        case ("GET", "/push/key"):
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: ["key": WebPush.publicKey])) ?? Data())
+
+        case ("POST", "/push/subscribe"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            let keys = body?["keys"] as? [String: Any]
+            guard let endpoint = body?["endpoint"] as? String, let p256dh = keys?["p256dh"] as? String,
+                  let auth = keys?["auth"] as? String,
+                  WebPush.subscribe(endpoint: endpoint, p256dh: p256dh, auth: auth,
+                                    off: body?["off"] as? [String] ?? [], pageHost: host)
+            else { return text(c, "400 Bad Request", "Couldn't turn on alerts.") }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        case ("POST", "/push/settings"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard let endpoint = body?["endpoint"] as? String else { return text(c, "400 Bad Request", "Missing phone.") }
+            if body?["enabled"] as? Bool == false { WebPush.unsubscribe(endpoint: endpoint) }
+            else { WebPush.setOff(endpoint: endpoint, off: body?["off"] as? [String] ?? []) }
+            reply(c, "204 No Content", "text/plain", Data())
+
+        case ("POST", "/push/test"):
+            WebPush.send(nil, title: "Lid Awake", body: "Alerts are working. You'll hear from your Mac here.")
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("POST", "/logout"):
