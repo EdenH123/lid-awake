@@ -21,6 +21,10 @@ let dashboardHTML = #"""
     --muted: rgba(60,60,67,.6); --faint: rgba(60,60,67,.3); --line: rgba(60,60,67,.29); --fill: rgba(120,120,128,.16);
     --green: #34c759; --amber: #ff9500; --red: #ff3b30; --blue: #007aff; --gray: #8e8e93;
     --bar: rgba(255,255,255,.78); --bar-edge: rgba(0,0,0,.06); --bar-shadow: 0 6px 24px rgba(0,0,0,.10);
+    /* Tab bar glass: see-through, a bright rim along the top, a soft sheen. */
+    --glass: rgba(255,255,255,.52); --glass-rim: rgba(255,255,255,.9); --glass-edge: rgba(255,255,255,.55);
+    --glass-sheen: rgba(255,255,255,.55); --glass-shadow: 0 10px 34px rgba(0,0,0,.14), 0 1px 3px rgba(0,0,0,.06);
+    --glass-pill: rgba(0,0,0,.07); --glass-pill-rim: rgba(255,255,255,.85);
     --kb: #d1d3d9; --key: #ffffff; --key-fn: #abb0bc; --key-shadow: rgba(0,0,0,.35);
     --pad: #e5e5ea; --pad-on: #dcdce1;
     --mac-base: linear-gradient(#e6e6ea, #b8b8be); --mac-groove: #9a9aa1;
@@ -32,6 +36,9 @@ let dashboardHTML = #"""
       --muted: rgba(235,235,245,.6); --faint: rgba(235,235,245,.3); --line: rgba(84,84,88,.65); --fill: rgba(120,120,128,.32);
       --green: #30d158; --amber: #ff9f0a; --red: #ff453a; --blue: #0a84ff; --gray: #8e8e93;
       --bar: rgba(30,30,32,.72); --bar-edge: rgba(255,255,255,.08); --bar-shadow: 0 6px 24px rgba(0,0,0,.5);
+      --glass: rgba(44,44,48,.46); --glass-rim: rgba(255,255,255,.22); --glass-edge: rgba(255,255,255,.12);
+      --glass-sheen: rgba(255,255,255,.10); --glass-shadow: 0 10px 34px rgba(0,0,0,.55), 0 1px 3px rgba(0,0,0,.3);
+      --glass-pill: rgba(255,255,255,.12); --glass-pill-rim: rgba(255,255,255,.25);
       --kb: #2b2b2d; --key: #6b6b6e; --key-fn: #464649; --key-shadow: rgba(0,0,0,.6);
       --pad: #2c2c2e; --pad-on: #3a3a3c;
       --mac-base: linear-gradient(#8e8e93, #5a5a5f); --mac-groove: #3a3a3c;
@@ -42,6 +49,9 @@ let dashboardHTML = #"""
       --muted: rgba(235,235,245,.6); --faint: rgba(235,235,245,.3); --line: rgba(84,84,88,.65); --fill: rgba(120,120,128,.32);
       --green: #30d158; --amber: #ff9f0a; --red: #ff453a; --blue: #0a84ff; --gray: #8e8e93;
       --bar: rgba(30,30,32,.72); --bar-edge: rgba(255,255,255,.08); --bar-shadow: 0 6px 24px rgba(0,0,0,.5);
+      --glass: rgba(44,44,48,.46); --glass-rim: rgba(255,255,255,.22); --glass-edge: rgba(255,255,255,.12);
+      --glass-sheen: rgba(255,255,255,.10); --glass-shadow: 0 10px 34px rgba(0,0,0,.55), 0 1px 3px rgba(0,0,0,.3);
+      --glass-pill: rgba(255,255,255,.12); --glass-pill-rim: rgba(255,255,255,.25);
       --kb: #2b2b2d; --key: #6b6b6e; --key-fn: #464649; --key-shadow: rgba(0,0,0,.6);
       --pad: #2c2c2e; --pad-on: #3a3a3c;
       --mac-base: linear-gradient(#8e8e93, #5a5a5f); --mac-groove: #3a3a3c;
@@ -355,8 +365,16 @@ let dashboardHTML = #"""
     position: fixed; z-index: 10; left: 50%; transform: translateX(-50%);
     bottom: max(4px, calc(env(safe-area-inset-bottom) - 22px));
     display: flex; gap: 2px; padding: 4px; border-radius: 99px; isolation: isolate;
-    background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
-    -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+    background: var(--glass);
+    box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim), inset 0 0 0 .5px var(--glass-edge),
+                inset 0 -1px 1px rgba(0,0,0,.04);
+    -webkit-backdrop-filter: blur(24px) saturate(190%) brightness(1.04); backdrop-filter: blur(24px) saturate(190%) brightness(1.04);
+  }
+  /* The sheen: light catching the upper half of the glass. */
+  .tabbar::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 0;
+    background: linear-gradient(180deg, var(--glass-sheen) 0%, transparent 55%);
+    opacity: .55;
   }
   .tabbar button {
     width: 84px; height: 54px; background: none; border: 0; border-radius: 99px; display: grid; justify-items: center; align-content: center; gap: 1px;
@@ -365,32 +383,22 @@ let dashboardHTML = #"""
   }
   .tabbar button svg { transition: transform .35s cubic-bezier(.32,.72,0,1); }
   .tabbar button:active svg { transform: scale(.86); }
-  /* Liquid glass, as in iOS 26: the pill behind the current tab is a drop of glass that
-     stretches toward the tab you pick, then settles there with a little wobble (see movePill). */
+  /* The glass pill behind the current tab glides to the tab you pick with a soft spring. It
+     only ever moves sideways (a GPU transform), so it stays smooth even while the page updates. */
   .tab-pill {
     position: absolute; z-index: 0; top: 4px; left: 0; width: 84px; height: 54px; border-radius: 99px;
-    background: var(--fill); pointer-events: none;
-    box-shadow: inset 0 0 0 .5px var(--bar-edge), inset 0 1px 0 rgba(255,255,255,.12);
+    pointer-events: none; will-change: transform;
+    background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0) 60%), var(--glass-pill);
+    box-shadow: inset 0 1px 0 var(--glass-pill-rim), inset 0 0 0 .5px var(--glass-edge), 0 2px 8px rgba(0,0,0,.08);
+    transition: transform .42s cubic-bezier(.3,1.3,.5,1);
   }
-  .tab-pill.moving {
-    background: linear-gradient(180deg, rgba(255,255,255,.24), rgba(255,255,255,.05)), var(--fill);
-    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.4), inset 0 1px 1px rgba(255,255,255,.35), 0 4px 14px rgba(0,0,0,.18);
-  }
-  /* The tab you picked gives a small bounce. */
-  .tabbar button.bounce svg { animation: tab-bounce .55s cubic-bezier(.32,.72,0,1); }
-  @keyframes tab-bounce { 0% { transform: scale(.8); } 45% { transform: scale(1.15); } 100% { transform: scale(1); } }
-  /* The new page slides in from the side of the tab you picked. It moves with `left`, not a
-     transform, so the floating bars inside it stay pinned to the screen while it slides. */
-  .tab-enter-right, .tab-enter-left { position: relative; }
-  .tab-enter-right { animation: tab-from-right .42s cubic-bezier(.32,.72,0,1); }
-  .tab-enter-left { animation: tab-from-left .42s cubic-bezier(.32,.72,0,1); }
-  @keyframes tab-from-right { from { opacity: 0; left: 32px; } to { opacity: 1; left: 0; } }
-  @keyframes tab-from-left { from { opacity: 0; left: -32px; } to { opacity: 1; left: 0; } }
+  .tabbar.no-anim .tab-pill { transition: none; }
+  /* A new page fades in (opacity only: smooth on iPhone, and the floating bars stay put). */
+  .tab-enter { animation: tab-enter .22s ease-out; }
+  @keyframes tab-enter { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
-    .tabbar button svg { transition: none; }
-    .tabbar button.bounce svg { animation: none; }
-    .tab-enter-right, .tab-enter-left { animation: tab-fade .2s ease-out; }
-    @keyframes tab-fade { from { opacity: 0; } to { opacity: 1; } }
+    .tab-pill, .tabbar button svg { transition: none; }
+    .tab-enter { animation: none; }
   }
   .tabbar svg { width: 26px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .tabbar button.active { color: var(--blue); }
@@ -1323,51 +1331,28 @@ let dashboardHTML = #"""
 
   // ---------- Tabs ----------
   const tabButtons = document.querySelectorAll(".tabs button");
-  // The highlight is a drop of glass: it stretches across from the old tab to the new one, then
-  // settles with a little wobble. It just jumps the first time, on resize, and with Reduce Motion.
-  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
-  let pillAt = null;  // { x, w }: where the pill sits now
+  // The highlight glides to the current tab (jumps without animating the first time).
   function movePill(animate) {
     const active = document.querySelector(".tabs button.active");
     if (!active) return;
-    const pill = $("tabPill");
-    const to = { x: active.offsetLeft, w: active.offsetWidth }, from = pillAt;
-    pillAt = to;
-    pill.style.width = to.w + "px";
-    pill.style.transform = `translateX(${to.x}px)`;
-    if (!animate || !from || from.x === to.x || reduceMotion.matches || !pill.animate) return;
-    const left = Math.min(from.x, to.x), span = Math.abs(to.x - from.x) + Math.max(from.w, to.w);
-    pill.getAnimations().forEach(a => a.cancel());
-    pill.classList.add("moving");
-    const glide = pill.animate([
-      { transform: `translateX(${from.x}px) scale(1, 1)`, width: from.w + "px" },
-      { transform: `translateX(${left}px) scale(1, .88)`, width: span + "px", offset: .42 },
-      { transform: `translateX(${to.x}px) scale(1.07, .95)`, width: to.w + "px", offset: .72 },
-      { transform: `translateX(${to.x}px) scale(.98, 1.02)`, width: to.w + "px", offset: .88 },
-      { transform: `translateX(${to.x}px) scale(1, 1)`, width: to.w + "px" },
-    ], { duration: 600, easing: "cubic-bezier(.32,.72,0,1)" });
-    glide.onfinish = glide.oncancel = () => pill.classList.remove("moving");
+    document.querySelector(".tabbar").classList.toggle("no-anim", !animate);
+    $("tabPill").style.width = active.offsetWidth + "px";
+    $("tabPill").style.transform = `translateX(${active.offsetLeft}px)`;
   }
   let pillPlaced = false;
   addEventListener("resize", () => movePill(false));
-  const tabOrder = ["status", "screen", "apps", "settings"];
   function showTab(name) {
     const changed = currentTab !== name;
-    const forward = tabOrder.indexOf(name) >= tabOrder.indexOf(currentTab);
     currentTab = name;
     tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (name === "settings" ? "status" : name)));
-    requestAnimationFrame(() => { movePill(pillPlaced); pillPlaced = true; });
+    // Start the glide right away, before the heavier page work below, so its first frames aren't held up.
+    movePill(pillPlaced);
+    pillPlaced = true;
     const page = $("tab-" + name);
-    if (changed && page && pillPlaced) {
-      page.classList.remove("tab-enter-left", "tab-enter-right");
+    if (changed && page) {
+      page.classList.remove("tab-enter");
       void page.offsetWidth;  // restart the animation
-      page.classList.add(forward ? "tab-enter-right" : "tab-enter-left");
-      const button = document.querySelector(`.tabs button[data-tab="${name}"]`);
-      if (button && !reduceMotion.matches) {
-        button.classList.remove("bounce");
-        void button.offsetWidth;
-        button.classList.add("bounce");
-      }
+      page.classList.add("tab-enter");
     }
     $("settingsBack").hidden = name !== "settings";
     $("live").hidden = name === "settings";
@@ -1378,9 +1363,12 @@ let dashboardHTML = #"""
     if (name !== "apps" && editingApps) setEditing(false);
     $("main").classList.toggle("wide", name === "screen");
     try { localStorage.setItem("tab", name); } catch (e) {}
-    render();
-    if (name === "screen") startFrames();
-    else stopLive();
+    requestAnimationFrame(() => {
+      if (currentTab !== name) return;  // tapped another tab meanwhile
+      render();
+      if (name === "screen") startFrames();
+      else stopLive();
+    });
   }
   tabButtons.forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
