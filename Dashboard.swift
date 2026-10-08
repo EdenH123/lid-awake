@@ -2065,9 +2065,10 @@ let dashboardHTML = #"""
     if (sub) postJSON("push/settings", { endpoint: sub.endpoint, off }).catch(() => {});
   }));
   $("alertsTest").addEventListener("click", async () => {
-    $("alertsTest").textContent = "Sending…";
+    // The Mac sends it in 5 seconds: enough time to close the app and see a real alert.
+    $("alertsTest").textContent = "Arrives in 5 seconds — you can close the app";
     await postJSON("push/test", {}).catch(() => {});
-    setTimeout(() => { $("alertsTest").textContent = "Send a test alert"; }, 1500);
+    setTimeout(() => { $("alertsTest").textContent = "Send a test alert"; }, 6000);
   });
   renderAlerts();
 

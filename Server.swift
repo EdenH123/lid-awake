@@ -289,7 +289,10 @@ final class StatusServer: @unchecked Sendable {
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("POST", "/push/test"):
-            WebPush.send(nil, title: "Lid Awake", body: "Alerts are working. You'll hear from your Mac here.")
+            // 5 s later, so there's time to close the app and see it arrive like a real alert.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                WebPush.send(nil, title: "Lid Awake", body: "Alerts are working. You'll hear from your Mac here.")
+            }
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("POST", "/logout"):
