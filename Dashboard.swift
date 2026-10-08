@@ -119,7 +119,11 @@ let dashboardHTML = #"""
   .tile-head svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
   .tile-value { font-size: 34px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.1; margin-top: 6px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 4px; }
   .tile-value.small { font-size: 28px; }
-  .section .tile { min-height: 0; }
+  /* Mac health: one short list, a thin bar per row, like iPhone Storage. */
+  .health-list .row .title { flex: 0 0 88px; }
+  .health-list .meter { flex: 1; margin: 0; }
+  .health-list .value { flex: 0 0 96px; }
+  .health-list .row:last-child .value { flex: 1; }
   .tile-detail { font-size: 15px; color: var(--text); line-height: 1.3; margin-top: auto; padding-top: 8px; text-wrap: pretty; }
   .tile-detail.muted { color: var(--muted); }
   .bolt { width: 13px; height: 20px; fill: var(--green); }
@@ -201,18 +205,7 @@ let dashboardHTML = #"""
   .qs-caption.fade, .qs-head .fade { opacity: 0; }
   .zoombar { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--muted); }
   .zoombar button { font-size: 15px; font-weight: 600; color: var(--blue); background: var(--fill); border: 0; border-radius: 99px; padding: 6px 14px; cursor: pointer; }
-  .hint { font-size: 13px; color: var(--muted); line-height: 1.38; padding: 0 16px; margin-top: -12px; text-wrap: pretty; }
 
-  /* Gray capsule buttons with blue text, as iOS uses for secondary actions. */
-  .panel-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .kb-btn, .panel-toggle {
-    display: inline-flex; align-items: center; gap: 7px;
-    font-size: 15px; font-weight: 600; color: var(--blue); background: var(--fill);
-    border: 0; border-radius: 99px; padding: 9px 16px; cursor: pointer; transition: background .2s ease, color .2s ease;
-  }
-  .kb-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .kb-btn.on { background: var(--blue); color: #fff; }
-  .panel-toggle { background: none; padding: 9px 4px; font-weight: 400; }
   /* Invisible field that receives the iPhone keyboard; 16px stops iOS zooming in on focus. */
   .live-input {
     position: fixed; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0;
@@ -341,20 +334,45 @@ let dashboardHTML = #"""
   .tabbar svg { width: 26px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .tabbar button.active { color: var(--blue); background: var(--fill); }
 
-  /* Screen: Lock Mac / Screen off, and the overlay shown while the screen is off. */
-  .power-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .power-row button {
-    display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 15px; font-weight: 600;
-    color: var(--blue); background: var(--fill); border: 0; border-radius: 99px; padding: 12px; cursor: pointer;
-  }
-  .power-row button:active { opacity: .6; }
-  .power-row svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  /* Screen: the overlay shown while the Mac's screen is off. */
   .screen-off {
     position: absolute; inset: 9px 9px 12px; z-index: 3; display: grid; place-content: center; gap: 12px;
     text-align: center; background: rgba(0,0,0,.85); color: #fff; border-radius: 4px; font-size: 15px;
   }
   .screen-off button { justify-self: center; font-weight: 600; color: #000; background: #fff; border: 0; border-radius: 99px; padding: 8px 18px; cursor: pointer; }
   body.landscape-full .screen-off { inset: 0; border-radius: 0; }
+
+  /* Screen: one row of tools under the Mac screen. */
+  .screen-tools { display: flex; gap: 5px; align-items: center; margin-top: -6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .screen-tools::-webkit-scrollbar { display: none; }
+  .tool {
+    height: 34px; display: inline-flex; align-items: center; gap: 5px; padding: 0 11px; border: 0; border-radius: 99px;
+    font-size: 15px; font-weight: 600; color: var(--blue); background: var(--fill); cursor: pointer; flex: none;
+    transition: background .2s ease, color .2s ease;
+  }
+  .tool svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tool.icon { width: 34px; padding: 0; justify-content: center; }
+  .tool.help { margin-left: auto; font-size: 16px; }
+  .tool.on, .tool[aria-expanded="true"] { background: var(--blue); color: #fff; }
+  .tool:active { opacity: .6; }
+  .tool .hd { font-size: 11px; font-weight: 800; letter-spacing: .03em; border: 1.5px solid currentColor; border-radius: 4px; padding: 1px 4px; line-height: 1.1; }
+  .help-card { background: var(--card); border-radius: 22px; padding: 12px 16px; display: grid; gap: 8px; font-size: 14px; line-height: 1.38; color: var(--muted); }
+  .help-card p { margin: 0; }
+  .help-card b { color: var(--text); font-weight: 600; margin-right: 4px; }
+  .warn-notice { color: var(--amber); font-size: 14px; }
+  /* Keys: a sheet that slides up from the bottom; the Mac screen stays in view above it. */
+  .key-sheet {
+    position: fixed; z-index: 11; left: 0; right: 0; bottom: 0; max-width: 520px; margin: 0 auto;
+    background: var(--kb); border-radius: 26px 26px 0 0; padding: 6px 8px calc(10px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 30px rgba(0,0,0,.18); transform: translateY(105%); visibility: hidden;
+    transition: transform .4s cubic-bezier(.32,.72,0,1), visibility 0s linear .4s;
+  }
+  .key-sheet.open { transform: none; visibility: visible; transition: transform .4s cubic-bezier(.32,.72,0,1), visibility 0s; }
+  .key-sheet .keyboard { background: none; padding: 0; border-radius: 0; }
+  .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px 10px; font-size: 17px; font-weight: 600; }
+  .sheet-head::before { content: ""; position: absolute; left: 50%; top: 6px; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: rgba(0,0,0,.2); }
+  .sheet-head button { font-size: 17px; font-weight: 600; color: var(--blue); background: none; border: 0; padding: 4px 6px; cursor: pointer; }
+  body:has(.key-sheet.open) .tabbar { visibility: hidden; }
 
   /* Full-screen landscape: the Mac screen fills the phone, with a small floating toolbar. */
   .float-bar { display: none; }
@@ -502,30 +520,11 @@ let dashboardHTML = #"""
 
     <div class="section">
       <div class="section-head">Mac</div>
-      <div class="tiles">
-        <section class="card tile">
-          <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/><path d="M6 1v2.5M10 1v2.5M6 12.5V15M10 12.5V15M1 6h2.5M1 10h2.5M12.5 6H15M12.5 10H15"/></svg>Processor</div>
-          <div class="tile-value small" id="cpuValue">—</div>
-          <div class="meter"><div id="cpuBar" style="width:0"></div></div>
-          <div class="tile-detail muted" id="cpuLabel">in use</div>
-        </section>
-        <section class="card tile">
-          <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4.5 7v2M7 7v2M9.5 7v2M12 7v2"/></svg>Memory</div>
-          <div class="tile-value small" id="memValue">—</div>
-          <div class="meter"><div id="memBar" style="width:0"></div></div>
-          <div class="tile-detail muted" id="memLabel">in use</div>
-        </section>
-        <section class="card tile">
-          <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="M4.5 10h.01M7 10h4.5"/></svg>Storage</div>
-          <div class="tile-value small" id="diskValue">—</div>
-          <div class="meter"><div id="diskBar" style="width:0"></div></div>
-          <div class="tile-detail muted" id="diskLabel">free</div>
-        </section>
-        <section class="card tile">
-          <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 1.5"/></svg>Running</div>
-          <div class="tile-value small" id="uptimeValue">—</div>
-          <div class="tile-detail muted">Since the last restart</div>
-        </section>
+      <div class="list health-list">
+        <div class="row"><span class="title">Processor</span><div class="meter"><div id="cpuBar" style="width:0"></div></div><span class="value" id="cpuValue">—</span></div>
+        <div class="row"><span class="title">Memory</span><div class="meter"><div id="memBar" style="width:0"></div></div><span class="value" id="memValue">—</span></div>
+        <div class="row"><span class="title">Storage</span><div class="meter"><div id="diskBar" style="width:0"></div></div><span class="value" id="diskValue">—</span></div>
+        <div class="row"><span class="title">Running</span><span class="value" id="uptimeValue">—</span></div>
       </div>
     </div>
 
@@ -587,7 +586,15 @@ let dashboardHTML = #"""
       </div>
       <div class="base"></div>
     </div>
-    <div class="qslider">
+    <div class="screen-tools" role="toolbar" aria-label="Screen tools">
+      <button type="button" class="tool" id="qualityBtn" aria-expanded="false" aria-label="Picture quality: Balanced"><span class="hd">SD</span></button>
+      <button type="button" class="tool" id="kbBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><span id="kbLabel">Type</span></button>
+      <button type="button" class="tool" id="keysBtn" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h4v4H7zM13 4h4v4h-4zM4 11h16v4H4zM8 18h8"/></svg>Keys</button>
+      <button type="button" class="tool icon" id="lockMacBtn" aria-label="Lock Mac"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+      <button type="button" class="tool icon" id="screenOffBtn" aria-label="Turn the Mac's screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
+      <button type="button" class="tool icon help" id="helpBtn" aria-expanded="false" aria-label="How to use">?</button>
+    </div>
+    <div class="qslider" id="qualityPanel" hidden>
       <div class="qs-card">
         <div class="qs-head"><span>Picture</span><span id="qsValue">Balanced</span></div>
         <div class="qs-row">
@@ -605,47 +612,46 @@ let dashboardHTML = #"""
       </div>
       <div class="qs-caption" id="qsCaption"></div>
     </div>
+    <div class="help-card" id="helpPanel" hidden>
+      <p><b>On the Mac screen</b> Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom (on this phone only)</p>
+      <p><b>Trackpad, 1 finger</b> Move · tap = click · tap twice, then hold and slide = drag</p>
+      <p><b>2 fingers</b> Slide = scroll · tap = right-click</p>
+      <p><b>3 fingers</b> Swipe ← → = switch desktop · ↑ = Mission Control · ↓ = app windows</p>
+      <p><b>Type</b> uses the iPhone keyboard. <b>Keys</b> has esc, arrows, ⌘ and more.</p>
+    </div>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
-    <div class="hint" id="hint">Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom</div>
-    <div class="panel-row">
-      <button type="button" class="kb-btn" id="kbBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><span id="kbLabel">Type directly</span></button>
-      <button class="panel-toggle" id="keysToggle" aria-expanded="true">Hide keys</button>
-    </div>
-    <div class="keyboard" id="keyPanel">
-    <form class="typebar" id="typeForm">
-      <input id="typeInput" placeholder="Type on your Mac…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
-      <button>Send</button>
-    </form>
-    <div class="keys">
-      <button data-key="escape">esc</button>
-      <button data-key="tab">⇥</button>
-      <button data-key="delete">⌫</button>
-      <button data-mod="cmd" aria-label="Command">⌘</button>
-      <button data-mod="alt" aria-label="Option">⌥</button>
-      <button data-key="return">⏎</button>
-    </div>
-    <div class="keys arrows">
-      <button data-key="space" class="space">space</button>
-      <button data-key="left">←</button>
-      <button data-key="up">↑</button>
-      <button data-key="down">↓</button>
-      <button data-key="right">→</button>
-    </div>
-    <div class="gestures">
-      <button data-gesture="spaceLeft">‹ Desktop</button>
-      <button data-gesture="mission">Mission Control</button>
-      <button data-gesture="appWindows">App windows</button>
-      <button data-gesture="spaceRight">Desktop ›</button>
-    </div>
-    </div>
-    <div class="power-row">
-      <button type="button" id="lockMacBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Lock Mac</button>
-      <button type="button" id="screenOffBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg>Screen off</button>
-    </div>
+    <div class="notice warn-notice" id="hint" hidden></div>
     <div class="trackpad" id="trackpad">Trackpad</div>
-    <div class="hint">1 finger: move · tap = click · tap twice, then hold &amp; slide = drag<br>
-      2 fingers: slide = scroll · tap = right-click<br>
-      3 fingers: swipe ← → = switch desktop · ↑ = Mission Control · ↓ = app windows</div>
+    <div class="key-sheet" id="keySheet" aria-label="Keys" aria-hidden="true">
+      <div class="sheet-head"><span>Keys</span><button type="button" id="keysDone">Done</button></div>
+      <div class="keyboard" id="keyPanel">
+      <form class="typebar" id="typeForm">
+        <input id="typeInput" placeholder="Type on your Mac…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+        <button>Send</button>
+      </form>
+      <div class="keys">
+        <button data-key="escape">esc</button>
+        <button data-key="tab">⇥</button>
+        <button data-key="delete">⌫</button>
+        <button data-mod="cmd" aria-label="Command">⌘</button>
+        <button data-mod="alt" aria-label="Option">⌥</button>
+        <button data-key="return">⏎</button>
+      </div>
+      <div class="keys arrows">
+        <button data-key="space" class="space">space</button>
+        <button data-key="left">←</button>
+        <button data-key="up">↑</button>
+        <button data-key="down">↓</button>
+        <button data-key="right">→</button>
+      </div>
+      <div class="gestures">
+        <button data-gesture="spaceLeft">‹ Desktop</button>
+        <button data-gesture="mission">Mission Control</button>
+        <button data-gesture="appWindows">App windows</button>
+        <button data-gesture="spaceRight">Desktop ›</button>
+      </div>
+      </div>
+    </div>
     </div>
   </div>
   </div>
@@ -699,15 +705,15 @@ let dashboardHTML = #"""
       $("batteryBar").style.background = color;
       $("bolt").toggleAttribute("hidden", !data.charging);
       // macOS needs a minute or two after plugging in / unplugging before it has an estimate.
-      const clockIn = min => new Date(fetchedAt + min * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const clockIn = min => new Date(fetchedAt + min * 60000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       let sub;
       if (data.onBattery) {
         sub = fmtMinutes(data.minutesToEmpty)
-          ? `${fmtMinutes(data.minutesToEmpty)} left · until ${clockIn(data.minutesToEmpty)}`
+          ? `Lasts until ${clockIn(data.minutesToEmpty)}`
           : "On battery · estimating…";
       } else if (data.charging) {
         sub = fmtMinutes(data.minutesToFull) && data.minutesToFull > 0
-          ? `Full in ${fmtMinutes(data.minutesToFull)} · at ${clockIn(data.minutesToFull)}`
+          ? `Full at ${clockIn(data.minutesToFull)}`
           : "Charging · estimating…";
       } else {
         sub = data.charged || pct >= 99 ? "Plugged in · full"
@@ -743,11 +749,9 @@ let dashboardHTML = #"""
     $("thermal").textContent = thermalText;
     $("thermal").className = "value " + (data.thermalState === "serious" || data.thermalState === "critical" ? "bad" : data.thermalState === "fair" ? "warn" : "");
 
-    if (currentTab === "screen" && data.remoteScreen && data.screenPermission && !data.controlPermission) {
-      $("hint").textContent = "View only. To control, allow Lid Awake in System Settings → Privacy & Security → Accessibility on your Mac.";
-    } else {
-      $("hint").textContent = "Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom";
-    }
+    const viewOnly = currentTab === "screen" && data.remoteScreen && data.screenPermission && !data.controlPermission;
+    $("hint").hidden = !viewOnly;
+    $("hint").textContent = viewOnly ? "View only. To control, allow Lid Awake in System Settings → Privacy & Security → Accessibility on your Mac." : "";
   }
 
   // ---------- Mac health and network ----------
@@ -755,7 +759,8 @@ let dashboardHTML = #"""
     $(id).style.width = Math.min(100, Math.max(3, pct)) + "%";
     $(id).style.background = color;
   }
-  const level = (v, warn, bad) => v >= bad ? "var(--red)" : v >= warn ? "var(--amber)" : "var(--green)";
+  // Green is kept for "awake" and the battery; other bars are blue until they need attention.
+  const level = (v, warn, bad) => v >= bad ? "var(--red)" : v >= warn ? "var(--amber)" : "var(--blue)";
   const GiB = 1024 ** 3;
   function fmtRate(bps) {
     if (bps == null) return "—";
@@ -776,14 +781,12 @@ let dashboardHTML = #"""
     }
     if (mac.memUsed != null && mac.memTotal) {
       const used = mac.memUsed / mac.memTotal * 100;
-      $("memValue").textContent = (mac.memUsed / GiB).toFixed(0) + " GB";
-      $("memLabel").textContent = `of ${Math.round(mac.memTotal / GiB)} GB in use`;
+      $("memValue").textContent = `${(mac.memUsed / GiB).toFixed(0)} of ${Math.round(mac.memTotal / GiB)} GB`;
       setBar("memBar", used, level(used, 80, 92));
     }
     if (mac.diskFree != null && mac.diskTotal) {
       const usedPct = 100 - mac.diskFree / mac.diskTotal * 100;
-      $("diskValue").textContent = Math.round(mac.diskFree / 1e9) + " GB";
-      $("diskLabel").textContent = `free of ${Math.round(mac.diskTotal / 1e9)} GB`;
+      $("diskValue").textContent = Math.round(mac.diskFree / 1e9) + " GB free";
       setBar("diskBar", usedPct, level(usedPct, 85, 93));
     }
     if (mac.uptime != null) $("uptimeValue").textContent = fmtUptime(mac.uptime);
@@ -970,8 +973,10 @@ let dashboardHTML = #"""
   }
   function showQuality() {
     showSlider(quality);
-    $("qualityFloat").firstElementChild.textContent = QUALITY_BADGE[quality];
-    $("qualityFloat").setAttribute("aria-label", "Picture quality: " + QUALITY_NAME[quality]);
+    for (const id of ["qualityFloat", "qualityBtn"]) {
+      $(id).firstElementChild.textContent = QUALITY_BADGE[quality];
+      $(id).setAttribute("aria-label", "Picture quality: " + QUALITY_NAME[quality]);
+    }
   }
   function setQuality(q) {
     quality = q;
@@ -1419,12 +1424,13 @@ let dashboardHTML = #"""
   liveInput.addEventListener("focus", () => {
     $("kbFloat").classList.add("on");
     $("kbBtn").classList.add("on");
-    $("kbLabel").textContent = "Typing on your Mac · tap to stop";
+    $("kbLabel").textContent = "Typing";
+    setKeysOpen(false);
   });
   liveInput.addEventListener("blur", () => {
     $("kbFloat").classList.remove("on");
     $("kbBtn").classList.remove("on");
-    $("kbLabel").textContent = "Type directly";
+    $("kbLabel").textContent = "Type";
   });
   liveInput.addEventListener("keydown", e => {
     if (e.isComposing) return;
@@ -1495,15 +1501,25 @@ let dashboardHTML = #"""
     if (trackpadMode) { zoom = 1; panX = panY = 0; applyZoom(); }
   });
 
-  // ---------- Hide / show the key buttons ----------
-  function setKeysHidden(hidden) {
-    $("keyPanel").hidden = hidden;
-    $("keysToggle").textContent = hidden ? "Show keys" : "Hide keys";
-    $("keysToggle").setAttribute("aria-expanded", !hidden);
-    try { localStorage.setItem("keysHidden", hidden ? "1" : ""); } catch (e) {}
+  // ---------- Screen tools: Keys sheet, picture quality, help ----------
+  function setKeysOpen(open) {
+    $("keySheet").classList.toggle("open", open);
+    $("keySheet").setAttribute("aria-hidden", !open);
+    $("keysBtn").setAttribute("aria-expanded", open);
   }
-  $("keysToggle").addEventListener("click", () => setKeysHidden(!$("keyPanel").hidden));
-  try { if (localStorage.getItem("keysHidden") === "1") setKeysHidden(true); } catch (e) {}
+  $("keysBtn").addEventListener("click", () => setKeysOpen(!$("keySheet").classList.contains("open")));
+  $("keysDone").addEventListener("click", () => setKeysOpen(false));
+  // Quality and help open in place under the tools; one at a time.
+  function togglePanel(btn, panel) {
+    const open = panel.hidden;
+    for (const [b, p] of [["qualityBtn", "qualityPanel"], ["helpBtn", "helpPanel"]]) {
+      $(p).hidden = true; $(b).setAttribute("aria-expanded", "false");
+    }
+    panel.hidden = !open;
+    btn.setAttribute("aria-expanded", open);
+  }
+  $("qualityBtn").addEventListener("click", () => togglePanel($("qualityBtn"), $("qualityPanel")));
+  $("helpBtn").addEventListener("click", () => togglePanel($("helpBtn"), $("helpPanel")));
 
   // ---------- Lid-awake switch ----------
   // Only "off" is possible from here: while lid-awake is off this page is closed.
@@ -1530,7 +1546,7 @@ let dashboardHTML = #"""
     if ($("claudeSection").hidden) return;
     const now = Date.now() / 1000;
     const when = (t, long) => {
-      const d = new Date(t * 1000), time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const d = new Date(t * 1000), time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       return long && d.toDateString() !== new Date().toDateString() ? d.toLocaleDateString([], { weekday: "short" }) + " " + time : time;
     };
     const show = (w, id, long) => {
