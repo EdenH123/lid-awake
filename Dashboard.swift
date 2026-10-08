@@ -287,7 +287,7 @@ let dashboardHTML = #"""
   .apps-empty p { margin: 0 auto; max-width: 32ch; color: var(--muted); font-size: 15px; line-height: 1.38; text-wrap: pretty; }
   .opened {
     position: fixed; z-index: 9; left: 50%; transform: translateX(-50%);
-    bottom: calc(max(10px, env(safe-area-inset-bottom) - 8px) + 72px);
+    bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 72px);
     display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; border-radius: 99px; font-size: 15px; white-space: nowrap;
     background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
@@ -302,7 +302,7 @@ let dashboardHTML = #"""
   body.apps-full #tab-apps {
     position: fixed; inset: 0; z-index: 5; background: #000; display: grid; place-items: center;
     padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left));
-    --icon: min(84px, 21vh); --col-gap: calc(var(--icon) * .62); --row-gap: calc(var(--icon) * .46);
+    --icon: min(110px, 28vh); --col-gap: calc(var(--icon) * .36); --row-gap: calc(var(--icon) * .3);
   }
   body.apps-full .app-grid {
     display: flex; flex-wrap: wrap; justify-content: center; gap: var(--row-gap) var(--col-gap); padding: 0;
@@ -321,7 +321,7 @@ let dashboardHTML = #"""
   /* Floating tab bar, as in iOS 26: a capsule above the content, the current tab on a soft pill. */
   .tabbar {
     position: fixed; z-index: 10; left: 50%; transform: translateX(-50%);
-    bottom: max(10px, calc(env(safe-area-inset-bottom) - 8px));
+    bottom: max(4px, calc(env(safe-area-inset-bottom) - 22px));
     display: flex; gap: 2px; padding: 4px; border-radius: 99px;
     background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
@@ -1536,6 +1536,7 @@ let dashboardHTML = #"""
     // Sideways: balanced rows (1 row up to 5 apps, 2 up to 12, then 3).
     const rows = apps.length <= 5 ? 1 : apps.length <= 12 ? 2 : 3;
     $("appGrid").style.setProperty("--cols", Math.max(1, Math.ceil(apps.length / rows)));
+    sizeSidewaysIcons(apps.length, rows);
     $("appsEmpty").hidden = apps.length > 0;
     $("appsFoot").hidden = apps.length === 0;
   }
@@ -1564,6 +1565,20 @@ let dashboardHTML = #"""
     poll();
   }
   $("openedShow").addEventListener("click", () => { $("openedBar").hidden = true; showTab("screen"); });
+
+  // Sideways: make the icons as big as the black screen allows (up to 130 px) with every app showing.
+  // Gaps scale with the icon: 0.36× between columns, 0.3× between rows, plus room for the open dot.
+  function sizeSidewaysIcons(count, rows) {
+    const box = $("tab-apps");
+    if (!document.body.classList.contains("apps-full") || !count) { box.style.removeProperty("--icon"); return; }
+    const cs = getComputedStyle(box);
+    const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 16;
+    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 24;
+    const cols = Math.ceil(count / rows);
+    const icon = Math.min(130, w / (cols + (cols - 1) * 0.36), h / (rows + (rows - 1) * 0.3 + 0.15 * rows));
+    box.style.setProperty("--icon", Math.floor(icon) + "px");
+  }
+  addEventListener("resize", () => { if (data) renderApps(); });
 
   // ---------- Apps: hold an icon to rearrange ----------
   let editingApps = false, appHoldTimer = null, drag = null;
