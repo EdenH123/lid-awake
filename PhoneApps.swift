@@ -44,10 +44,10 @@ enum PhoneApps {
 
     static func path(for id: String) -> String? { paths.first { self.id($0) == id } }
 
-    // The app's icon as a 128×128 PNG.
+    // The app's icon as a 256×256 PNG (sharp at phone sizes).
     static func iconPNG(_ path: String) -> Data? {
         if let cached = iconCache[path] { return cached }
-        let size = 128
+        let size = 256
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
                                          samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }

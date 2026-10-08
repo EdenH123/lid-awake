@@ -268,6 +268,30 @@ let dashboardHTML = #"""
   }
   .opened button { font-size: 15px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 7px 14px; cursor: pointer; }
 
+  /* Apps, phone turned sideways: only the icons, centred on black, in balanced rows. */
+  body.apps-full { padding: 0; overflow: hidden; background: #000; color: #fff; }
+  body.apps-full main { max-width: none; }
+  body.apps-full .topbar, body.apps-full .titles, body.apps-full .tabbar,
+  body.apps-full #appsFoot, body.apps-full #openedBar { display: none !important; }
+  body.apps-full #tab-apps {
+    position: fixed; inset: 0; z-index: 5; background: #000; display: grid; place-items: center;
+    padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left));
+    --icon: min(84px, 21vh); --col-gap: calc(var(--icon) * .62); --row-gap: calc(var(--icon) * .46);
+  }
+  body.apps-full .app-grid {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: var(--row-gap) var(--col-gap); padding: 0;
+    width: calc(var(--cols, 5) * var(--icon) + (var(--cols, 5) - 1) * var(--col-gap)); max-width: 100%;
+  }
+  body.apps-full .app { width: var(--icon); gap: 0; }
+  body.apps-full .app img { width: var(--icon); height: var(--icon); }
+  body.apps-full .app .name { display: none; }
+  body.apps-full .app .run { background: rgba(255,255,255,.6); margin-top: 9px; }
+  body.apps-full .app.opening { opacity: 1; }
+  body.apps-full .apps-empty p { color: rgba(255,255,255,.6); }
+  /* Opening: a small press, then a spring back. */
+  .app.launched { animation: launch .5s cubic-bezier(.32,.72,0,1); }
+  @keyframes launch { 0% { transform: scale(.86); } 55% { transform: scale(1.07); } 100% { transform: scale(1); } }
+
   /* Floating tab bar, as in iOS 26: a capsule above the content, the current tab on a soft pill. */
   .tabbar {
     position: fixed; z-index: 10; left: 50%; transform: translateX(-50%);
@@ -1403,6 +1427,7 @@ let dashboardHTML = #"""
   let trackpadMode = false;
   function padMode() { return trackpadMode && document.body.classList.contains("landscape-full"); }
   function updateLandscape() {
+    document.body.classList.toggle("apps-full", landscapeQuery.matches && currentTab === "apps" && unlocked);
     const full = landscapeQuery.matches && currentTab === "screen" && unlocked;
     if (full === document.body.classList.contains("landscape-full")) return;
     document.body.classList.toggle("landscape-full", full);
@@ -1475,6 +1500,9 @@ let dashboardHTML = #"""
       const b = $("appGrid").querySelector(`[data-id="${a.id}"]`);
       if (b) b.classList.toggle("running", a.running);
     }
+    // Sideways: balanced rows (1 row up to 5 apps, 2 up to 12, then 3).
+    const rows = apps.length <= 5 ? 1 : apps.length <= 12 ? 2 : 3;
+    $("appGrid").style.setProperty("--cols", Math.max(1, Math.ceil(apps.length / rows)));
     $("appsEmpty").hidden = apps.length > 0;
     $("appsFoot").hidden = apps.length === 0;
   }
@@ -1491,6 +1519,11 @@ let dashboardHTML = #"""
       if (!res.ok) message = await res.text();
     } catch (e) { message = "Can't reach your Mac."; }
     setTimeout(() => button.classList.remove("opening"), 400);
+    if (message.startsWith("Opened")) {
+      button.classList.remove("launched");
+      void button.offsetWidth;
+      button.classList.add("launched");
+    }
     $("openedText").textContent = message;
     $("openedBar").hidden = false;
     clearTimeout(openedTimer);
