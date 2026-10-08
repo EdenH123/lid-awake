@@ -645,6 +645,39 @@ if CommandLine.arguments.contains("--selftest") {
                         lines.append("live flow: \(held) frames unconfirmed, \(flowing) after confirming")
                         socket.cancel(with: .normalClosure, reason: nil)
                     }
+                    // Video: a page that can play H.264 gets the decoder setup, then a keyframe first.
+                    do {
+                        var request = URLRequest(url: URL(string: "ws://127.0.0.1:18788/live")!)
+                        request.setValue("http://127.0.0.1:\(statusPort)", forHTTPHeaderField: "Origin")
+                        request.setValue("\(Auth.cookieName)=selftest", forHTTPHeaderField: "Cookie")
+                        let socket = URLSession.shared.webSocketTask(with: request)
+                        socket.resume()
+                        try? await socket.send(.string(#"{"quality":"fast","acks":true,"video":true}"#))
+                        var codec = "none", frames = 0, bytes = 0, firstTag: UInt8 = 0, jpegs = 0
+                        let end = Date().addingTimeInterval(3)
+                        while Date() < end {
+                            let message = try? await withThrowingTaskGroup(of: URLSessionWebSocketTask.Message?.self) { group in
+                                group.addTask { try await socket.receive() }
+                                group.addTask { try await Task.sleep(nanoseconds: 300_000_000); return nil }
+                                let first = try await group.next() ?? nil
+                                group.cancelAll()
+                                return first
+                            }
+                            switch message {
+                            case .string(let text)?:
+                                if let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                                   let video = json["video"] as? [String: Any] { codec = video["codec"] as? String ?? "?" }
+                            case .data(let d)?:
+                                try? await socket.send(.string(#"{"ack":1}"#))
+                                if d.first == 0xFF { jpegs += 1; continue }
+                                if frames == 0 { firstTag = d.first ?? 0 }
+                                frames += 1; bytes += d.count
+                            default: break
+                            }
+                        }
+                        lines.append("live video: setup \(codec), \(frames) frames, first is \(firstTag == 1 ? "keyframe" : "not keyframe"), avg \(frames > 0 ? bytes / frames : 0) bytes, \(jpegs) jpegs")
+                        socket.cancel(with: .normalClosure, reason: nil)
+                    }
                     _ = test
                     done.signal()
                 }

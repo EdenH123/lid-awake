@@ -171,7 +171,7 @@ let dashboardHTML = #"""
     position: relative; background: #000; border-radius: 4px; overflow: hidden; min-height: 120px;
     touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
-  .screen-wrap img { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none; transform-origin: 0 0; }
+  .screen-wrap img, .screen-wrap canvas { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none; transform-origin: 0 0; }
 
   /* Screen: picture-quality slider in the style of iOS Settings (Text Size). */
   .qslider { display: grid; gap: 7px; }
@@ -386,7 +386,7 @@ let dashboardHTML = #"""
   }
   body.landscape-full .macbook .lid::before, body.landscape-full .macbook .base { display: none; }
   body.landscape-full .screen-wrap { width: 100%; height: 100%; border-radius: 0; }
-  body.landscape-full .screen-wrap img { width: 100%; height: 100%; object-fit: contain; }
+  body.landscape-full .screen-wrap img, body.landscape-full .screen-wrap canvas { width: 100%; height: 100%; object-fit: contain; }
   body.landscape-full .float-bar {
     display: flex; position: fixed; z-index: 20; gap: 2px; padding: 4px; border-radius: 99px;
     top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right));
@@ -583,7 +583,7 @@ let dashboardHTML = #"""
     <div class="tab" id="screenControls" hidden>
     <div class="macbook">
       <div class="lid">
-        <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"></div>
+        <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"><canvas id="screenCanvas" hidden aria-label="Mac screen"></canvas></div>
         <div class="screen-off" id="screenOffOverlay" hidden><span>Your Mac's screen is off</span><button type="button" id="wakeBtn">Wake screen</button></div>
       </div>
       <div class="base"></div>
@@ -1029,6 +1029,7 @@ let dashboardHTML = #"""
     return location.protocol === "https:" ? `wss://${location.host}/live` : `ws://${location.hostname}:8788/live`;
   }
   function showFrame(blob) {
+    if (!$("screenCanvas").hidden) { $("screenCanvas").hidden = true; $("screenImg").hidden = false; }
     const url = URL.createObjectURL(blob);
     const img = $("screenImg");
     img.onload = () => { if (frameUrl && frameUrl !== url) URL.revokeObjectURL(frameUrl); frameUrl = url; };
@@ -1036,6 +1037,57 @@ let dashboardHTML = #"""
     $("screenControls").hidden = false;
     setScreenMsg("");
   }
+  // ----- Video: H.264 from the Mac's video encoder, played by the phone's own decoder -----
+  // Much smaller than JPEGs while things move. If the phone can't play it, the page asks the
+  // Mac for JPEGs again (for the rest of this visit).
+  let decoder = null, videoConfigured = false, videoBacklog = [], videoBroken = false;
+  const canvas = $("screenCanvas");
+  const canvasCtx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+  function canPlayVideo() { return "VideoDecoder" in window && !videoBroken; }
+  async function setupVideo(v) {
+    videoConfigured = false;
+    const config = {
+      codec: v.codec, codedWidth: v.width, codedHeight: v.height, optimizeForLatency: true,
+      description: Uint8Array.from(atob(v.description), c => c.charCodeAt(0)),
+    };
+    try {
+      if (!(await VideoDecoder.isConfigSupported(config)).supported) throw new Error("This phone can't play the video");
+      if (!decoder || decoder.state === "closed") decoder = new VideoDecoder({ output: drawVideo, error: videoFailed });
+      decoder.configure(config);
+      videoConfigured = true;
+      const waiting = videoBacklog;
+      videoBacklog = [];
+      waiting.forEach(decodeVideo);
+    } catch (e) { videoFailed(e); }
+  }
+  function decodeVideo(bytes) {
+    if (videoBroken) return;
+    if (!videoConfigured) { videoBacklog.push(bytes); return; }
+    try {
+      decoder.decode(new EncodedVideoChunk({
+        type: bytes[0] === 1 ? "key" : "delta",
+        timestamp: Number(new DataView(bytes.buffer, bytes.byteOffset + 1, 8).getBigInt64(0)),
+        data: bytes.subarray(9),
+      }));
+    } catch (e) { videoFailed(e); }
+  }
+  function drawVideo(frame) {
+    if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+      canvas.width = frame.displayWidth; canvas.height = frame.displayHeight;
+    }
+    canvasCtx.drawImage(frame, 0, 0);
+    frame.close();
+    if (canvas.hidden) { canvas.hidden = false; $("screenImg").hidden = true; }
+    $("screenControls").hidden = false;
+    setScreenMsg("");
+  }
+  function videoFailed(e) {
+    if (videoBroken) return;
+    videoBroken = true;
+    try { decoder && decoder.state !== "closed" && decoder.close(); } catch (err) {}
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false }));
+  }
+
   function watching() { return unlocked && currentTab === "screen" && !document.hidden; }
   function stopLive() { if (ws) { ws.onclose = null; ws.close(); ws = null; } }
 
@@ -1046,20 +1098,26 @@ let dashboardHTML = #"""
     if (wsFailures >= 3 && Date.now() < wsRetryAt) { startPolling(); return; }
     let opened = false;
     const socket = new WebSocket(liveURL());
-    socket.binaryType = "blob";
+    socket.binaryType = "arraybuffer";
     ws = socket;
     socket.onopen = () => {
       opened = true; wsFailures = 0;
-      socket.send(JSON.stringify({ quality, acks: true }));
+      videoConfigured = false; videoBacklog = [];
+      socket.send(JSON.stringify({ quality, acks: true, video: canPlayVideo() }));
       pumpInput();
     };
     socket.onmessage = e => {
       if (typeof e.data !== "string") {
         // Confirm each frame so the Mac never queues up more than the network can carry.
         if (socket.readyState === 1) socket.send('{"ack":1}');
-        return showFrame(e.data);
+        const bytes = new Uint8Array(e.data);
+        // JPEGs start with 0xFF; video frames with 1 (keyframe) or 2.
+        return bytes[0] === 0xFF ? showFrame(new Blob([bytes], { type: "image/jpeg" })) : decodeVideo(bytes);
       }
-      try { const m = JSON.parse(e.data); if (m.error) setScreenMsg(m.error); } catch (err) {}
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (m.video) setupVideo(m.video);
+      if (m.error) setScreenMsg(m.error);
     };
     socket.onclose = () => {
       ws = null;
@@ -1147,8 +1205,8 @@ let dashboardHTML = #"""
   const wrap = $("screenWrap");
   // Where the picture is actually drawn inside the <img> box (letterboxed in landscape).
   function drawnRect() {
-    const img = $("screenImg"), r = img.getBoundingClientRect();
-    const nw = img.naturalWidth || r.width, nh = img.naturalHeight || r.height;
+    const video = !canvas.hidden, img = video ? canvas : $("screenImg"), r = img.getBoundingClientRect();
+    const nw = (video ? canvas.width : img.naturalWidth) || r.width, nh = (video ? canvas.height : img.naturalHeight) || r.height;
     const fit = Math.min(r.width / nw, r.height / nh);
     const w = nw * fit, h = nh * fit;
     return { left: r.left + (r.width - w) / 2, top: r.top + (r.height - h) / 2, width: w, height: h };
@@ -1175,7 +1233,8 @@ let dashboardHTML = #"""
     // Keep the picture covering the frame.
     panX = Math.min(0, Math.max(w - w * zoom, panX));
     panY = Math.min(0, Math.max(h - h * zoom, panY));
-    $("screenImg").style.transform = zoom === 1 ? "" : `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    $("screenImg").style.transform = $("screenCanvas").style.transform =
+      zoom === 1 ? "" : `translate(${panX}px, ${panY}px) scale(${zoom})`;
     $("zoomBar").hidden = zoom === 1;
     $("zoomLevel").textContent = zoom.toFixed(1) + "×";
     // Sideways, the zoom bubble fades after 2.5 s without a zoom change (panning doesn't count)

@@ -83,34 +83,63 @@ final class LiveServer: @unchecked Sendable {
     // two unconfirmed frames on the way: one being shown, one travelling. Newer frames replace
     // the waiting one, so the phone always gets the latest picture, at whatever rate the link allows.
     private final class Peer {
+        let id: UUID
         let connection: NWConnection
         var sending = false
-        var pending: Data?
+        var pending: Data?                          // JPEG: the newest frame waiting its turn
+        var outbox: [(data: Data, text: Bool)] = [] // video: setup and frames, all in order
         var flowControl = false
+        var video = false
+        // Read from FrameStream's queue too (VideoSink.ready), hence the lock.
+        let lock = NSLock()
         var unconfirmed = 0
         var waitingSince = Date()
-        var sentAt: [(at: Date, bytes: Int)] = []  // unconfirmed frames, for the speed estimate
-        init(_ connection: NWConnection) { self.connection = connection }
+        var sentAt: [(at: Date, bytes: Int, key: Bool)] = []  // unconfirmed frames
+        var minDelay = 0.3                          // usual send → confirm time on this link
+        init(_ id: UUID, _ connection: NWConnection) { self.id = id; self.connection = connection }
+
+        // Video: may the next screen frame be encoded? Only while little is unconfirmed and the
+        // oldest unconfirmed frame isn't stuck, so frames never queue up on a slow link.
+        func videoReady() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard let oldest = sentAt.first else { return true }
+            let age = Date().timeIntervalSince(oldest.at)
+            if age > 3 { unconfirmed = 0; sentAt.removeAll(); return true }  // page stopped confirming
+            return unconfirmed < 6 && age < minDelay + 0.15
+        }
     }
     private var peers: [ObjectIdentifier: Peer] = [:]
 
-
     private func pump(_ peer: Peer) {
-        guard !peer.sending, let next = peer.pending else { return }
-        if peer.flowControl && peer.unconfirmed >= 2 {
-            // A page that stopped confirming (e.g. backgrounded) shouldn't freeze the stream forever.
-            guard Date().timeIntervalSince(peer.waitingSince) > 3 else { return StreamStats.shared.heldBack() }
-            peer.unconfirmed = 0
-            peer.sentAt.removeAll()
-        }
-        peer.pending = nil
+        guard !peer.sending else { return }
+        var item: (data: Data, text: Bool, key: Bool)
+        if !peer.outbox.isEmpty {
+            let next = peer.outbox.removeFirst()
+            item = (next.data, next.text, next.data.first == 1)
+        } else if let next = peer.pending {
+            if peer.flowControl {
+                peer.lock.lock()
+                let full = peer.unconfirmed >= 2
+                // A page that stopped confirming (e.g. backgrounded) shouldn't freeze the stream forever.
+                let stuck = full && Date().timeIntervalSince(peer.waitingSince) > 3
+                if stuck { peer.unconfirmed = 0; peer.sentAt.removeAll() }
+                peer.lock.unlock()
+                if full && !stuck { return StreamStats.shared.heldBack() }
+            }
+            peer.pending = nil
+            item = (next, false, false)
+        } else { return }
         peer.sending = true
-        if peer.unconfirmed == 0 { peer.waitingSince = Date() }
-        peer.unconfirmed += 1
-        if peer.flowControl { peer.sentAt.append((Date(), next.count)) }
-        StreamStats.shared.sent(bytes: next.count)
-        let meta = NWProtocolWebSocket.Metadata(opcode: .binary)
-        peer.connection.send(content: next, contentContext: .init(identifier: "frame", metadata: [meta]),
+        if !item.text {
+            peer.lock.lock()
+            if peer.unconfirmed == 0 { peer.waitingSince = Date() }
+            peer.unconfirmed += 1
+            if peer.flowControl { peer.sentAt.append((Date(), item.data.count, item.key)) }
+            peer.lock.unlock()
+            StreamStats.shared.sent(bytes: item.data.count)
+        }
+        let meta = NWProtocolWebSocket.Metadata(opcode: item.text ? .text : .binary)
+        peer.connection.send(content: item.data, contentContext: .init(identifier: "frame", metadata: [meta]),
                              isComplete: true, completion: .contentProcessed { [weak self] error in
             self?.queue.async {
                 peer.sending = false
@@ -119,9 +148,27 @@ final class LiveServer: @unchecked Sendable {
         })
     }
 
+    // Video messages: setup as text JSON; each frame as binary [1 = keyframe / 2 = other]
+    // [8-byte timestamp, µs, big-endian][H.264 data]. (JPEGs start with 0xFF, so they can't be confused.)
+    private func enqueue(_ peer: Peer, _ packet: FrameStream.VideoSink.Packet) {
+        switch packet {
+        case .config(let c):
+            let setup: [String: Any] = ["video": ["codec": c.codec, "description": c.description.base64EncodedString(),
+                                                  "width": c.width, "height": c.height]]
+            guard let json = try? JSONSerialization.data(withJSONObject: setup) else { return }
+            peer.outbox.append((json, true))
+        case .chunk(let k):
+            var data = Data([k.key ? 1 : 2])
+            withUnsafeBytes(of: k.timestamp.bigEndian) { data.append(contentsOf: $0) }
+            data.append(k.data)
+            peer.outbox.append((data, false))
+        }
+        pump(peer)
+    }
+
     private func open(_ connection: NWConnection) {
         let id = UUID()
-        let peer = Peer(connection)
+        let peer = Peer(id, connection)
         func sendFrame(_ jpeg: Data) {
             peer.pending = jpeg
             pump(peer)
@@ -162,14 +209,29 @@ final class LiveServer: @unchecked Sendable {
     private func handle(_ message: [String: Any], from connection: NWConnection) {
         if let peer = peers[ObjectIdentifier(connection)] {
             if message["acks"] as? Bool == true { peer.flowControl = true }
+            // The page can play H.264 (true), or its decoder failed and it wants JPEGs again (false).
+            if let wantsVideo = message["video"] as? Bool, wantsVideo != peer.video {
+                peer.video = wantsVideo
+                FrameStream.shared.setVideo(peer.id, wantsVideo ? FrameStream.VideoSink(
+                    send: { [weak self] packet in self?.queue.async { self?.enqueue(peer, packet) } },
+                    ready: { peer.videoReady() }) : nil)
+                if !wantsVideo { peer.outbox.removeAll() }
+            }
             if message["ack"] != nil {
+                peer.lock.lock()
                 peer.unconfirmed = max(0, peer.unconfirmed - 1)
-                if !peer.sentAt.isEmpty {
-                    let frame = peer.sentAt.removeFirst(), seconds = Date().timeIntervalSince(frame.at)
+                let frame = peer.sentAt.isEmpty ? nil : peer.sentAt.removeFirst()
+                let seconds = frame.map { Date().timeIntervalSince($0.at) }
+                if let seconds { peer.minDelay = min(peer.minDelay + 0.002, seconds) }
+                peer.waitingSince = Date()
+                let usual = peer.minDelay
+                peer.lock.unlock()
+                if let frame, let seconds {
                     StreamStats.shared.acked(after: seconds)
                     LinkSpeed.record(bytes: frame.bytes, seconds: seconds)
+                    // Keyframes are big and slow by nature; judge the link by ordinary frames.
+                    if peer.video && !frame.key { FrameStream.shared.videoFeedback(extraDelay: seconds - usual) }
                 }
-                peer.waitingSince = Date()
                 return pump(peer)
             }
         }
@@ -177,6 +239,7 @@ final class LiveServer: @unchecked Sendable {
             FrameStream.shared.setPreset(preset)
             return
         }
+        if message["video"] != nil || message["acks"] != nil { return }
         guard checks.awake(), checks.remoteAllowed() else {
             return sendText(connection, ["error": "Screen access is off."])
         }

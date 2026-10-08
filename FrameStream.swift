@@ -19,6 +19,24 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         var maxWidth: Double { switch self { case .sharp: 1600; case .balanced: 1200; case .fast: 640 } }
         var quality: Double { switch self { case .sharp: 0.7; case .balanced: 0.5; case .fast: 0.35 } }
         var fps: Int32 { switch self { case .sharp: 12; case .balanced: 20; case .fast: 25 } }
+        // Video (pages that can play H.264): sharper and smoother for the same bandwidth.
+        // The bitrate adapts to the link below these caps.
+        var videoWidth: Double { switch self { case .sharp: 1600; case .balanced: 1280; case .fast: 1024 } }
+        var videoFPS: Int32 { switch self { case .sharp: 20; case .balanced: 30; case .fast: 30 } }
+        var videoMaxBitrate: Int { switch self { case .sharp: 6_000_000; case .balanced: 4_000_000; case .fast: 2_500_000 } }
+    }
+
+    // A phone page that plays H.264. `send` gets the decoder setup (before the first keyframe
+    // and whenever it changes) and every encoded frame, in order. `ready` says whether the
+    // page has confirmed enough of what it got; the encoder skips screen frames while any
+    // page is behind, so nothing queues up and no reference frame is ever dropped.
+    final class VideoSink {
+        enum Packet { case config(VideoEncoder.Config), chunk(VideoEncoder.Chunk) }
+        let send: (Packet) -> Void
+        let ready: () -> Bool
+        var needsKey = true
+        var config: VideoEncoder.Config?
+        init(send: @escaping (Packet) -> Void, ready: @escaping () -> Bool) { self.send = send; self.ready = ready }
     }
 
     private let queue = DispatchQueue(label: "lidawake.frames")
@@ -35,10 +53,17 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     private var lastInput = Date.distantPast
     private var waiters: [(after: Int, done: (Result) -> Void)] = []
     private var subscribers: [UUID: (frame: (Data) -> Void, unavailable: () -> Void)] = [:]
+    private var videoSinks: [UUID: VideoSink] = [:]
+    private let encoder = VideoEncoder(bitrate: 1_000_000)
+    private var videoBitrate = 1_000_000
+    private var lastRateChange = Date.distantPast
     private var idleTimer: DispatchSourceTimer?
 
     private override init() {
         super.init()
+        encoder.onOutput = { [weak self] config, chunk in
+            self?.queue.async { self?.distribute(config, chunk) }
+        }
         let idle = DispatchSource.makeTimerSource(queue: queue)
         idle.schedule(deadline: .now() + 5, repeating: 5)
         idle.setEventHandler { [weak self] in self?.housekeeping() }
@@ -122,7 +147,53 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
     func unsubscribe(_ id: UUID) {
         queue.async {
             self.subscribers[id] = nil
+            self.setVideoSink(id, nil)
             self.lastRequest = Date()
+        }
+    }
+
+    // A subscriber switches to video (sink) or back to JPEG frames (nil).
+    func setVideo(_ id: UUID, _ sink: VideoSink?) {
+        queue.async { self.setVideoSink(id, sink) }
+    }
+
+    private func setVideoSink(_ id: UUID, _ sink: VideoSink?) {
+        let hadVideo = !videoSinks.isEmpty
+        videoSinks[id] = sink
+        if sink != nil { encoder.requestKeyframe() }
+        if hadVideo != !videoSinks.isEmpty, let stream, let display {
+            stream.updateConfiguration(configuration(for: display)) { _ in }
+        }
+        if videoSinks.isEmpty { encoder.invalidate() }
+    }
+
+    // Send → confirm time beyond the link's usual round trip, for each video frame. Rising delay
+    // means frames are queuing somewhere: lower the bitrate quickly; otherwise raise it slowly.
+    func videoFeedback(extraDelay: Double) {
+        queue.async {
+            let cap = self.preset.videoMaxBitrate
+            let now = Date()
+            if extraDelay > 0.12 {
+                guard now.timeIntervalSince(self.lastRateChange) > 0.3 else { return }
+                self.videoBitrate = max(250_000, Int(Double(self.videoBitrate) * 0.8))
+            } else {
+                guard now.timeIntervalSince(self.lastRateChange) > 1 else { return }
+                self.videoBitrate = min(cap, Int(Double(self.videoBitrate) * 1.1))
+            }
+            self.lastRateChange = now
+            self.encoder.setBitrate(self.videoBitrate)
+        }
+    }
+
+    private func distribute(_ config: VideoEncoder.Config, _ chunk: VideoEncoder.Chunk) {
+        StreamStats.shared.delivered(bytes: chunk.data.count)
+        for sink in videoSinks.values {
+            if sink.needsKey {
+                guard chunk.key else { continue }
+                sink.needsKey = false
+            }
+            if sink.config != config { sink.config = config; sink.send(.config(config)) }
+            sink.send(.chunk(chunk))
         }
     }
 
@@ -131,6 +202,8 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
             guard newPreset != self.preset else { return }
             self.preset = newPreset
             self.crispShown = false
+            self.videoBitrate = min(self.videoBitrate, newPreset.videoMaxBitrate)
+            self.encoder.setBitrate(self.videoBitrate)
             if let stream = self.stream, let display = self.display {
                 stream.updateConfiguration(self.configuration(for: display)) { _ in }
             }
@@ -139,10 +212,12 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
 
     private func configuration(for display: SCDisplay) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
-        let scale = min(1, preset.maxWidth / Double(max(display.width, 1)))
-        config.width = Int(Double(display.width) * scale)
-        config.height = Int(Double(display.height) * scale)
-        config.minimumFrameInterval = CMTime(value: 1, timescale: preset.fps)
+        let video = !videoSinks.isEmpty
+        let scale = min(1, (video ? preset.videoWidth : preset.maxWidth) / Double(max(display.width, 1)))
+        // Even sizes: the H.264 encoder needs them.
+        config.width = Int(Double(display.width) * scale) / 2 * 2
+        config.height = Int(Double(display.height) * scale) / 2 * 2
+        config.minimumFrameInterval = CMTime(value: 1, timescale: video ? preset.videoFPS : preset.fps)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = true
         config.queueDepth = 3
@@ -193,6 +268,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         stream = nil
         display = nil
         latest = nil
+        encoder.invalidate()
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -202,8 +278,21 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
               let rawStatus = attachments.first?[.status] as? Int,
               SCFrameStatus(rawValue: rawStatus) == .complete,
               let pixels = sampleBuffer.imageBuffer else { return }
-        let lag = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()),
-                                                  CMSampleBufferGetPresentationTimeStamp(sampleBuffer)))
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let lag = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pts))
+        // A frame after "Screen off" (past the last one in flight) means someone woke the
+        // Mac at the keyboard, so the phone may keep it awake again.
+        if let since = wakeSuppressedSince, Date().timeIntervalSince(since) > 3 { wakeSuppressedSince = nil }
+        // Video pages: encode only while every page has caught up (see VideoSink).
+        if !videoSinks.isEmpty, videoSinks.values.allSatisfy({ $0.ready() }) {
+            encoder.encode(pixels, pts: pts)
+        }
+        // JPEG is only needed for pages without video and for long-polling.
+        let jpegWanted = subscribers.keys.contains { videoSinks[$0] == nil } || !waiters.isEmpty
+        guard jpegWanted else {
+            StreamStats.shared.captured(preset: preset.rawValue + " video", lag: lag, encode: 0, diff: 0)
+            return
+        }
         let encodeStart = Date()
         guard let jpeg = ciContext.jpegRepresentation(
                   of: CIImage(cvPixelBuffer: pixels),
@@ -212,9 +301,6 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         else { return }
         let encode = Date().timeIntervalSince(encodeStart)
 
-        // A frame after "Screen off" (past the last one in flight) means someone woke the
-        // Mac at the keyboard, so the phone may keep it awake again.
-        if let since = wakeSuppressedSince, Date().timeIntervalSince(since) > 3 { wakeSuppressedSince = nil }
         let diffStart = Date()
         let changed = changedFraction(pixels)
         StreamStats.shared.captured(preset: preset.rawValue, lag: lag, encode: encode, diff: Date().timeIntervalSince(diffStart))
@@ -272,7 +358,7 @@ final class FrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
         let ready = waiters.filter { $0.after < latestID }
         waiters.removeAll { $0.after < latestID }
         ready.forEach { $0.done(.frame(jpeg, id: latestID)) }
-        subscribers.values.forEach { $0.frame(jpeg) }
+        for (id, subscriber) in subscribers where videoSinks[id] == nil { subscriber.frame(jpeg) }
     }
 
     // Fast preset: once the screen has been still for a moment, send one clearer frame

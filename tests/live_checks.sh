@@ -13,7 +13,7 @@ expect "bad origin"  "400" "$(node ws_handshake.js 8788 127.0.0.1:8788 https://e
 
 LOG="$HOME/Library/Logs/LidAwake-selftest.log"; rm -f "$LOG"
 launchctl submit -l local.lidawake.selftest -- "$APP/Contents/MacOS/LidAwake" --selftest
-sleep 22; launchctl remove local.lidawake.selftest 2>/dev/null
+sleep 26; launchctl remove local.lidawake.selftest 2>/dev/null
 cat "$LOG"
 for p in sharp balanced fast; do
   line=$(grep "^live $p:" "$LOG")
@@ -39,4 +39,8 @@ grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL 
 held=$(grep "^live flow:" "$LOG" | sed -n 's/^live flow: \([0-9]*\) frames.*/\1/p')
 if [ -n "$held" ] && [ "$held" -le 2 ]; then echo "PASS flow control ($(grep '^live flow:' "$LOG" | cut -c12-))"
 else echo "FAIL flow control: '$(grep '^live flow:' "$LOG")'"; fail=1; fi
+# Video: setup arrives, then a keyframe first.
+video=$(grep "^live video:" "$LOG")
+if echo "$video" | grep -q "setup avc1" && echo "$video" | grep -q "first is keyframe"; then echo "PASS live video (${video#live video: })"
+else echo "FAIL live video: '$video'"; fail=1; fi
 exit $fail
