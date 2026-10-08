@@ -156,42 +156,36 @@ let dashboardHTML = #"""
   }
   .screen-wrap img { display: block; width: 100%; height: auto; -webkit-user-drag: none; pointer-events: none; transform-origin: 0 0; }
 
-  /* Screen: picture-quality slider (Sharp ← Balanced → Fast) with a springy knob. */
-  .qslider { display: grid; gap: 6px; padding: 2px 4px; }
-  .qs-row { display: grid; grid-template-columns: 22px 1fr 22px; align-items: center; gap: 14px; }
-  .qs-end { width: 22px; height: 22px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-    transition: stroke .35s ease, transform .35s cubic-bezier(.34,1.56,.64,1); }
-  .qs-end.on { transform: scale(1.18); }
-  .qs-end.sharp.on { stroke: #5e5ce6; }
-  .qs-end.fast.on { stroke: var(--green); }
-  .qs-track { position: relative; height: 34px; touch-action: none; cursor: pointer; outline: none; -webkit-user-select: none; user-select: none; }
-  .qs-track::before {
-    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 6px; margin-top: -3px; border-radius: 99px;
-    background: linear-gradient(90deg, #5e5ce6, #0a84ff 50%, var(--green));
-  }
-  .qs-track:focus-visible::before { box-shadow: 0 0 0 3px rgba(10,132,255,.35); }
-  .qs-stop { position: absolute; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%;
-    background: rgba(255,255,255,.9); box-shadow: 0 0 0 .5px rgba(0,0,0,.15); pointer-events: none; }
+  /* Screen: picture-quality slider in the style of iOS Settings (Text Size). */
+  .qslider { display: grid; gap: 6px; }
+  .qs-card { background: var(--card); border-radius: 12px; padding: 12px 16px 10px; display: grid; gap: 6px; }
+  .qs-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 17px; }
+  .qs-head span:last-child { color: var(--muted); transition: opacity .25s ease; }
+  .qs-row { display: grid; grid-template-columns: 18px 1fr 18px; align-items: center; gap: 14px; }
+  .qs-end { width: 16px; height: 16px; fill: none; stroke: var(--muted); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .qs-end.big { width: 20px; height: 20px; }
+  .qs-track { position: relative; height: 36px; touch-action: none; cursor: pointer; outline: none; -webkit-user-select: none; user-select: none; }
+  .qs-track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 99px; background: var(--fill); }
+  .qs-fill { position: absolute; left: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 99px; background: var(--blue);
+    transition: width .45s cubic-bezier(.32,.72,0,1); }
+  .qs-fill.dragging { transition: none; }
+  .qs-stop { position: absolute; top: 50%; width: 1.5px; height: 10px; margin: -5px 0 0 -0.75px; border-radius: 1px; background: var(--muted); opacity: .55; pointer-events: none; }
+  .qs-track:focus-visible .qs-knob { box-shadow: 0 0 0 3px rgba(10,132,255,.4), 0 3px 8px rgba(0,0,0,.15), 0 3px 1px rgba(0,0,0,.06); }
   .qs-knob {
-    position: absolute; top: 50%; left: 50%; width: 32px; height: 32px; margin: -16px 0 0 -16px; border-radius: 50%;
-    background: #fff; display: grid; place-items: center; pointer-events: none;
-    box-shadow: 0 4px 12px rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.2), 0 0 0 .5px rgba(0,0,0,.06);
-    transition: left .55s cubic-bezier(.34,1.56,.64,1), transform .25s ease, box-shadow .25s ease;
+    position: absolute; top: 50%; left: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%;
+    background: #fff; pointer-events: none;
+    box-shadow: 0 3px 8px rgba(0,0,0,.15), 0 3px 1px rgba(0,0,0,.06), 0 0 0 .5px rgba(0,0,0,.04);
+    transition: left .45s cubic-bezier(.32,.72,0,1), transform .2s ease;
   }
-  .qs-knob.dragging { transition: transform .25s ease, box-shadow .25s ease; transform: scale(1.15);
-    box-shadow: 0 8px 20px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2); }
-  .qs-knob svg { width: 16px; height: 16px; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
-    transition: stroke .35s ease, transform .35s ease; }
-  .qs-knob.swap svg { transform: scale(.4) rotate(-40deg); }
-  .qs-labels { display: grid; grid-template-columns: 1fr 1fr 1fr; margin: 0 36px; }
-  .qs-labels button { background: none; border: 0; padding: 2px 0; font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer;
-    transition: color .3s ease, transform .35s cubic-bezier(.34,1.56,.64,1); }
-  .qs-labels button:first-child { text-align: left; transform-origin: left; }
+  .qs-knob.dragging { transition: transform .2s ease; transform: scale(1.06); }
+  .qs-labels { display: grid; grid-template-columns: 1fr 1fr 1fr; margin: 0 32px; }
+  .qs-labels button { background: none; border: 0; padding: 0; font-size: 12px; color: var(--muted); cursor: pointer; transition: color .25s ease; }
+  .qs-labels button:first-child { text-align: left; }
   .qs-labels button:nth-child(2) { text-align: center; }
-  .qs-labels button:last-child { text-align: right; transform-origin: right; }
-  .qs-labels button.active { color: var(--text); font-weight: 700; transform: scale(1.06); }
-  .qs-caption { text-align: center; font-size: 13px; color: var(--muted); min-height: 1.35em; transition: opacity .2s ease, transform .2s ease; }
-  .qs-caption.fade { opacity: 0; transform: translateY(3px); }
+  .qs-labels button:last-child { text-align: right; }
+  .qs-labels button.active { color: var(--text); }
+  .qs-caption { font-size: 13px; color: var(--muted); padding: 0 16px; min-height: 1.35em; transition: opacity .25s ease; }
+  .qs-caption.fade, .qs-head .fade { opacity: 0; }
   .zoombar { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; color: var(--muted); }
   .zoombar button { font-size: 13px; font-weight: 600; color: var(--blue); background: var(--fill); border: 0; border-radius: 99px; padding: 4px 12px; cursor: pointer; }
   .hint { font-size: 13px; color: var(--muted); text-align: center; line-height: 1.4; }
@@ -439,16 +433,20 @@ let dashboardHTML = #"""
       <div class="base"></div>
     </div>
     <div class="qslider">
-      <div class="qs-row">
-        <svg class="qs-end sharp" id="qsEndSharp" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/></svg>
-        <div class="qs-track" id="qsTrack" role="slider" tabindex="0" aria-label="Picture quality" aria-valuemin="0" aria-valuemax="2">
-          <span class="qs-stop" style="left:0%"></span><span class="qs-stop" style="left:50%"></span><span class="qs-stop" style="left:100%"></span>
-          <div class="qs-knob" id="qsKnob"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="qsKnobIcon" d=""/></svg></div>
+      <div class="qs-card">
+        <div class="qs-head"><span>Picture</span><span id="qsValue">Balanced</span></div>
+        <div class="qs-row">
+          <svg class="qs-end" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>
+          <div class="qs-track" id="qsTrack" role="slider" tabindex="0" aria-label="Picture quality" aria-valuemin="0" aria-valuemax="2">
+            <div class="qs-fill" id="qsFill"></div>
+            <span class="qs-stop" style="left:0%"></span><span class="qs-stop" style="left:50%"></span><span class="qs-stop" style="left:100%"></span>
+            <div class="qs-knob" id="qsKnob"></div>
+          </div>
+          <svg class="qs-end big" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
         </div>
-        <svg class="qs-end fast" id="qsEndFast" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
-      </div>
-      <div class="qs-labels">
-        <button type="button" data-q="sharp">Sharp</button><button type="button" data-q="balanced">Balanced</button><button type="button" data-q="fast">Fast</button>
+        <div class="qs-labels">
+          <button type="button" data-q="sharp">Sharp</button><button type="button" data-q="balanced">Balanced</button><button type="button" data-q="fast">Fast</button>
+        </div>
       </div>
       <div class="qs-caption" id="qsCaption"></div>
     </div>
@@ -777,38 +775,37 @@ let dashboardHTML = #"""
   try { quality = localStorage.getItem("quality") || "balanced"; } catch (e) {}
   const QUALITY_BADGE = { sharp: "HD", balanced: "SD", fast: "LOW" };
   const QUALITY_NAME = { sharp: "Sharp", balanced: "Balanced", fast: "Fast" };
-  // Slider look per mode: knob icon path, its color, and the one-line description.
+  // Slider: one footnote per mode.
   const Q_ORDER = ["sharp", "balanced", "fast"];
-  const Q_STYLE = {
-    sharp:    { color: "#5e5ce6", icon: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z", caption: "Clearest picture · about 12 frames a second" },
-    balanced: { color: "#0a84ff", icon: "M12 4v16M5 8h14M7 8l-3 7h6zM17 8l-3 7h6z", caption: "Everyday · clear and smooth" },
-    fast:     { color: "#30d158", icon: "M13 2L4 14h7l-1 8 9-12h-7z", caption: "Smoothest · sharpens when the screen is still" },
+  const Q_CAPTION = {
+    sharp: "Clearest picture, about 12 frames a second.",
+    balanced: "Clear and smooth, for everyday use.",
+    fast: "Smoothest motion. Sharpens when the screen is still.",
   };
   let shownQuality = null;
   function placeKnob(fraction, animate) {
-    const knob = $("qsKnob");
-    knob.classList.toggle("dragging", !animate);
-    knob.style.left = (Math.min(1, Math.max(0, fraction)) * 100) + "%";
+    const f = Math.min(1, Math.max(0, fraction)) * 100 + "%";
+    $("qsKnob").classList.toggle("dragging", !animate);
+    $("qsFill").classList.toggle("dragging", !animate);
+    $("qsKnob").style.left = f;
+    $("qsFill").style.width = f;
   }
   function showSlider(q) {
-    const style = Q_STYLE[q], knob = $("qsKnob");
     placeKnob(Q_ORDER.indexOf(q) / 2, true);
     document.querySelectorAll("[data-q]").forEach(b => b.classList.toggle("active", b.dataset.q === q));
-    $("qsEndSharp").classList.toggle("on", q === "sharp");
-    $("qsEndFast").classList.toggle("on", q === "fast");
     $("qsTrack").setAttribute("aria-valuenow", Q_ORDER.indexOf(q));
     $("qsTrack").setAttribute("aria-valuetext", QUALITY_NAME[q]);
     if (shownQuality === q) return;
-    // Spin the knob icon out, swap it, spin it back in; cross-fade the description.
-    knob.classList.add("swap");
+    // Cross-fade the value and the footnote.
+    const first = shownQuality === null;
+    $("qsValue").classList.add("fade");
     $("qsCaption").classList.add("fade");
     setTimeout(() => {
-      $("qsKnobIcon").setAttribute("d", style.icon);
-      knob.querySelector("svg").style.stroke = style.color;
-      $("qsCaption").textContent = style.caption;
-      knob.classList.remove("swap");
+      $("qsValue").textContent = QUALITY_NAME[q];
+      $("qsCaption").textContent = Q_CAPTION[q];
+      $("qsValue").classList.remove("fade");
       $("qsCaption").classList.remove("fade");
-    }, shownQuality ? 160 : 0);
+    }, first ? 0 : 180);
     shownQuality = q;
   }
   function showQuality() {
