@@ -692,6 +692,11 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .row-link.start { margin-left: 0; }
   .row-link { margin-left: auto; font-size: 17px; color: var(--blue); background: none; border: 0; padding: 0; cursor: pointer; }
   .gate .error { color: var(--red); font-size: 15px; min-height: 1.3em; }
+  /* Tiny vibrations: an invisible layer over a button passes the finger's tap to a hidden iOS switch. */
+  .tick-pad { position: absolute; inset: 0; z-index: 1; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
+  .tick-pad input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; visibility: hidden; pointer-events: none; }
+  body.no-haptics .tick-pad { display: none; }
+  .mac-dock button { position: relative; }
 </style>
 </head>
 <body>
@@ -880,7 +885,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section">
       <div class="section-head">Vibrations</div>
       <section class="alerts-card limits-card">
-        <div class="alert-row"><span class="set-icon pink"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="2"/><path d="M4.5 8.5v7M19.5 8.5v7"/></svg></span><span class="title">Tiny vibrations<small>Switches, opening apps, right-click, quality, rearranging</small></span><button type="button" class="mini-switch" id="hapticsSwitch" role="switch" aria-label="Tiny vibrations"></button></div>
+        <div class="alert-row"><span class="set-icon pink"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="2"/><path d="M4.5 8.5v7M19.5 8.5v7"/></svg></span><span class="title">Tiny vibrations<small>Switches, opening apps, picture quality</small></span><button type="button" class="mini-switch" id="hapticsSwitch" role="switch" aria-label="Tiny vibrations"></button></div>
       </section>
       <div class="section-foot">Only on this iPhone. If you don't feel them, turn on System Haptics in iPhone Settings → Sounds &amp; Haptics.</div>
     </div>
@@ -2593,6 +2598,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         quit.setAttribute("aria-label", "Quit " + a.name);
         quit.innerHTML = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>';
         b.append(quit, img, name, run);
+        addTickPad(b);
         b.setAttribute("aria-label", "Open " + a.name);
         b.addEventListener("click", () => { if (!editingApps && !slideOpened) openApp(a, b); });
         return b;
@@ -2642,6 +2648,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         const dot = document.createElement("span");
         dot.className = "dot";
         b.append(img, dot);
+        addTickPad(b);
         b.addEventListener("click", () => { if (dockHeld) { dockHeld = false; return; } focusApp(a, b); });
         // Slide up: bring it to the front and zoom into the Screen tab. Hold: Hide / Quit menu.
         let holdTimer = null;
@@ -3105,30 +3112,36 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }));
 
   // ---------- Tiny vibrations ----------
-  // iPhone web pages can't vibrate (navigator.vibrate does nothing there), but flipping an iOS
-  // switch (<input type=checkbox switch>, iOS 18+) plays the system's light tick. So each tick
-  // flips a hidden one. Other phones use navigator.vibrate. On/off is kept on this phone only.
+  // An iOS switch (<input type=checkbox switch>) plays the system's light tick when it flips, but
+  // only for a real finger tap (a script flipping it is silent, and navigator.vibrate does nothing
+  // on iPhone). So tappable things get an invisible layer that hands the tap to a hidden switch;
+  // the tap still reaches the button as usual. Holds and drags can't tick on iPhone.
+  // Other phones get navigator.vibrate from tick(). On/off is kept on this phone only.
   function hapticsOn() { try { return localStorage.getItem("haptics") !== "off"; } catch (e) { return true; } }
-  function tick() {
-    if (!hapticsOn()) return;
-    if (navigator.vibrate) { navigator.vibrate(8); return; }
-    const label = document.createElement("label");
-    label.setAttribute("aria-hidden", "true");
-    label.style.display = "none";
+  function addTickPad(el) {
+    const pad = document.createElement("label");
+    pad.className = "tick-pad";
+    pad.setAttribute("aria-hidden", "true");
     const input = document.createElement("input");
     input.type = "checkbox";
     input.setAttribute("switch", "");
-    label.append(input);
-    document.head.append(label);
-    label.click();
-    label.remove();
+    input.tabIndex = -1;
+    // The label passes its click on to the switch; that copy mustn't reach the button a second time.
+    input.addEventListener("click", e => e.stopPropagation());
+    pad.append(input);
+    el.append(pad);
   }
-  function showHaptics() { $("hapticsSwitch").setAttribute("aria-checked", hapticsOn()); }
+  function tick() {
+    if (hapticsOn() && navigator.vibrate) navigator.vibrate(8);
+  }
+  function showHaptics() {
+    $("hapticsSwitch").setAttribute("aria-checked", hapticsOn());
+    document.body.classList.toggle("no-haptics", !hapticsOn());
+  }
+  document.querySelectorAll(".mini-switch, #awakeSwitch, [data-q]").forEach(addTickPad);
   $("hapticsSwitch").addEventListener("click", () => {
-    const on = !hapticsOn();
-    try { localStorage.setItem("haptics", on ? "on" : "off"); } catch (e) {}
+    try { localStorage.setItem("haptics", hapticsOn() ? "off" : "on"); } catch (e) {}
     showHaptics();
-    tick();  // a sample when turning them on
   });
   showHaptics();
 
