@@ -49,6 +49,9 @@ moving=$(grep "^live fast changed areas:" "$LOG" | tr ' ' '\n' | awk '$1+0 > 0.0
 if [ -n "$fastLast" ] && [ "$fastLast" -gt $(( fastFirst * 6 / 5 )) ]; then echo "PASS fast sharpens when still ($fastFirst -> $fastLast bytes)"
 elif [ "$moving" -gt 0 ]; then echo "SKIP fast still frame: the screen was moving during the test ($moving busy frames)"
 else echo "FAIL fast still frame: first '$fastFirst', last '$fastLast'"; fail=1; fi
+th=$(grep "^temperature history:" "$LOG")
+if echo "$th" | grep -q "history: [1-9]"; then echo "PASS temperature history (${th#temperature history: })"
+else echo "FAIL temperature history: '$th'"; fail=1; fi
 grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL live input"; fail=1; }
 # Flow control: a page that confirms frames never has more than 2 waiting on the way.
 held=$(grep "^live flow:" "$LOG" | sed -n 's/^live flow: \([0-9]*\) frames.*/\1/p')
