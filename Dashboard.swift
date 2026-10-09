@@ -402,6 +402,15 @@ let dashboardHTML = #"""
   body.apps-full .app .run { background: rgba(255,255,255,.6); margin-top: 9px; }
   body.apps-full .app.opening { opacity: 1; }
   body.apps-full .apps-empty p { color: rgba(255,255,255,.6); }
+  /* Slide up on an icon: it follows the finger, then zooms to fill the screen and the Screen tab appears. */
+  .app.lifting img { transition: transform .12s ease; }
+  /* The finger's movement on an icon belongs to the icon (slide up to open, hold to rearrange),
+     not to page scrolling; the page still scrolls from the spaces between icons. */
+  .app-grid .app { touch-action: none; }
+  .app-zoom {
+    position: fixed; z-index: 40; pointer-events: none; border-radius: 15px; transform-origin: center;
+    background: var(--card) center / 100% 100% no-repeat; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  }
   /* Opening: a small press, then a spring back. */
   .app.launched { animation: launch .5s cubic-bezier(.32,.72,0,1); }
   @keyframes launch { 0% { transform: scale(.86); } 55% { transform: scale(1.07); } 100% { transform: scale(1); } }
@@ -732,7 +741,7 @@ let dashboardHTML = #"""
       <h2>No apps yet</h2>
       <p>On your Mac, click the Lid Awake icon in the menu bar, then choose Apps on phone → Add apps…</p>
     </div>
-    <div class="section-foot" id="appsFoot" hidden>Tap an app to open it on your Mac. A dot means it's already open. To change this list, use Apps on phone in the Lid Awake menu on your Mac.</div>
+    <div class="section-foot" id="appsFoot" hidden>Tap an app to open it on your Mac. Slide up on an app to open it and watch it on the screen. A dot means it's already open. To change this list, use Apps on phone in the Lid Awake menu on your Mac.</div>
     <div class="opened" id="openedBar" hidden><span id="openedText"></span><button type="button" id="openedShow">Show screen</button></div>
   </div>
 
@@ -2263,7 +2272,7 @@ let dashboardHTML = #"""
         quit.innerHTML = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>';
         b.append(quit, img, name, run);
         b.setAttribute("aria-label", "Open " + a.name);
-        b.addEventListener("click", () => { if (!editingApps) openApp(a, b); });
+        b.addEventListener("click", () => { if (!editingApps && !slideOpened) openApp(a, b); });
         return b;
       }));
     }
@@ -2344,11 +2353,28 @@ let dashboardHTML = #"""
     if (editingApps && e.target.closest(".quit")) return quitApp(app);
     if (editingApps) return startDrag(app, e.pointerId, e.clientX, e.clientY);
     // Not rearranging yet: a hold of about half a second starts it (moving the finger cancels).
+    // Sliding up instead opens the app and zooms into the Screen tab to watch it.
     const start = { x: e.clientX, y: e.clientY, id: e.pointerId };
-    const stop = () => { clearTimeout(appHoldTimer); ["pointermove", "pointerup", "pointercancel"].forEach(t => removeEventListener(t, watch)); };
+    const origin = { x: e.clientX, y: e.clientY };
+    const img = app.querySelector("img");
+    const stop = () => {
+      clearTimeout(appHoldTimer);
+      ["pointermove", "pointerup", "pointercancel"].forEach(t => removeEventListener(t, watch));
+      app.classList.remove("lifting");
+      img.style.transform = "";
+    };
     const watch = ev => {
       if (ev.pointerId !== start.id) return;
       if (ev.type === "pointermove") {
+        const up = origin.y - ev.clientY, side = Math.abs(ev.clientX - origin.x);
+        if (up > 8 && up > side) {
+          // Following the finger upward: the icon lifts a little and grows.
+          clearTimeout(appHoldTimer);
+          app.classList.add("lifting");
+          img.style.transform = `translateY(${-Math.min(up, 60) * 0.5}px) scale(${1 + Math.min(up, 60) / 300})`;
+          if (up > 44) { stop(); slideOpen(app); }
+          return;
+        }
         if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 10) stop();
         else { start.x = ev.clientX; start.y = ev.clientY; }
       } else stop();
@@ -2360,6 +2386,34 @@ let dashboardHTML = #"""
       startDrag(app, start.id, start.x, start.y);
     }, 450);
   });
+
+  // Slide up on an icon: open the app, zoom the icon to fill the screen, land on the Screen tab.
+  let slideOpened = false;
+  function slideOpen(button) {
+    const app = (data.apps || []).find(a => a.id === button.dataset.id);
+    if (!app) return;
+    slideOpened = true;
+    setTimeout(() => { slideOpened = false; }, 600);
+    openApp(app, button);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return showTab("screen");
+    const img = button.querySelector("img"), r = img.getBoundingClientRect();
+    const zoom = document.createElement("div");
+    zoom.className = "app-zoom";
+    zoom.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background-image:url("${img.src}")`;
+    document.body.append(zoom);
+    const scale = Math.max(innerWidth / r.width, innerHeight / r.height) * 1.08;
+    const dx = innerWidth / 2 - (r.left + r.width / 2), dy = innerHeight / 2 - (r.top + r.height / 2);
+    zoom.animate([
+      { transform: "translate(0,0) scale(1)", borderRadius: "15px" },
+      { transform: `translate(${dx}px,${dy}px) scale(${scale})`, borderRadius: `${40 / scale}px` },
+    ], { duration: 340, easing: SPRING, fill: "forwards" });
+    // Timers rather than animation events, so the page always moves on (and the layer always goes).
+    setTimeout(() => {
+      showTab("screen");
+      zoom.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "ease-out", fill: "forwards" });
+    }, 320);
+    setTimeout(() => zoom.remove(), 650);
+  }
 
   function startDrag(app, pointerId, x, y) {
     const g = appGrid.getBoundingClientRect();
