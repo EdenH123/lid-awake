@@ -13,6 +13,7 @@ let dashboardHTML = #"""
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
+<!--SPLASH-->
 <script>try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <style>
   /* iOS system colors and materials (light / dark), as in Settings, Battery and Weather. */

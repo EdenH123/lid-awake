@@ -318,6 +318,9 @@ final class StatusServer: @unchecked Sendable {
         return hashes.joined(separator: " ")
     }()
 
+    // The page, with the launch-screen links for every iPhone size filled in.
+    private static let pageHTML = Data(dashboardHTML.replacingOccurrences(of: "<!--SPLASH-->", with: Splash.linkTags).utf8)
+
     private func pageHeaders(_ host: String) -> [String] {
         ["Content-Security-Policy: default-src 'none'; script-src \(Self.scriptHashes); style-src 'unsafe-inline'; "
             + "img-src 'self' blob:; connect-src 'self' wss://\(host); worker-src 'self'; manifest-src 'self'; "
@@ -325,7 +328,7 @@ final class StatusServer: @unchecked Sendable {
     }
 
     private func page(_ c: NWConnection, _ host: String) {
-        reply(c, "200 OK", "text/html; charset=utf-8", Data(dashboardHTML.utf8), extraHeaders: pageHeaders(host))
+        reply(c, "200 OK", "text/html; charset=utf-8", Self.pageHTML, extraHeaders: pageHeaders(host))
     }
 
     private func sessionCookie(_ token: String) -> [String] {
@@ -348,7 +351,7 @@ final class StatusServer: @unchecked Sendable {
             return text(c, "403 Forbidden", "Forbidden")
         }
         let isStatic = ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icon-512.png", "/sw.js",
-                        "/manifest.webmanifest"].contains(req.path)
+                        "/manifest.webmanifest"].contains(req.path) || req.path.hasPrefix("/splash/")
 
         if Tailnet.isLoopback(host) {
             // On this Mac's own 127.0.0.1 address the page only points to the Tailscale address:
@@ -378,6 +381,10 @@ final class StatusServer: @unchecked Sendable {
             return reply(c, "200 OK", "image/png", appIcon180)
         case "/icon-512.png":
             return reply(c, "200 OK", "image/png", appIcon512)
+        case let path where path.hasPrefix("/splash/"):
+            // Launch screens (see Splash): needed by iOS before any sign-in.
+            guard let png = Splash.png(forPath: path) else { return text(c, "404 Not Found", "Not found") }
+            return reply(c, "200 OK", "image/png", png)
         case "/sw.js":
             // Shows the Mac's alerts on the phone (also while the page is closed).
             return reply(c, "200 OK", "text/javascript; charset=utf-8", Data(serviceWorkerJS.utf8))
