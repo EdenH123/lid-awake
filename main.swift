@@ -554,8 +554,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if wasOn != isOn {
             servedState = isOn
             if isOn { onSince = Date() }
-            let on = isOn
-            DispatchQueue.global(qos: .utility).async { ensureTailscaleServe(enabled: on) }
+            if isOn || wasOn == nil {
+                DispatchQueue.global(qos: .utility).async { ensureTailscaleServe(enabled: self.isOn) }
+            } else {
+                // Just turned off: keep the link a few more seconds so an open phone page hears
+                // "Lid Awake is off" (the server already refuses everything else), then close it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                    guard let self, !self.isOn else { return }
+                    DispatchQueue.global(qos: .utility).async { ensureTailscaleServe(enabled: false) }
+                }
+            }
         }
         toggle.isOn = isOn
 

@@ -1325,7 +1325,12 @@ let dashboardHTML = #"""
       data = await res.json();
       fetchedAt = Date.now();
       lastOk = fetchedAt;
-    } catch (e) { /* keep showing the last data, marked stale */ }
+    } catch (e) {
+      // Keep showing the last data, marked stale, through a short blip. If the Mac stays
+      // silent (Lid Awake turned off, Mac asleep or offline), switch to the "can't reach" screen;
+      // it comes back by itself once the Mac answers.
+      if (lastOk && Date.now() - lastOk > 8000) return locked();
+    }
     render();
   }
 
