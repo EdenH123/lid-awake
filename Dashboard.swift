@@ -394,6 +394,25 @@ let dashboardHTML = #"""
   }
   .opened button { font-size: 15px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 7px 14px; cursor: pointer; }
 
+  /* Opening the home-screen app: the closed MacBook from the launch screen opens, its screen shows
+     the sky of the moment (sunrise, day, sunset or night), and the view dives into it. */
+  #intro { position: fixed; inset: 0; z-index: 100; background: #000; display: grid; place-items: center;
+    animation: intro-out .4s ease 2.05s forwards; }
+  .intro-mac { position: relative; width: min(58vw, 300px); aspect-ratio: 220 / 170; perspective: 700px;
+    animation: intro-zoom .75s cubic-bezier(.55,0,.75,.2) 1.45s forwards; }
+  .intro-lid { position: absolute; left: 4.5%; right: 4.5%; bottom: 7%; height: 82%; transform-origin: 50% 100%;
+    transform: rotateX(88deg); border-radius: 9px 9px 2px 2px; background: #1c1c1e; box-shadow: inset 0 0 0 2px #3a3a3c;
+    padding: 3.5%; animation: intro-lid .8s cubic-bezier(.2,.8,.2,1) .12s forwards; }
+  .intro-screen { position: relative; width: 100%; height: 100%; border-radius: 3px; overflow: hidden; opacity: 0;
+    animation: intro-fade .55s ease .75s forwards; }
+  .intro-base { position: absolute; left: 0; right: 0; bottom: 0; height: 7%; border-radius: 2px 2px 10px 10px;
+    background: linear-gradient(#d1d1d6, #8e8e93); }
+  .sky-sun, .sky-moon { position: absolute; border-radius: 50%; width: 15%; aspect-ratio: 1; }
+  .sky-star { position: absolute; width: 2px; height: 2px; border-radius: 50%; background: #fff; }
+  @keyframes intro-lid { to { transform: rotateX(-8deg); } }
+  @keyframes intro-fade { to { opacity: 1; } }
+  @keyframes intro-zoom { to { transform: scale(7); } }
+  @keyframes intro-out { to { opacity: 0; visibility: hidden; } }
   /* Apps: a Mac-style dock above the tab bar with the other apps open on the Mac. */
   .mac-dock {
     position: fixed; z-index: 9; left: 50%; transform: translateX(-50%);
@@ -663,6 +682,7 @@ let dashboardHTML = #"""
 </style>
 </head>
 <body>
+<div id="intro" aria-hidden="true" hidden><div class="intro-mac"><div class="intro-lid"><div class="intro-screen" id="introSky"></div></div><div class="intro-base"></div></div></div>
 <div id="scroller">
 <main id="main">
   <div class="topbar">
@@ -2683,6 +2703,34 @@ let dashboardHTML = #"""
   // Works from the Home Screen icon. The Mac encrypts each alert for this iPhone only.
   const ALERT_KINDS = ["turnedOff", "lowBattery", "claudeUsage", "claudeSession", "warm"];
   const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+  // ---------- Opening animation (home-screen app only, once per launch) ----------
+  // The sky on the little Mac's screen follows the time of day.
+  function skyNow() {
+    const h = new Date().getHours();
+    const stars = n => Array.from({ length: n }, (_, i) =>
+      `<span class="sky-star" style="left:${(i * 37 + 11) % 92 + 4}%;top:${(i * 23 + 7) % 55 + 5}%;opacity:${.4 + (i % 3) * .25}"></span>`).join("");
+    if (h >= 5 && h < 8) return `<div style="position:absolute;inset:0;background:linear-gradient(#1d2b5a,#c86b8a 60%,#f6a65c)"></div>`
+      + `<span class="sky-sun" style="left:42%;top:62%;background:#ffd8a0;box-shadow:0 0 18px 6px rgba(255,190,120,.7)"></span>`;
+    if (h >= 8 && h < 17) return `<div style="position:absolute;inset:0;background:linear-gradient(#2f7de1,#8cc4f5)"></div>`
+      + `<span class="sky-sun" style="left:66%;top:16%;background:#fff6d6;box-shadow:0 0 20px 8px rgba(255,236,170,.8)"></span>`
+      + `<span style="position:absolute;left:14%;top:46%;width:30%;height:13%;border-radius:99px;background:rgba(255,255,255,.85);box-shadow:16px -6px 0 2px rgba(255,255,255,.85)"></span>`;
+    if (h >= 17 && h < 20) return `<div style="position:absolute;inset:0;background:linear-gradient(#2a1f5c,#b8527a 55%,#f59a52)"></div>`
+      + `<span class="sky-sun" style="left:30%;top:66%;background:#ffcf8a;box-shadow:0 0 18px 6px rgba(255,160,90,.75)"></span>` + stars(3);
+    return `<div style="position:absolute;inset:0;background:linear-gradient(#050b1f,#14214a 65%,#2a2350)"></div>`
+      + `<span class="sky-moon" style="left:64%;top:18%;background:#f5f5f7;box-shadow:0 0 14px 4px rgba(255,255,255,.45)"></span>` + stars(9);
+  }
+  (function playIntro() {
+    let first = true;
+    try { first = !sessionStorage.getItem("introShown"); sessionStorage.setItem("introShown", "1"); } catch (e) {}
+    if (!standalone() || !first || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const intro = $("intro");
+    $("introSky").innerHTML = skyNow();
+    intro.hidden = false;
+    const done = () => intro.remove();
+    intro.addEventListener("click", done);       // tap to skip
+    setTimeout(done, 2600);
+  })();
   // Install the service worker on every visit (not only with alerts), so the home-screen app
   // keeps a copy of this page and still opens while the Mac is off.
   if ("serviceWorker" in navigator && location.protocol === "https:") {

@@ -1,8 +1,8 @@
 import AppKit
 
 // Launch screens for the home-screen app: iPhones show one while the page loads, but only if it
-// matches the phone's exact pixel size, so each supported size is drawn here (the app icon and
-// "Lid Awake" on black, the manifest's background) and kept after the first request.
+// matches the phone's exact pixel size, so each supported size is drawn here (a closed MacBook on
+// black, where the page's opening animation begins) and kept after the first request.
 enum Splash {
     // iPhone screens in points and their scale (portrait), newest first.
     static let sizes: [(w: Int, h: Int, scale: Int)] = [
@@ -26,32 +26,34 @@ enum Splash {
         guard parts.count == 2, sizes.contains(where: { $0.w * $0.scale == parts[0] && $0.h * $0.scale == parts[1] }) else { return nil }
         lock.lock(); defer { lock.unlock() }
         if let cached = cache[name] { return cached }
-        let png = draw(width: parts[0], height: parts[1])
+        let scale = sizes.first { $0.w * $0.scale == parts[0] && $0.h * $0.scale == parts[1] }!.scale
+        let png = draw(width: parts[0], height: parts[1], scale: scale)
         cache[name] = png
         return png
     }
 
-    private static func draw(width: Int, height: Int) -> Data? {
+    // A closed MacBook on black, exactly where the page's opening animation starts (see #intro in
+    // Dashboard.swift: the Mac is min(58% of the width, 300 pt) wide, centred), so the lid opens
+    // seamlessly once the page has loaded.
+    private static func draw(width: Int, height: Int, scale: Int) -> Data? {
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8,
                                          samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-              let icon = NSImage(data: appIcon512) else { return nil }
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         NSColor.black.setFill()
         NSRect(x: 0, y: 0, width: width, height: height).fill()
-        // The icon a little above the middle, about a quarter of the width; the name below it.
-        let side = CGFloat(width) * 0.27
-        let iconRect = NSRect(x: (CGFloat(width) - side) / 2, y: CGFloat(height) * 0.5, width: side, height: side)
-        // Rounded like a home-screen icon (the icon file itself is square; iOS rounds it).
-        NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(roundedRect: iconRect, xRadius: side * 0.2237, yRadius: side * 0.2237).addClip()
-        icon.draw(in: iconRect)
-        NSGraphicsContext.restoreGraphicsState()
-        let font = NSFont.systemFont(ofSize: CGFloat(width) * 0.05, weight: .semibold)
-        let text = NSAttributedString(string: "Lid Awake", attributes: [.font: font, .foregroundColor: NSColor.white])
-        let size = text.size()
-        text.draw(at: NSPoint(x: (CGFloat(width) - size.width) / 2, y: iconRect.minY - size.height - CGFloat(width) * 0.04))
+        let w = CGFloat(width), h = CGFloat(height)
+        let macW = min(w * 0.58, 300 * CGFloat(scale)), macH = macW * 170 / 220
+        let bottom = h / 2 - macH / 2                       // AppKit counts from the bottom
+        let baseH = macH * 0.07
+        let base = NSRect(x: (w - macW) / 2, y: bottom, width: macW, height: baseH)
+        let shape = NSBezierPath(roundedRect: base, xRadius: baseH * 0.6, yRadius: baseH * 0.6)
+        NSGradient(starting: NSColor(white: 0.82, alpha: 1), ending: NSColor(white: 0.56, alpha: 1))?.draw(in: shape, angle: -90)
+        // The closed lid: a thin dark edge resting on the base.
+        NSColor(white: 0.23, alpha: 1).setFill()
+        NSBezierPath(roundedRect: NSRect(x: base.minX + macW * 0.045, y: base.maxY, width: macW * 0.91, height: max(2, baseH * 0.25)),
+                     xRadius: 2, yRadius: 2).fill()
         NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .png, properties: [:])
     }
