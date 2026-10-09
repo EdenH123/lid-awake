@@ -742,12 +742,63 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .tick-pad input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; visibility: hidden; pointer-events: none; }
   body.no-haptics .tick-pad { display: none; }
   .mac-dock button { position: relative; }
+
+  /* Loading: until the Mac first answers, the Status page is drawn as soft grey shapes with one
+     light sweeping across them all (sweepAlign() starts each shape's sweep by where it sits). */
+  :root { --bone: var(--fill); --bone-hi: rgba(255,255,255,.6); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bone-hi: rgba(255,255,255,.09); } }
+  :root[data-theme="dark"] { --bone-hi: rgba(255,255,255,.09); }
+  main.waiting :where(#host, #tab-status :where(#state, #stateSub, #macPicCaption, .row .value, .tile-value > span:first-child, #temp,
+    .tile-detail, .usage-pct, .usage-sub, .section-foot)) { position: relative; color: transparent !important; }
+  main.waiting :where(#host, #tab-status :where(#state, #stateSub, #macPicCaption, .row .value, .tile-value > span:first-child, #temp,
+    .tile-detail, .usage-pct, .usage-sub, .section-foot))::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: .72em; transform: translateY(-50%); border-radius: 6px;
+  }
+  main.waiting :where(#host, #tab-status :where(#state, #stateSub, #macPicCaption, .row .value, .tile-value > span:first-child, #temp,
+    .tile-detail, .usage-pct, .usage-sub, .section-foot))::after,
+  main.waiting #tab-status :is(.meter, .scale, .awake-switch), .screen-skel .bone {
+    background: linear-gradient(100deg, transparent 20%, var(--bone-hi) 50%, transparent 80%) -60vw 0 / 60vw 100% no-repeat, var(--bone);
+    animation: bone-sweep 1.8s ease-in-out var(--sweep-delay, 0s) infinite;
+  }
+  @keyframes bone-sweep { 0% { background-position: -60vw 0; } 75%, 100% { background-position: 100vw 0; } }
+  main.waiting #tab-status { pointer-events: none; }
+  main.waiting #host { width: 9em; min-height: 1.3em; }
+  main.waiting #tab-status #state { width: 2.4em; }
+  main.waiting #tab-status #stateSub { width: 10em; min-height: 1.25em; margin-top: 3px; }
+  main.waiting #tab-status .row .value::after { left: auto; width: 4.5em; }  /* right-aligned, like the numbers */
+  main.waiting #tab-status .health-list .value::after { width: 2.6em; }
+  main.waiting #tab-status :is(#thermal, #netPing)::after { width: 3.4em; }
+  main.waiting #tab-status :is(#uptimeValue, #wifiName)::after { width: 5.5em; }
+  main.waiting #tab-status .tile-value > span:first-child, main.waiting #tab-status #temp { width: 2.3em; }
+  main.waiting #tab-status .tile-detail { width: 70%; min-height: 1.3em; }
+  main.waiting #tab-status .usage-pct { min-width: 2.2em; }
+  main.waiting #tab-status .usage-sub { width: 55%; min-height: 1.3em; }
+  main.waiting #tab-status .section-foot { margin: 0 16px; padding: 0; width: 62%; min-height: 1.38em; }
+  main.waiting #tab-status :is(.meter > div, .scale i, .bars), main.waiting #tab-status .awake-switch::after { opacity: 0; }
+  main.waiting #macPic { opacity: .35; }
+  main.waiting #tab-status #macPicCaption { width: 12em; min-height: 1.3em; margin-inline: auto; }  /* not yet known: lid, screen and charger come with the first answer */
+  /* When the numbers arrive they fade in where the shapes were; the bars grow and the switch slides on. */
+  main.revealed :is(#host, #tab-status :is(#state, #stateSub, #macPicCaption, .row .value, .tile-value, .tile-detail, .usage-pct,
+    .usage-sub, .section-foot, .scale i, .bars)) { animation: bone-reveal .4s ease both; }
+  main.revealed #macPic { animation: pic-reveal .5s ease both; }
+  @keyframes pic-reveal { from { opacity: .35; } }
+  @keyframes bone-reveal { from { opacity: 0; } }
+  /* Screen tab: a grey MacBook and trackpad hold the place until the first picture arrives. */
+  .screen-skel { display: grid; gap: 20px; }
+  .screen-skel .screen-wrap { aspect-ratio: 1512 / 982; }
+  .screen-skel .screen-wrap.bone { --bone: #161618; --bone-hi: rgba(255,255,255,.07); }
+  .screen-skel .skel-pad { aspect-ratio: 16 / 12.6; max-height: 330px; border-radius: 24px; }
+  body.landscape-full .screen-skel { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    main.waiting #tab-status *, main.waiting #host, .screen-skel .bone { animation: none !important; }
+    main.waiting #tab-status ::after, main.waiting #host::after { animation: none !important; }
+  }
 </style>
 </head>
 <body>
 <div id="intro" aria-hidden="true"><div class="intro-mac"><div class="intro-lid"><div class="intro-screen" id="introSky"></div></div><div class="intro-base"></div></div></div>
 <div id="scroller">
-<main id="main">
+<main id="main" class="waiting">
   <div class="topbar">
     <button type="button" class="back-btn" id="settingsBack" hidden><svg viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8"/></svg>Status</button>
     <div class="live" id="live"><span class="dot"></span><span id="liveText">Connecting…</span></div>
@@ -762,7 +813,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <p id="host"></p>
   </div>
 
-  <section class="gate" id="gate">
+  <section class="gate" id="gate" hidden>
     <div class="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
     <h2 id="gateTitle">Connecting…</h2>
     <p id="gateText">Reaching your Mac.</p>
@@ -774,7 +825,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     </form>
   </section>
 
-  <div class="tab" id="app" hidden>
+  <div class="tab" id="app">
 
   <div class="tab" id="tab-status">
     <section class="card faceid-offer" id="faceIdOffer" hidden>
@@ -964,6 +1015,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <button data-key="escape">esc</button>
     </div>
     <div class="notice" id="screenMsg" hidden></div>
+    <div class="screen-skel" id="screenSkel" aria-hidden="true">
+      <div class="macbook"><div class="lid"><div class="screen-wrap bone"></div></div><div class="base"></div></div>
+      <div class="skel-pad bone"></div>
+    </div>
     <div class="tab" id="screenControls" hidden>
     <div class="macbook">
       <div class="lid">
@@ -1088,16 +1143,38 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
 
+  // ---------- Loading placeholders ----------
+  // One light sweeps across the grey shapes as if they were one surface: each shape starts its
+  // sweep a little later the further right (and lower) it sits.
+  function sweepAlign(root) {
+    const period = 1.8, speed = 1.6 * innerWidth / (0.75 * period);  // px/s while the light moves
+    root.querySelectorAll("*").forEach(el => {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--sweep-delay", `${((r.left + r.top * .3) / speed) % period - period}s`);
+    });
+  }
+  // Keep the Claude card's place while loading if it was there last time, so nothing jumps.
+  try { if (localStorage.getItem("claudeShown") === "1") $("claudeSection").hidden = false; } catch (e) {}
+  sweepAlign($("main"));
+  function revealPage() {
+    const main = $("main");
+    if (!main.classList.contains("waiting")) return;
+    main.classList.replace("waiting", "revealed");
+    setTimeout(() => main.classList.remove("revealed"), 600);
+  }
+
   function render() {
     updateLandscape();
     showScreenOff();
     const ago = Math.round((Date.now() - lastOk) / 1000);
     const stale = !lastOk || ago > 10;
-    $("live").classList.toggle("stale", stale);
-    $("liveText").textContent = !lastOk ? "Can't reach Mac" : stale ? `Last seen ${ago}s ago` : "Live";
+    const loading = $("main").classList.contains("waiting") && $("gate").hidden && performance.now() < 15000;
+    $("live").classList.toggle("stale", stale && !loading);
+    $("liveText").textContent = !lastOk ? (loading ? "Connecting…" : "Can't reach Mac") : stale ? `Last seen ${ago}s ago` : "Live";
     $("pageTitle").textContent = TAB_TITLES[currentTab] || greeting();
     $("settingsBtn").hidden = currentTab !== "status" || $("lockBtn").hidden;
     if (!data) return;
+    revealPage();
 
     $("host").textContent = data.host || "";
     const on = data.lidAwake;
@@ -1597,7 +1674,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     requestAnimationFrame(() => {
       if (currentTab !== name) return;  // tapped another tab meanwhile
       render();
-      if (name === "screen") startFrames();
+      if (name === "screen") { sweepAlign($("screenSkel")); startFrames(); }
       else stopLive();
     });
   }
@@ -1809,6 +1886,18 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function setScreenMsg(text) {
     $("screenMsg").textContent = text;
     $("screenMsg").hidden = !text;
+    updateScreenSkel();
+  }
+  // Grey MacBook while the first picture is on its way (also while the Mac wakes its screen),
+  // but not over a problem the owner needs to read, like screen access being turned off.
+  function updateScreenSkel() {
+    const msg = $("screenMsg").hidden ? "" : $("screenMsg").textContent;
+    const wasShowing = !$("screenSkel").hidden;
+    $("screenSkel").hidden = !$("screenControls").hidden || (!!msg && !msg.startsWith("Waking"));
+    if (wasShowing && !$("screenControls").hidden) {  // the picture fades in
+      $("screenControls").classList.add("tab-enter");
+      $("screenControls").addEventListener("animationend", () => $("screenControls").classList.remove("tab-enter"), { once: true });
+    }
   }
   // ----- Live stream: one WebSocket, frames pushed by the Mac -----
   let ws = null, wsFailures = 0, wsRetryAt = 0;
@@ -2079,9 +2168,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
           frameId = Number(res.headers.get("X-Frame-Id")) || 0;
           showFrame(await res.blob());
         } else {
-          setScreenMsg(await res.text());
           // Access turned off or permission missing: hide the old picture and controls.
           if (res.status === 403) $("screenControls").hidden = true;
+          setScreenMsg(await res.text());
           frameId = 0;
           wait = 2000;
         }
@@ -2607,6 +2696,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function renderClaude() {
     const c = data.claude;
     $("claudeSection").hidden = !c || (!c.fiveHour && !c.sevenDay);
+    try { localStorage.setItem("claudeShown", $("claudeSection").hidden ? "0" : "1"); } catch (e) {}
     if ($("claudeSection").hidden) return;
     const now = Date.now() / 1000;
     const when = (t, long) => {
