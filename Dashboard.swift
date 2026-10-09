@@ -27,6 +27,8 @@ let dashboardHTML = #"""
     --glass-pill: rgba(0,0,0,.07); --glass-pill-rim: rgba(255,255,255,.85);
     --kb: #d1d3d9; --key: #ffffff; --key-fn: #abb0bc; --key-shadow: rgba(0,0,0,.35);
     --pad: #e5e5ea; --pad-on: #dcdce1;
+    --alu-top: #f1f1f4; --alu-bottom: #dfdfe4; --alu-line: rgba(0,0,0,.022); --alu-hi: rgba(255,255,255,.95);
+    --alu-rim: rgba(0,0,0,.07); --alu-ink: #6e6e73; --alu-emboss: rgba(255,255,255,.8); --alu-press: rgba(0,0,0,.05);
     --mac-base: linear-gradient(#e6e6ea, #b8b8be); --mac-groove: #9a9aa1;
   }
   /* Dark: follows the iPhone (Automatic), or chosen in Settings → Appearance. */
@@ -41,6 +43,8 @@ let dashboardHTML = #"""
       --glass-pill: rgba(255,255,255,.12); --glass-pill-rim: rgba(255,255,255,.25);
       --kb: #2b2b2d; --key: #6b6b6e; --key-fn: #464649; --key-shadow: rgba(0,0,0,.6);
       --pad: #2c2c2e; --pad-on: #3a3a3c;
+      --alu-top: #3b3b3f; --alu-bottom: #2d2d31; --alu-line: rgba(255,255,255,.018); --alu-hi: rgba(255,255,255,.14);
+      --alu-rim: rgba(0,0,0,.5); --alu-ink: #a1a1a6; --alu-emboss: rgba(0,0,0,.55); --alu-press: rgba(255,255,255,.06);
       --mac-base: linear-gradient(#8e8e93, #5a5a5f); --mac-groove: #3a3a3c;
     }
   }
@@ -54,6 +58,8 @@ let dashboardHTML = #"""
       --glass-pill: rgba(255,255,255,.12); --glass-pill-rim: rgba(255,255,255,.25);
       --kb: #2b2b2d; --key: #6b6b6e; --key-fn: #464649; --key-shadow: rgba(0,0,0,.6);
       --pad: #2c2c2e; --pad-on: #3a3a3c;
+      --alu-top: #3b3b3f; --alu-bottom: #2d2d31; --alu-line: rgba(255,255,255,.018); --alu-hi: rgba(255,255,255,.14);
+      --alu-rim: rgba(0,0,0,.5); --alu-ink: #a1a1a6; --alu-emboss: rgba(0,0,0,.55); --alu-press: rgba(255,255,255,.06);
       --mac-base: linear-gradient(#8e8e93, #5a5a5f); --mac-groove: #3a3a3c;
     }
   :root { color-scheme: light dark; --seg-on: #ffffff; }
@@ -302,6 +308,29 @@ let dashboardHTML = #"""
     transition: background .15s ease;
   }
   .trackpad.active { background: var(--pad-on); }
+
+  /* Screen: an aluminium Magic Trackpad (space gray in dark mode). The tools are engraved along
+     its top edge; the rest of the slab is the trackpad. */
+  .mtp {
+    border-radius: 24px; overflow: hidden;
+    background: repeating-linear-gradient(90deg, var(--alu-line) 0 1px, transparent 1px 3px),
+                linear-gradient(180deg, var(--alu-top), var(--alu-bottom));
+    box-shadow: inset 0 1px 0 var(--alu-hi), inset 0 0 0 1px var(--alu-rim), 0 1px 2px rgba(0,0,0,.06), 0 12px 28px rgba(0,0,0,.12);
+  }
+  .mtp .screen-tools { margin: 0; padding: 10px 10px 0; gap: 2px; justify-content: space-between; overflow: visible; }
+  .mtp .tool {
+    background: transparent; color: var(--alu-ink); height: 38px; padding: 0 10px; border-radius: 12px;
+    filter: drop-shadow(0 1px 0 var(--alu-emboss)); transition: color .2s ease, background .2s ease, transform .15s ease;
+  }
+  .mtp .tool.icon { width: 40px; padding: 0; }
+  .mtp .tool svg { width: 21px; height: 21px; stroke-width: 1.7; }
+  .mtp .tool .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .mtp .tool .hd { font-size: 11px; padding: 2px 5px; border-radius: 5px; border-width: 1.6px; }
+  .mtp .tool.help { margin-left: 0; font-size: 18px; font-weight: 500; }
+  .mtp .tool:active { opacity: 1; transform: scale(.9); background: var(--alu-press); }
+  .mtp .tool.on, .mtp .tool[aria-expanded="true"] { color: var(--blue); background: var(--alu-press); filter: none; }
+  .mtp .trackpad { background: transparent; box-shadow: none; border-radius: 0; color: var(--alu-ink); opacity: .9; }
+  .mtp .trackpad.active { background: var(--alu-press); }
 
   /* Apps: a home-screen grid of the Mac apps chosen in the menu. */
   .app-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px 8px; padding: 8px 0 4px; }
@@ -785,14 +814,6 @@ let dashboardHTML = #"""
       </div>
       <div class="base"></div>
     </div>
-    <div class="screen-tools" role="toolbar" aria-label="Screen tools">
-      <button type="button" class="tool" id="qualityBtn" aria-expanded="false" aria-label="Picture quality: Balanced"><span class="hd">SD</span></button>
-      <button type="button" class="tool" id="kbBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><span id="kbLabel">Type</span></button>
-      <button type="button" class="tool" id="keysBtn" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h4v4H7zM13 4h4v4h-4zM4 11h16v4H4zM8 18h8"/></svg>Keys</button>
-      <button type="button" class="tool icon" id="lockMacBtn" aria-label="Lock Mac"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
-      <button type="button" class="tool icon" id="screenOffBtn" aria-label="Turn the Mac's screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
-      <button type="button" class="tool icon help" id="helpBtn" aria-expanded="false" aria-label="How to use">?</button>
-    </div>
     <div class="qslider" id="qualityPanel" hidden>
       <div class="qs-card">
         <div class="qs-head"><span>Picture</span><span id="qsValue">Balanced</span></div>
@@ -820,7 +841,17 @@ let dashboardHTML = #"""
     </div>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="notice warn-notice" id="hint" hidden></div>
-    <div class="trackpad" id="trackpad">Trackpad</div>
+    <div class="mtp">
+      <div class="screen-tools" role="toolbar" aria-label="Screen tools">
+        <button type="button" class="tool" id="qualityBtn" aria-expanded="false" aria-label="Picture quality: Balanced"><span class="hd">SD</span></button>
+        <button type="button" class="tool" id="kbBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><span class="label" id="kbLabel">Type</span></button>
+        <button type="button" class="tool" id="keysBtn" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h4v4H7zM13 4h4v4h-4zM4 11h16v4H4zM8 18h8"/></svg><span class="label">Keys</span></button>
+        <button type="button" class="tool icon" id="lockMacBtn" aria-label="Lock Mac"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+        <button type="button" class="tool icon" id="screenOffBtn" aria-label="Turn the Mac's screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
+        <button type="button" class="tool icon help" id="helpBtn" aria-expanded="false" aria-label="How to use">?</button>
+      </div>
+      <div class="trackpad" id="trackpad">Trackpad</div>
+    </div>
     <div class="key-sheet" id="keySheet" aria-label="Keys" aria-hidden="true">
       <div class="sheet-head"><span>Keys</span><button type="button" id="keysDone">Done</button></div>
       <div class="keyboard" id="keyPanel">
