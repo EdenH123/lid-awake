@@ -11,7 +11,7 @@ self.addEventListener("fetch", e => {
   const url = new URL(req.url);
   // The opening animation's sky photos: kept after the first time, so the animation never waits.
   if (url.origin === self.location.origin && url.pathname.startsWith("/sky/")) {
-    e.respondWith(caches.open("lidawake-sky-v1").then(async cache =>
+    e.respondWith(caches.open("lidawake-sky-v2").then(async cache =>
       (await cache.match(req)) || fetch(req).then(res => { if (res.ok) cache.put(req, res.clone()); return res; })));
     return;
   }
