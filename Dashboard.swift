@@ -651,7 +651,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .set-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
   .set-icon.red { background: #ff3b30; } .set-icon.indigo { background: #5856d6; } .set-icon.green { background: #34c759; }
   .set-icon.clay { background: #d97757; } .set-icon.orange { background: #ff9500; } .set-icon.blue { background: var(--blue); }
-  .set-icon.gray { background: #8e8e93; }
+  .set-icon.gray { background: #8e8e93; } .set-icon.pink { background: #ff2d55; }
   .row .title small { display: block; font-size: 13px; color: var(--muted); margin-top: 1px; white-space: normal; }
   .icon-list .row + .row::before, .icon-list .alert-rows .row::before { left: 42px; }
   .row-link.danger { color: var(--red); }
@@ -875,6 +875,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the Mac overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
       </section>
       <div class="section-foot">Lid Awake turns itself off so your Mac can sleep safely. These are the same switches as in the Mac menu.</div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">Vibrations</div>
+      <section class="alerts-card limits-card">
+        <div class="alert-row"><span class="set-icon pink"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="2"/><path d="M4.5 8.5v7M19.5 8.5v7"/></svg></span><span class="title">Tiny vibrations<small>Switches, opening apps, right-click, quality, rearranging</small></span><button type="button" class="mini-switch" id="hapticsSwitch" role="switch" aria-label="Tiny vibrations"></button></div>
+      </section>
+      <div class="section-foot">Only on this iPhone. If you don't feel them, turn on System Haptics in iPhone Settings → Sounds &amp; Haptics.</div>
     </div>
 
     <div class="section">
@@ -1786,7 +1794,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       $(id).setAttribute("aria-label", "Picture quality: " + QUALITY_NAME[quality]);
     }
   }
-  function setQuality(q) {
+  function setQuality(q, silent = false) {
+    if (q !== quality && !silent) tick();
     quality = q;
     try { localStorage.setItem("quality", quality); } catch (e) {}
     showQuality();
@@ -1798,12 +1807,16 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const track = $("qsTrack");
     let dragging = false;
     const fractionAt = e => { const r = track.getBoundingClientRect(); return (e.clientX - r.left) / r.width; };
+    let shown = null;  // the stop lit up under the finger; each new one ticks
     const preview = f => {
       const q = Q_ORDER[Math.round(Math.min(1, Math.max(0, f)) * Q_LAST)];
+      if (shown !== null && q !== shown) tick();
+      shown = q;
       document.querySelectorAll("[data-q]").forEach(b => b.classList.toggle("active", b.dataset.q === q));
     };
     track.addEventListener("pointerdown", e => {
       dragging = true;
+      shown = quality;
       track.setPointerCapture(e.pointerId);
       placeKnob(fractionAt(e), false);
       preview(fractionAt(e));
@@ -1817,7 +1830,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (!dragging) return;
       dragging = false;
       const q = Q_ORDER[Math.round(Math.min(1, Math.max(0, fractionAt(e))) * Q_LAST)];
-      if (q === quality) showSlider(q); else setQuality(q);
+      if (q !== shown) tick();  // landed on a stop the finger hadn't lit up yet
+      if (q === quality) showSlider(q); else setQuality(q, true);  // the drag already ticked
     };
     track.addEventListener("pointerup", release);
     track.addEventListener("pointercancel", release);
@@ -2165,7 +2179,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       held = true;
       holdRingDone();
       send({ type: "click", button: "right", ...p });
-      if (navigator.vibrate) navigator.vibrate(10);
+      tick();
     }, 800);
   });
   wrap.addEventListener("pointermove", e => {
@@ -2510,6 +2524,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // Only "off" is possible from here: while lid-awake is off this page is closed.
   $("awakeSwitch").addEventListener("click", async () => {
     if (!data || !data.lidAwake) return;
+    tick();
     const ok = confirm("Turn off Lid Awake?\n\nYour Mac will sleep normally, and this page will close until you turn Lid Awake on again on the Mac.");
     if (!ok) return;
     $("awakeSwitch").disabled = true;
@@ -2657,7 +2672,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   let dockHeld = false;  // the hold opened a menu, so the tap that ends it isn't a click
   function showDockMenu(app, button) {
     closeDockMenu();
-    if (navigator.vibrate) navigator.vibrate(10);
+    tick();
     const shade = document.createElement("div");
     shade.className = "dock-shade";
     shade.addEventListener("pointerdown", e => { e.preventDefault(); closeDockMenu(); });
@@ -2699,6 +2714,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function closeDockMenu() { document.querySelectorAll(".dock-menu, .dock-shade").forEach(n => n.remove()); }
 
   async function focusApp(app, button, action = "focus") {
+    if (action === "focus") tick();
     let message = { focus: `Switched to ${app.name}`, hide: `Hid ${app.name}`, quit: `Asked ${app.name} to quit` }[action];
     try {
       const res = await fetch("focus-app", {
@@ -2719,6 +2735,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
 
   async function openApp(app, button) {
+    tick();
     button.classList.add("opening");
     let message = `Opened ${app.name}`;
     try {
@@ -2810,6 +2827,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     ["pointermove", "pointerup", "pointercancel"].forEach(t => addEventListener(t, watch));
     appHoldTimer = setTimeout(() => {
       stop();
+      tick();
       setEditing(true);
       startDrag(app, start.id, start.x, start.y);
     }, 450);
@@ -3044,6 +3062,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function saveAlertsOff(off) { try { localStorage.setItem("alertsOff", JSON.stringify(off)); } catch (e) {} }
   document.querySelectorAll("[data-alert]").forEach(b => b.addEventListener("click", async () => {
     if (!pushPossible() || !standalone()) return renderAlerts();
+    tick();
     const kind = b.dataset.alert, wasOn = b.getAttribute("aria-checked") === "true";
     try {
       if (!alertsReady) {
@@ -3077,12 +3096,41 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   document.querySelectorAll("[data-limit]").forEach(b => b.addEventListener("click", async () => {
     const on = b.getAttribute("aria-checked") !== "true";
     b.setAttribute("aria-checked", on);
+    tick();
     limitSaving = true;
     try { await postJSON("limits", { name: b.dataset.limit, on }); }
     catch (e) { b.setAttribute("aria-checked", !on); }
     limitSaving = false;
     poll();
   }));
+
+  // ---------- Tiny vibrations ----------
+  // iPhone web pages can't vibrate (navigator.vibrate does nothing there), but flipping an iOS
+  // switch (<input type=checkbox switch>, iOS 18+) plays the system's light tick. So each tick
+  // flips a hidden one. Other phones use navigator.vibrate. On/off is kept on this phone only.
+  function hapticsOn() { try { return localStorage.getItem("haptics") !== "off"; } catch (e) { return true; } }
+  function tick() {
+    if (!hapticsOn()) return;
+    if (navigator.vibrate) { navigator.vibrate(8); return; }
+    const label = document.createElement("label");
+    label.setAttribute("aria-hidden", "true");
+    label.style.display = "none";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.setAttribute("switch", "");
+    label.append(input);
+    document.head.append(label);
+    label.click();
+    label.remove();
+  }
+  function showHaptics() { $("hapticsSwitch").setAttribute("aria-checked", hapticsOn()); }
+  $("hapticsSwitch").addEventListener("click", () => {
+    const on = !hapticsOn();
+    try { localStorage.setItem("haptics", on ? "on" : "off"); } catch (e) {}
+    showHaptics();
+    tick();  // a sample when turning them on
+  });
+  showHaptics();
 
   // ---------- Appearance ----------
   function savedTheme() { try { return localStorage.getItem("theme") || "auto"; } catch (e) { return "auto"; } }
