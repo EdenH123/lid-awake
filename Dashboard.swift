@@ -241,44 +241,45 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     background: linear-gradient(90deg, var(--green) 0%, #ffcc00 62%, var(--amber) 80%, var(--red) 100%); }
   .scale i { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
     background: #fff; box-shadow: 0 0 0 2px var(--card), 0 1px 3px rgba(0,0,0,.3); transition: left .5s ease; }
-  /* Tapping the tile opens the last hours as a graph (a sheet, like a Weather detail). */
+  /* Tapping Battery or Temperature opens the last hours as a graph (a sheet, like a Weather detail). */
   .tile.tappable { position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .2s ease, opacity .2s ease; }
   .tile.tappable:active { transform: scale(.97); opacity: .85; }
   .tile-chev { width: 7px !important; height: 12px !important; margin-left: auto; stroke-width: 2.2 !important; color: var(--faint); }
   .sheet-shade { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.4); opacity: 0; transition: opacity .35s ease; }
   .sheet-shade.show { opacity: 1; }
-  .temp-sheet {
+  .hist-sheet {
     position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto;
     height: calc(100% - env(safe-area-inset-top) - 18px); display: flex; flex-direction: column;
     background: var(--bg); border-radius: 26px 26px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.2);
     transform: translateY(105%); visibility: hidden;
     transition: transform .45s cubic-bezier(.32,.72,0,1), visibility 0s linear .45s;
   }
-  .temp-sheet.open { transform: translateY(var(--drag, 0px)); visibility: visible; transition: transform .45s cubic-bezier(.32,.72,0,1), visibility 0s; }
-  .temp-sheet.dragging { transition: none; }
-  .temp-sheet .sheet-head { position: relative; padding: 20px 16px 8px 20px; touch-action: none; cursor: grab; }
-  .temp-sheet .sheet-head::before { background: var(--faint); }
-  .temp-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 16px;
+  .hist-sheet.open { transform: translateY(var(--drag, 0px)); visibility: visible; transition: transform .45s cubic-bezier(.32,.72,0,1), visibility 0s; }
+  .hist-sheet.dragging { transition: none; }
+  .hist-sheet .sheet-head { position: relative; padding: 20px 16px 8px 20px; touch-action: none; cursor: grab; }
+  .hist-sheet .sheet-head::before { background: var(--faint); }
+  .hist-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 16px;
     padding: 6px 16px calc(24px + env(safe-area-inset-bottom)); }
-  .temp-readout { padding: 2px 4px 0; }
-  .temp-big { font-size: 44px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.05; font-variant-numeric: tabular-nums; }
-  .temp-when { font-size: 15px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; min-height: 1.3em; }
-  .temp-chart-card { position: relative; padding: 14px 6px 8px 14px; }
-  .temp-chart { display: block; width: 100%; height: 240px; overflow: visible; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
-  .temp-chart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-  .temp-chart .grid { stroke: var(--line); stroke-width: .5; }
-  .temp-chart .limit { stroke: var(--red); stroke-width: 1.2; stroke-dasharray: 4 4; }
-  .temp-chart text.limit-label { fill: var(--red); font-weight: 600; }
-  .temp-chart .bar { transition: opacity .15s ease; }
-  .temp-chart .bar-off { fill: var(--fill); }
-  .temp-chart.picking .bar:not(.picked) { opacity: .3; }
-  .temp-story .row { gap: 12px; }
-  .temp-story .row i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-  .temp-story .row .title { white-space: normal; }
-  .temp-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; font-size: 15px; color: var(--muted); }
-  body:has(.temp-sheet.open) { overflow: hidden; }
-  body:has(.temp-sheet.open) .tabbar { visibility: hidden; }
-  @media (prefers-reduced-motion: reduce) { .temp-sheet, .temp-sheet.open, .sheet-shade { transition: none; } }
+  .hist-readout { padding: 2px 4px 0; }
+  .hist-big { font-size: 44px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .hist-when { font-size: 15px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; min-height: 1.3em; }
+  .hist-chart-card { position: relative; padding: 14px 6px 8px 14px; }
+  .hist-chart { display: block; width: 100%; height: 240px; overflow: visible; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+  .hist-chart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .hist-chart .grid { stroke: var(--line); stroke-width: .5; }
+  .hist-chart .limit { stroke: var(--red); stroke-width: 1.2; stroke-dasharray: 4 4; }
+  .hist-chart text.limit-label { fill: var(--red); font-weight: 600; }
+  .hist-chart .bar { transition: opacity .15s ease; }
+  .hist-chart .bar-off { fill: var(--fill); }
+  .hist-chart .plugged { fill: var(--green); opacity: .13; }
+  .hist-chart.picking .bar:not(.picked) { opacity: .3; }
+  .hist-story .row { gap: 12px; }
+  .hist-story .row i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .hist-story .row .title { white-space: normal; }
+  .hist-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; font-size: 15px; color: var(--muted); }
+  body:has(.hist-sheet.open) { overflow: hidden; }
+  body:has(.hist-sheet.open) .tabbar { visibility: hidden; }
+  @media (prefers-reduced-motion: reduce) { .hist-sheet, .hist-sheet.open, .sheet-shade { transition: none; } }
 
   /* Status: Claude plan usage, two meters in one card. */
   .usage { display: grid; gap: 16px; padding: 16px; }
@@ -926,8 +927,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     </div>
 
     <div class="tiles">
-      <section class="card tile">
-        <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="11" height="7" rx="2"/><path d="M14.5 7v2"/></svg>Battery</div>
+      <section class="card tile tappable" id="batteryTile" role="button" tabindex="0" aria-label="Battery, show the last hours">
+        <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4.5" width="11" height="7" rx="2"/><path d="M14.5 7v2"/></svg>Battery<svg class="tile-chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5"/></svg></div>
         <div class="tile-value"><span id="battery">—</span><svg class="bolt" id="bolt" viewBox="0 0 12 16" hidden aria-hidden="true"><path d="M7 0 0 9h5l-1 7 7-9H6z"/></svg></div>
         <div class="meter"><div id="batteryBar" style="width:0"></div></div>
         <div class="tile-detail" id="batterySub"></div>
@@ -1171,25 +1172,25 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <button data-tab="apps">
       <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="2.5" width="8" height="8" rx="2.4"/><rect x="14" y="2.5" width="8" height="8" rx="2.4"/><rect x="4" y="12.5" width="8" height="8" rx="2.4"/><rect x="14" y="12.5" width="8" height="8" rx="2.4"/></svg>Apps</button>
   </nav>
-<div class="sheet-shade" id="tempShade" hidden></div>
-<section class="temp-sheet" id="tempSheet" role="dialog" aria-label="Temperature history" aria-hidden="true">
-  <div class="sheet-head" id="tempHead"><span>Temperature</span><button type="button" id="tempDone">Done</button></div>
-  <div class="temp-body">
-    <div class="segmented" id="tempRange" role="radiogroup" aria-label="Time range">
+<div class="sheet-shade" id="histShade" hidden></div>
+<section class="hist-sheet" id="histSheet" role="dialog" aria-label="History" aria-hidden="true">
+  <div class="sheet-head" id="histHead"><span id="histTitle"></span><button type="button" id="histDone">Done</button></div>
+  <div class="hist-body" id="histBody">
+    <div class="segmented" id="histRange" role="radiogroup" aria-label="Time range">
       <button type="button" role="radio" data-hours="1" aria-checked="false">1H</button>
       <button type="button" role="radio" data-hours="6" aria-checked="true">6H</button>
       <button type="button" role="radio" data-hours="24" aria-checked="false">24H</button>
     </div>
-    <div class="temp-readout">
-      <div class="temp-big" id="tempBig">—</div>
-      <div class="temp-when" id="tempWhen">Now</div>
+    <div class="hist-readout">
+      <div class="hist-big" id="histBig">—</div>
+      <div class="hist-when" id="histWhen">Now</div>
     </div>
-    <div class="card temp-chart-card">
-      <svg class="temp-chart" id="tempChart" role="img" aria-label="Battery temperature graph"></svg>
-      <div class="temp-empty" id="tempEmpty" hidden></div>
+    <div class="card hist-chart-card">
+      <svg class="hist-chart" id="histChart" role="img"></svg>
+      <div class="hist-empty" id="histEmpty" hidden></div>
     </div>
-    <div class="list temp-story" id="tempStory" hidden></div>
-    <div class="section-foot">Each bar runs from the lowest to the highest reading in its slot. Battery temperature, from the log your Mac keeps itself (about one reading a minute).</div>
+    <div class="list hist-story" id="histStory" hidden></div>
+    <div class="section-foot" id="histFoot"></div>
   </div>
 </section>
 <input class="live-input" id="liveInput" aria-label="Type directly on your Mac"
@@ -1774,7 +1775,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!unlocked || $("app").hidden || !TAB_ORDER.includes(currentTab)) return false;  // Settings has its Back button
     const body = document.body.classList;
     if (body.contains("landscape-full") || body.contains("apps-full") || editingApps || drag) return false;
-    if (document.querySelector(".key-sheet.open, .temp-sheet.open, .dock-shade, .app-zoom")) return false;
+    if (document.querySelector(".key-sheet.open, .hist-sheet.open, .dock-shade, .app-zoom")) return false;
     const t = e.target;
     if (t.closest("input, select, textarea, .qs-track, .screen-tools, .mac-dock")) return false;
     if (currentTab === "screen" && t.closest("#screenControls")) {
@@ -3408,64 +3409,19 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   });
   showHaptics();
 
-  // ---------- Temperature history: tap the Temperature tile ----------
+  // ---------- History: tap the Battery or Temperature tile ----------
   // The Mac reads its own power log (about one battery reading a minute), so there's history
-  // from the first tap. Drag a finger along the graph to read any moment, like in Weather.
-  let tempPoints = null, tempFetchedAt = 0, tempFailed = false, tempHours = 6, tempGraph = null, tempTimer = 0, scrubbing = false;
-  try { tempHours = +localStorage.getItem("tempHours") || 6; } catch (e) {}
+  // from the first tap. One sheet shows either; drag a finger along the bars to read any slot.
+  let histKind = "temp", histHours = 6, histGraph = null, histTimer = 0, scrubbing = false;
+  const histData = { temp: { points: null, at: 0, failed: false }, battery: { points: null, at: 0, failed: false } };
+  try { histHours = +(localStorage.getItem("historyHours") || localStorage.getItem("tempHours")) || 6; } catch (e) {}
   const SVG_NS = "http://www.w3.org/2000/svg";
   const clock = (sec, withMinutes = true) =>
     new Date(sec * 1000).toLocaleTimeString([], withMinutes ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" });
   const tempLimit = () => (data && data.maxBatteryTemp) || 40;
   const tempWord = t => t >= tempLimit() ? "Too hot" : t >= tempLimit() - 4 ? "Getting warm" : "Normal";
-  function svgEl(name, attrs, parent) {
-    const el = document.createElementNS(SVG_NS, name);
-    for (const k in attrs) el.setAttribute(k, attrs[k]);
-    if (parent) parent.append(el);
-    return el;
-  }
-  async function loadTempHistory() {
-    try {
-      const res = await fetchWithin(8000, "temp-history?hours=24", { cache: "no-store" });
-      if (!res.ok) throw new Error(res.status);
-      tempPoints = (await res.json()).points || [];
-      tempFailed = false;
-    } catch (e) { tempFailed = !tempPoints; }
-    tempFetchedAt = Date.now();
-    if (!scrubbing) renderTempGraph();  // a finger on the graph keeps its reading
-  }
-  function setTempOpen(open) {
-    const sheet = $("tempSheet"), shade = $("tempShade");
-    sheet.style.removeProperty("--drag");
-    sheet.setAttribute("aria-hidden", !open);
-    clearInterval(tempTimer);
-    if (open) {
-      shade.hidden = false;
-      requestAnimationFrame(() => { shade.classList.add("show"); sheet.classList.add("open"); });
-      renderTempGraph();
-      if (Date.now() - tempFetchedAt > 30000) loadTempHistory();
-      tempTimer = setInterval(loadTempHistory, 60000);
-    } else {
-      shade.classList.remove("show");
-      sheet.classList.remove("open");
-      setTimeout(() => { if (!sheet.classList.contains("open")) shade.hidden = true; }, 350);
-    }
-  }
-  function showTempRange() {
-    document.querySelectorAll("#tempRange button").forEach(b => b.setAttribute("aria-checked", +b.dataset.hours === tempHours));
-  }
-  // The big number: now, or the bar under the finger (its low–high).
-  function showTempReading(bin) {
-    if (!bin) {
-      const t = data && data.batteryTemp != null ? data.batteryTemp : tempPoints && tempPoints.length ? tempPoints[tempPoints.length - 1][1] : null;
-      $("tempBig").textContent = t == null ? "—" : t.toFixed(1) + "°";
-      $("tempWhen").textContent = t == null ? "" : "Now · " + tempWord(t);
-    } else {
-      $("tempBig").textContent = bin.lo.toFixed(1) === bin.hi.toFixed(1) ? bin.hi.toFixed(1) + "°" : `${bin.lo.toFixed(1)}–${bin.hi.toFixed(1)}°`;
-      const end = Math.min(bin.s + bin.size, Date.now() / 1000);
-      $("tempWhen").textContent = `${clock(bin.s).replace(/\s?[AP]\.?M\.?$/i, "")}–${clock(end)}`;
-    }
-  }
+  const tempColor = t => t >= tempLimit() ? "var(--red)" : t >= tempLimit() - 4 ? "var(--amber)" : t >= tempLimit() - 7 ? "#ffcc00" : "var(--green)";
+  const battColor = p => p <= 20 ? "var(--red)" : "var(--green)";
   const spokenMinutes = sec => {
     const m = Math.round(sec / 60);
     return m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`;
@@ -3475,108 +3431,222 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const d = new Date(sec * 1000), today = new Date();
     return (d.toDateString() === today.toDateString() ? "" : "Yesterday ") + clock(sec);
   }
-  // The timeline under the graph, newest first: now, sleeps, the peak and the coolest moment.
-  function renderTempStory(pts, hi, lo) {
-    const box = $("tempStory");
-    box.replaceChildren();
-    if (pts.length < 2) { box.hidden = true; return; }
-    box.hidden = false;
-    const last = pts[pts.length - 1], limit = tempLimit();
-    const before = pts.find(p => p[0] >= last[0] - 900) || pts[0];
-    const change = (data && data.batteryTemp != null ? data.batteryTemp : last[1]) - before[1];
-    const trend = change > .5 ? "rising" : change < -.5 ? "cooling down" : "steady";
-    const color = t => t >= limit ? "var(--red)" : t >= limit - 4 ? "var(--amber)" : t >= limit - 7 ? "#ffcc00" : "var(--green)";
-    // "Now" is the live reading, same as the big number above (the log can lag a minute).
-    const nowT = data && data.batteryTemp != null ? data.batteryTemp : last[1];
-    const events = [[last[0] + 1, "Now", `${nowT.toFixed(1)}°, ${trend}`, color(nowT)]];
+  // Gaps of over 5 minutes in the log are times the Mac slept.
+  function sleepEvents(pts) {
+    const events = [];
     for (let i = 1; i < pts.length; i++) {
       const gap = pts[i][0] - pts[i - 1][0];
       if (gap <= 300) continue;
-      events.push([pts[i][0], eventTime(pts[i][0]), "Woke up", "var(--blue)"]);
-      events.push([pts[i - 1][0], eventTime(pts[i - 1][0]), `Mac slept for ${spokenMinutes(gap)}`, "var(--gray)"]);
+      events.push([pts[i][0], "Woke up", "var(--blue)"]);
+      events.push([pts[i - 1][0], `Mac slept for ${spokenMinutes(gap)}`, "var(--gray)"]);
     }
-    if (hi[1] - lo[1] >= .3) {
-      events.push([hi[0], eventTime(hi[0]), `Peaked at ${hi[1].toFixed(1)}°`, color(hi[1])]);
-      events.push([lo[0], eventTime(lo[0]), `Coolest, ${lo[1].toFixed(1)}°`, color(lo[1])]);
+    return events;
+  }
+
+  // What differs between the two: where the readings come from, how they read and look,
+  // and what the timeline tells.
+  const HISTORY = {
+    temp: {
+      title: "Temperature", url: "temp-history", chartLabel: "Battery temperature graph",
+      foot: "Each bar runs from the lowest to the highest reading in its slot. Battery temperature, from the log your Mac keeps itself (about one reading a minute).",
+      live: () => data && data.batteryTemp != null ? data.batteryTemp : null,
+      fmt: v => v.toFixed(1) + "°",
+      range: (lo, hi) => lo.toFixed(1) === hi.toFixed(1) ? hi.toFixed(1) + "°" : `${lo.toFixed(1)}–${hi.toFixed(1)}°`,
+      nowText: t => tempWord(t),
+      // The readings with a little room; the turn-off limit joins in once it's near.
+      scale(lo, hi) {
+        const limit = tempLimit();
+        let yMin = Math.floor(lo - .5), yMax = Math.ceil(hi + .5);
+        if (yMax - yMin < 4) { const mid = (yMax + yMin) / 2; yMin = Math.floor(mid - 2); yMax = yMin + 4; }
+        const showLimit = hi >= limit - 4;
+        if (showLimit) yMax = Math.max(yMax, limit + 1);
+        const step = [1, 2, 5, 10].find(s => (yMax - yMin) / s <= 4);
+        return { yMin: Math.floor(yMin / step) * step, yMax: Math.ceil(yMax / step) * step, step, label: t => t + "°",
+                 limit: showLimit ? { at: limit, text: `Turns off at ${limit}°` } : null };
+      },
+      // Coloured by height, like the tile's scale (green, yellow, orange, red).
+      gradient: y => { const limit = tempLimit(); return { y1: y(20), y2: y(20 + (limit - 20) * 1.25),
+        stops: [[0, "var(--green)"], [.62, "#ffcc00"], [.8, "var(--amber)"], [1, "var(--red)"]] }; },
+      story(pts, hi, lo) {
+        const last = pts[pts.length - 1], nowT = this.live() ?? last[1];
+        const before = pts.find(p => p[0] >= last[0] - 900) || pts[0];
+        const change = nowT - before[1];
+        const trend = change > .5 ? "rising" : change < -.5 ? "cooling down" : "steady";
+        const events = [[last[0] + 1, `${nowT.toFixed(1)}°, ${trend}`, tempColor(nowT), "Now"], ...sleepEvents(pts)];
+        if (hi[1] - lo[1] >= .3) {
+          events.push([hi[0], `Peaked at ${hi[1].toFixed(1)}°`, tempColor(hi[1])]);
+          events.push([lo[0], `Coolest, ${lo[1].toFixed(1)}°`, tempColor(lo[1])]);
+        }
+        return events;
+      },
+    },
+    battery: {
+      title: "Battery", url: "battery-history", chartLabel: "Battery charge graph",
+      foot: "Each bar runs from the lowest to the highest charge in its slot; green behind the bars means plugged in. From the log your Mac keeps itself (about one reading a minute).",
+      live: () => data && data.battery != null ? data.battery : null,
+      fmt: v => Math.round(v) + "%",
+      range: (lo, hi) => Math.round(lo) === Math.round(hi) ? Math.round(hi) + "%" : `${Math.round(lo)}–${Math.round(hi)}%`,
+      nowText: () => !data ? "" : data.charging ? "Charging" : data.onBattery ? "On battery" : data.charged || data.battery >= 99 ? "Plugged in · full" : "Plugged in",
+      scale: () => ({ yMin: 0, yMax: 100, step: 25, label: t => t % 50 ? "" : t + "%", limit: null }),
+      // Red at 20% and below, green above, as on the iPhone.
+      gradient: y => ({ y1: y(0), y2: y(100), stops: [[0, "var(--red)"], [.2, "var(--red)"], [.2, "var(--green)"], [1, "var(--green)"]] }),
+      story(pts, hi, lo) {
+        const last = pts[pts.length - 1], nowP = this.live() ?? last[1];
+        const state = data && data.charging ? "charging" : data && !data.onBattery ? (nowP >= 99 ? "full" : "plugged in") : "on battery";
+        const events = [[last[0] + 1, `${Math.round(nowP)}%, ${state}`, battColor(nowP), "Now"], ...sleepEvents(pts)];
+        for (let i = 1; i < pts.length; i++) {
+          const [t, p, plugged] = pts[i], was = pts[i - 1];
+          if (plugged && !was[2]) events.push([t, `Plugged in at ${p}%`, "var(--green)"]);
+          if (!plugged && was[2]) events.push([t, `Unplugged at ${p}%`, "var(--gray)"]);
+          if (p >= 100 && was[1] < 100) events.push([t, "Fully charged", "var(--green)"]);
+        }
+        if (hi[1] - lo[1] >= 2 && lo[1] < nowP) events.push([lo[0], `Lowest, ${lo[1]}%`, battColor(lo[1])]);
+        return events;
+      },
+    },
+  };
+
+  function svgEl(name, attrs, parent) {
+    const el = document.createElementNS(SVG_NS, name);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    if (parent) parent.append(el);
+    return el;
+  }
+  async function loadHistory(kind = histKind) {
+    const h = histData[kind];
+    try {
+      const res = await fetchWithin(8000, HISTORY[kind].url + "?hours=24", { cache: "no-store" });
+      if (!res.ok) throw new Error(res.status);
+      h.points = (await res.json()).points || [];
+      h.failed = false;
+    } catch (e) { h.failed = !h.points; }
+    h.at = Date.now();
+    if (!scrubbing && kind === histKind) renderHistory();  // a finger on the graph keeps its reading
+  }
+  function setHistoryOpen(open, kind) {
+    const sheet = $("histSheet"), shade = $("histShade");
+    sheet.style.removeProperty("--drag");
+    sheet.setAttribute("aria-hidden", !open);
+    clearInterval(histTimer);
+    if (open) {
+      histKind = kind;
+      const k = HISTORY[kind];
+      $("histTitle").textContent = k.title;
+      sheet.setAttribute("aria-label", k.title + " history");
+      $("histChart").setAttribute("aria-label", k.chartLabel);
+      $("histFoot").textContent = k.foot;
+      $("histBody").scrollTop = 0;
+      shade.hidden = false;
+      requestAnimationFrame(() => { shade.classList.add("show"); sheet.classList.add("open"); });
+      renderHistory();
+      if (Date.now() - histData[kind].at > 30000) loadHistory(kind);
+      histTimer = setInterval(() => loadHistory(kind), 60000);
+    } else {
+      shade.classList.remove("show");
+      sheet.classList.remove("open");
+      setTimeout(() => { if (!sheet.classList.contains("open")) shade.hidden = true; }, 350);
     }
-    events.sort((a, b) => b[0] - a[0]);
-    for (const [, when, text, dot] of events.slice(0, 8)) {
+  }
+  function showHistoryRange() {
+    document.querySelectorAll("#histRange button").forEach(b => b.setAttribute("aria-checked", +b.dataset.hours === histHours));
+  }
+  // The big number: now, or the bar under the finger (its low–high).
+  function showHistoryReading(bin) {
+    const k = HISTORY[histKind], pts = histData[histKind].points;
+    if (!bin) {
+      const v = k.live() ?? (pts && pts.length ? pts[pts.length - 1][1] : null);
+      $("histBig").textContent = v == null ? "—" : k.fmt(v);
+      $("histWhen").textContent = v == null ? "" : "Now · " + k.nowText(v);
+    } else {
+      $("histBig").textContent = k.range(bin.lo, bin.hi);
+      const end = Math.min(bin.s + bin.size, Date.now() / 1000);
+      $("histWhen").textContent = `${clock(bin.s).replace(/\s?[AP]\.?M\.?$/i, "")}–${clock(end)}` + (bin.plugged ? " · plugged in" : "");
+    }
+  }
+  // The timeline under the graph, newest first, at most 8 lines.
+  function renderHistoryStory(pts, hi, lo) {
+    const box = $("histStory");
+    box.replaceChildren();
+    if (pts.length < 2) { box.hidden = true; return; }
+    box.hidden = false;
+    const events = HISTORY[histKind].story(pts, hi, lo).sort((a, b) => b[0] - a[0]);
+    for (const [t, text, dot, when] of events.slice(0, 8)) {
       const row = document.createElement("div");
       row.className = "row";
       const d = document.createElement("i"); d.style.background = dot;
-      const t = document.createElement("span"); t.className = "title"; t.textContent = text;
-      const v = document.createElement("span"); v.className = "value"; v.textContent = when;
-      row.append(d, t, v);
+      const title = document.createElement("span"); title.className = "title"; title.textContent = text;
+      const v = document.createElement("span"); v.className = "value"; v.textContent = when || eventTime(t);
+      row.append(d, title, v);
       box.append(row);
     }
   }
   // Range bars: the readings grouped into bins (5 min for 1H, 15 min for 6H, 1 hour for 24H),
   // each bar running from that bin's lowest to highest reading, coloured by height.
-  function renderTempGraph() {
-    showTempRange();
-    showTempReading(null);
-    const svg = $("tempChart");
+  function renderHistory() {
+    const k = HISTORY[histKind], h = histData[histKind];
+    showHistoryRange();
+    showHistoryReading(null);
+    const svg = $("histChart");
     svg.replaceChildren();
-    tempGraph = null;
-    const size = { 1: 300, 6: 900, 24: 3600 }[tempHours];
+    histGraph = null;
+    const size = { 1: 300, 6: 900, 24: 3600 }[histHours];
     const now = Date.now() / 1000, offset = new Date().getTimezoneOffset() * 60;  // bins on round local times
-    const from = Math.floor((now - tempHours * 3600 - offset) / size) * size + offset;
+    const from = Math.floor((now - histHours * 3600 - offset) / size) * size + offset;
     const n = Math.ceil((now - from) / size), to = from + n * size;
-    const pts = (tempPoints || []).filter(p => p[0] >= from);
-    const empty = $("tempEmpty");
+    const pts = (h.points || []).filter(p => p[0] >= from);
+    const empty = $("histEmpty");
     empty.hidden = pts.length > 1;
-    empty.textContent = tempFailed ? "Couldn't load the history from your Mac." : !tempPoints ? "Loading…" : "No readings for this time yet.";
+    empty.textContent = h.failed ? "Couldn't load the history from your Mac." : !h.points ? "Loading…" : "No readings for this time yet.";
     let hi = pts[0], lo = pts[0];
     for (const p of pts) { if (p[1] > hi[1]) hi = p; if (p[1] < lo[1]) lo = p; }
-    renderTempStory(pts, hi, lo);
+    renderHistoryStory(pts, hi, lo);
     if (pts.length < 2) return;
 
     const bins = [];
-    for (let i = 0; i < n; i++) bins.push({ s: from + i * size, size, lo: Infinity, hi: -Infinity, count: 0 });
+    for (let i = 0; i < n; i++) bins.push({ s: from + i * size, size, lo: Infinity, hi: -Infinity, count: 0, plugged: false });
     for (const p of pts) {
       const b = bins[Math.min(n - 1, Math.floor((p[0] - from) / size))];
       b.lo = Math.min(b.lo, p[1]); b.hi = Math.max(b.hi, p[1]); b.count++;
+      if (p[2]) b.plugged = true;
     }
 
-    // Scale: the readings with a little room; the turn-off limit joins in once it's near.
-    const limit = tempLimit();
-    let yMin = Math.floor(lo[1] - .5), yMax = Math.ceil(hi[1] + .5);
-    if (yMax - yMin < 4) { const mid = (yMax + yMin) / 2; yMin = Math.floor(mid - 2); yMax = yMin + 4; }
-    const showLimit = hi[1] >= limit - 4;
-    if (showLimit) yMax = Math.max(yMax, limit + 1);
-    const step = [1, 2, 5, 10].find(s => (yMax - yMin) / s <= 4);
-    yMin = Math.floor(yMin / step) * step; yMax = Math.ceil(yMax / step) * step;
-
+    const sc = k.scale(lo[1], hi[1]);
     const W = svg.getBoundingClientRect().width || 320, H = 240;
     const L = 0, R = W - 34, T = 6, B = H - 24;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const x = s => L + (s - from) / (to - from) * (R - L);
-    const y = t => B - (t - yMin) / (yMax - yMin) * (B - T);
+    const y = v => B - (v - sc.yMin) / (sc.yMax - sc.yMin) * (B - T);
+    const slot = (R - L) / n, bw = Math.min(14, slot * .62);
 
-    // Grid: degrees on the right, times along the bottom.
-    for (let t = yMin; t <= yMax + 1e-9; t += step) {
-      svgEl("line", { class: "grid", x1: L, x2: R, y1: y(t), y2: y(t) }, svg);
-      svgEl("text", { x: R + 8, y: y(t) + 4 }, svg).textContent = t + "°";
+    // Plugged in: a soft green band behind those bars (one band per stretch).
+    for (let i = 0; i < n; i++) {
+      if (!bins[i].plugged || (i && bins[i - 1].plugged)) continue;
+      let j = i;
+      while (j + 1 < n && bins[j + 1].plugged) j++;
+      svgEl("rect", { class: "plugged", x: x(bins[i].s) + 1, y: T, width: x(bins[j].s) + slot - x(bins[i].s) - 2, height: B - T, rx: 8 }, svg);
     }
-    const tickEvery = { 1: 900, 6: 3600, 24: 6 * 3600 }[tempHours];
+    // Grid: values on the right, times along the bottom.
+    for (let v = sc.yMin; v <= sc.yMax + 1e-9; v += sc.step) {
+      svgEl("line", { class: "grid", x1: L, x2: R, y1: y(v), y2: y(v) }, svg);
+      svgEl("text", { x: R + 8, y: y(v) + 4 }, svg).textContent = sc.label(v);
+    }
+    const tickEvery = { 1: 900, 6: 3600, 24: 6 * 3600 }[histHours];
     for (let s = Math.ceil((from - offset) / tickEvery) * tickEvery + offset; s < to; s += tickEvery) {
       if (x(s) < 14 || x(s) > R - 14) continue;
-      const label = tempHours === 1 ? clock(s).replace(/\s?[AP]\.?M\.?$/i, "") : clock(s, false);
+      const label = histHours === 1 ? clock(s).replace(/\s?[AP]\.?M\.?$/i, "") : clock(s, false);
       svgEl("text", { x: x(s), y: H - 6, "text-anchor": "middle" }, svg).textContent = label;
     }
-    if (showLimit) {
-      svgEl("line", { class: "limit", x1: L, x2: R, y1: y(limit), y2: y(limit) }, svg);
-      svgEl("text", { class: "limit-label", x: L + 4, y: y(limit) - 6 }, svg).textContent = `Turns off at ${limit}°`;
+    if (sc.limit) {
+      svgEl("line", { class: "limit", x1: L, x2: R, y1: y(sc.limit.at), y2: y(sc.limit.at) }, svg);
+      svgEl("text", { class: "limit-label", x: L + 4, y: y(sc.limit.at) - 6 }, svg).textContent = sc.limit.text;
     }
 
-    // One colour scale for every bar, set by height, like the tile's scale (green, yellow, orange, red).
-    const defs = svgEl("defs", {}, svg);
-    const grad = svgEl("linearGradient", { id: "tempGrad", gradientUnits: "userSpaceOnUse", x1: 0, x2: 0,
-                                           y1: y(20), y2: y(20 + (limit - 20) * 1.25) }, defs);
-    for (const [o, c] of [[0, "var(--green)"], [.62, "#ffcc00"], [.8, "var(--amber)"], [1, "var(--red)"]])
-      svgEl("stop", { offset: o, style: `stop-color:${c}` }, grad);
+    // One colour scale for every bar, set by height.
+    const g = k.gradient(y);
+    const grad = svgEl("linearGradient", { id: "histGrad", gradientUnits: "userSpaceOnUse", x1: 0, x2: 0, y1: g.y1, y2: g.y2 },
+                       svgEl("defs", {}, svg));
+    for (const [o, c] of g.stops) svgEl("stop", { offset: o, style: `stop-color:${c}` }, grad);
 
-    const slot = (R - L) / n, bw = Math.min(14, slot * .62);
     for (const b of bins) {
       const cx = x(b.s) + slot / 2;
       if (!b.count) {
@@ -3587,13 +3657,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       // Steady bins still show as a round dot.
       let top = y(b.hi), bottom = y(b.lo);
       if (bottom - top < bw) { const mid = (top + bottom) / 2; top = mid - bw / 2; bottom = mid + bw / 2; }
-      b.el = svgEl("rect", { class: "bar", x: cx - bw / 2, y: top, width: bw, height: bottom - top, rx: bw / 2, fill: "url(#tempGrad)" }, svg);
+      b.el = svgEl("rect", { class: "bar", x: cx - bw / 2, y: top, width: bw, height: bottom - top, rx: bw / 2, fill: "url(#histGrad)" }, svg);
     }
-    tempGraph = { bins: bins.filter(b => b.count), x, slot, svg, left: () => svg.getBoundingClientRect().left, scale: () => W / svg.getBoundingClientRect().width };
+    histGraph = { bins: bins.filter(b => b.count), x, slot, svg, left: () => svg.getBoundingClientRect().left, scale: () => W / svg.getBoundingClientRect().width };
   }
   // Scrubbing: the bar nearest the finger stands out, the rest fade.
-  function scrubTemp(e) {
-    const g = tempGraph;
+  function scrubHistory(e) {
+    const g = histGraph;
     if (!g || !g.bins.length) return;
     const px = (e.clientX - g.left()) * g.scale();
     let best = g.bins[0];
@@ -3605,54 +3675,56 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (g.picked) tick();
       g.picked = best;
     }
-    showTempReading(best);
+    showHistoryReading(best);
   }
   function endScrub() {
     scrubbing = false;
-    const g = tempGraph;
+    const g = histGraph;
     if (!g) return;
     g.svg.classList.remove("picking");
     if (g.picked) g.picked.el.classList.remove("picked");
     g.picked = null;
-    showTempReading(null);
+    showHistoryReading(null);
   }
-  const chart = $("tempChart");
-  chart.addEventListener("pointerdown", e => { try { chart.setPointerCapture(e.pointerId); } catch (err) {} scrubbing = true; scrubTemp(e); });
-  chart.addEventListener("pointermove", e => { if (chart.hasPointerCapture(e.pointerId)) scrubTemp(e); });
+  const chart = $("histChart");
+  chart.addEventListener("pointerdown", e => { try { chart.setPointerCapture(e.pointerId); } catch (err) {} scrubbing = true; scrubHistory(e); });
+  chart.addEventListener("pointermove", e => { if (chart.hasPointerCapture(e.pointerId)) scrubHistory(e); });
   for (const ev of ["pointerup", "pointercancel"]) chart.addEventListener(ev, endScrub);
 
-  $("tempTile").addEventListener("click", () => { if (!document.querySelector("main.waiting")) { tick(); setTempOpen(true); } });
-  $("tempTile").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTempOpen(true); } });
-  addTickPad($("tempTile"));
-  $("tempDone").addEventListener("click", () => setTempOpen(false));
-  $("tempShade").addEventListener("click", () => setTempOpen(false));
-  document.addEventListener("keydown", e => { if (e.key === "Escape" && $("tempSheet").classList.contains("open")) setTempOpen(false); });
-  document.querySelectorAll("#tempRange button").forEach(b => b.addEventListener("click", () => {
-    tempHours = +b.dataset.hours;
-    try { localStorage.setItem("tempHours", tempHours); } catch (e) {}
+  for (const [tile, kind] of [["batteryTile", "battery"], ["tempTile", "temp"]]) {
+    $(tile).addEventListener("click", () => { if (!document.querySelector("main.waiting")) { tick(); setHistoryOpen(true, kind); } });
+    $(tile).addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setHistoryOpen(true, kind); } });
+    addTickPad($(tile));
+  }
+  $("histDone").addEventListener("click", () => setHistoryOpen(false));
+  $("histShade").addEventListener("click", () => setHistoryOpen(false));
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && $("histSheet").classList.contains("open")) setHistoryOpen(false); });
+  document.querySelectorAll("#histRange button").forEach(b => b.addEventListener("click", () => {
+    histHours = +b.dataset.hours;
+    try { localStorage.setItem("historyHours", histHours); } catch (e) {}
     tick();
-    renderTempGraph();
+    renderHistory();
   }));
-  addEventListener("resize", () => { if ($("tempSheet").classList.contains("open")) renderTempGraph(); });
+  addEventListener("resize", () => { if ($("histSheet").classList.contains("open")) renderHistory(); });
   // Pull the sheet down by its top to close it.
   let sheetDrag = null;
-  $("tempHead").addEventListener("pointerdown", e => {
+  $("histHead").addEventListener("pointerdown", e => {
     if (e.target.closest("button")) return;
     sheetDrag = { y: e.clientY, t: performance.now(), dy: 0 };
-    $("tempHead").setPointerCapture(e.pointerId);
-    $("tempSheet").classList.add("dragging");
+    $("histHead").setPointerCapture(e.pointerId);
+    $("histSheet").classList.add("dragging");
   });
-  $("tempHead").addEventListener("pointermove", e => {
+  $("histHead").addEventListener("pointermove", e => {
     if (!sheetDrag) return;
     sheetDrag.dy = Math.max(0, e.clientY - sheetDrag.y);
-    $("tempSheet").style.setProperty("--drag", sheetDrag.dy + "px");
+    $("histSheet").style.setProperty("--drag", sheetDrag.dy + "px");
   });
-  for (const ev of ["pointerup", "pointercancel"]) $("tempHead").addEventListener(ev, () => {
+  for (const ev of ["pointerup", "pointercancel"]) $("histHead").addEventListener(ev, () => {
     if (!sheetDrag) return;
     const fast = sheetDrag.dy / (performance.now() - sheetDrag.t) > .5;
-    $("tempSheet").classList.remove("dragging");
-    if (sheetDrag.dy > 120 || (fast && sheetDrag.dy > 30)) setTempOpen(false);
-    else $("tempSheet").style.removeProperty("--drag");
+    $("histSheet").classList.remove("dragging");
+    if (sheetDrag.dy > 120 || (fast && sheetDrag.dy > 30)) setHistoryOpen(false);
+    else $("histSheet").style.removeProperty("--drag");
     sheetDrag = null;
   });
 
