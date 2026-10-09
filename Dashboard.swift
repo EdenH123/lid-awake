@@ -614,27 +614,31 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   #tab-apps:not(:has(.app-grid.editing)) #appsFoot { display: none; }
   #tab-apps:not(.help-open) #appsHelp, #tab-apps:has(.app-grid.editing) #appsHelp { display: none; }
   #tab-apps:has(.app-grid.focusing) :is(#appsFoot, #appsHelp, #openedBar) { opacity: 0; }
-  /* The how-to: a pane of frosted glass (like the tab bar) that drops from the ? button over the
-     page, with a soft round icon on each row. Tapping anywhere else closes it. */
-  .apps-help {
-    position: fixed; z-index: 20; top: var(--help-top, 100px); right: 16px; width: min(360px, calc(100vw - 32px));
+  /* How-to panes (Apps and Screen): frosted glass, like the tab bar, that drops from the ? button
+     over the page, with a soft round icon on each row. Tapping anywhere else closes it. */
+  .glass-tips {
+    position: fixed; z-index: 20; top: 100px; right: 16px; width: min(360px, calc(100vw - 32px));
+    max-height: calc(100vh - 140px); overflow-y: auto; overscroll-behavior: contain;
     display: grid; gap: 2px; padding: 8px 16px; border-radius: 26px; isolation: isolate;
     background: var(--glass);
     box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim), inset 0 0 0 .5px var(--glass-edge);
     -webkit-backdrop-filter: blur(28px) saturate(190%) brightness(1.04); backdrop-filter: blur(28px) saturate(190%) brightness(1.04);
-    transform-origin: calc(100% - 22px) -10px; animation: help-pop .32s cubic-bezier(.32,.72,0,1);
+    animation: help-pop .32s cubic-bezier(.32,.72,0,1);
   }
-  .apps-help::before {  /* the sheen: light catching the upper half of the glass */
+  .glass-tips::before {  /* the sheen: light catching the upper half of the glass */
     content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
     background: linear-gradient(180deg, var(--glass-sheen) 0%, transparent 55%); opacity: .55;
   }
   @keyframes help-pop { from { opacity: 0; transform: scale(.88); } }
-  @media (prefers-reduced-motion: reduce) { .apps-help { animation: none; } }
-  .apps-help .tip { display: flex; align-items: center; gap: 14px; padding: 9px 0; font-size: 15px; line-height: 1.25; }
-  .apps-help .tip small { display: block; font-size: 13px; color: var(--muted); }
-  .apps-help .tip-icon { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgba(120,120,128,.2); }
-  .apps-help svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  .apps-help svg .fill { fill: currentColor; stroke: none; }
+  @media (prefers-reduced-motion: reduce) { .glass-tips { animation: none; } }
+  .glass-tips .tips-head { font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); padding: 8px 0 2px; }
+  .glass-tips .tip { display: flex; align-items: center; gap: 14px; padding: 9px 0; font-size: 15px; line-height: 1.25; }
+  .glass-tips .tip small { display: block; font-size: 13px; color: var(--muted); }
+  .glass-tips .tip-icon { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgba(120,120,128,.2); }
+  .glass-tips .tip-icon.txt { font-size: 13px; font-weight: 700; }
+  .glass-tips svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .glass-tips svg .fill { fill: currentColor; stroke: none; }
+  body.landscape-full #helpPanel { display: none !important; }
   .app-grid.focusing .app.focused > * { opacity: 0; transition: opacity .2s ease; }  /* the floating copy takes its place */
   .app-zoom {
     position: fixed; z-index: 40; pointer-events: none; transform-origin: center;
@@ -715,9 +719,6 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .tool.on, .tool[aria-expanded="true"] { background: var(--blue); color: #fff; }
   .tool:active { opacity: .6; }
   .tool .hd { font-size: 11px; font-weight: 800; letter-spacing: .03em; border: 1.5px solid currentColor; border-radius: 4px; padding: 1px 4px; line-height: 1.1; }
-  .help-card { background: var(--card); border-radius: 22px; padding: 12px 16px; display: grid; gap: 8px; font-size: 14px; line-height: 1.38; color: var(--muted); }
-  .help-card p { margin: 0; }
-  .help-card b { color: var(--text); font-weight: 600; margin-right: 4px; }
   .warn-notice { color: var(--amber); font-size: 14px; }
   /* Keys: a sheet that slides up from the bottom; the Mac screen stays in view above it. */
   .key-sheet {
@@ -1043,7 +1044,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <h2>No apps yet</h2>
       <p>On your Mac, click the Lid Awake icon in the menu bar, then choose Apps on phone → Add apps…</p>
     </div>
-    <div class="apps-help" id="appsHelp" hidden>
+    <div class="glass-tips" id="appsHelp" hidden>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V6a2 2 0 0 1 4 0v5"/><path d="M13 9.5a2 2 0 0 1 4 .5v3a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4.2-2.3L4 13a1.6 1.6 0 0 1 2.6-1.8L9 14"/></svg></span><span>Tap<small>Opens the app on your Mac</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/></svg></span><span>Slide up<small>Opens it and shows it on Screen</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Rearrange your apps, or quit an open one</small></span></div>
@@ -1163,12 +1164,17 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       </div>
       <div class="qs-caption" id="qsCaption"></div>
     </div>
-    <div class="help-card" id="helpPanel" hidden>
-      <p><b>On the Mac screen</b> Tap = click · Double-tap = double-click · Hold = right-click · Drag = scroll · Pinch = zoom (on this phone only)</p>
-      <p><b>Trackpad, 1 finger</b> Move · tap = click · tap twice, then hold and slide = drag</p>
-      <p><b>2 fingers</b> Slide = scroll · tap = right-click</p>
-      <p><b>3 fingers</b> Swipe ← → = switch desktop · ↑ = Mission Control · ↓ = app windows</p>
-      <p><b>Type</b> uses the iPhone keyboard. <b>Keys</b> has esc, arrows, ⌘ and more.</p>
+    <div class="glass-tips" id="helpPanel" hidden>
+      <div class="tips-head">On the Mac screen</div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V6a2 2 0 0 1 4 0v5"/><path d="M13 9.5a2 2 0 0 1 4 .5v3a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4.2-2.3L4 13a1.6 1.6 0 0 1 2.6-1.8L9 14"/></svg></span><span>Tap<small>Click · tap twice to double-click</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Right-click</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span><span>Drag<small>Scroll</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10V4h6M20 14v6h-6M4 4l6 6M20 20l-6-6"/></svg></span><span>Pinch<small>Zoom in on this phone only</small></span></div>
+      <div class="tips-head">Trackpad</div>
+      <div class="tip"><span class="tip-icon txt">1</span><span>1 finger<small>Move · tap to click · tap twice, then hold and slide to drag</small></span></div>
+      <div class="tip"><span class="tip-icon txt">2</span><span>2 fingers<small>Slide to scroll · tap to right-click</small></span></div>
+      <div class="tip"><span class="tip-icon txt">3</span><span>3 fingers<small>← → switch desktop · ↑ Mission Control · ↓ app windows</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span><span>Type and Keys<small>Type uses the iPhone keyboard · Keys has esc, arrows, ⌘ and more</small></span></div>
     </div>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="notice warn-notice" id="hint" hidden></div>
@@ -1758,18 +1764,31 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     renderFaceIDRow();
   }
   $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
+  // A glass how-to pane drops from its ? button: below it if it fits above the tab bar, else above it.
+  function placeTips(pane, btn) {
+    const r = btn.getBoundingClientRect(), h = pane.offsetHeight, w = pane.offsetWidth;
+    const right = Math.max(12, innerWidth - r.right - 4), left = innerWidth - right - w;
+    const below = r.bottom + 10 + h <= innerHeight - 96;
+    pane.style.top = (below ? r.bottom + 10 : Math.max(12, r.top - 10 - h)) + "px";
+    pane.style.right = right + "px";
+    pane.style.transformOrigin = `${r.left + r.width / 2 - left}px ${below ? -10 : h + 10}px`;
+  }
   function setAppsHelp(open) {
-    if (open) $("appsHelp").style.setProperty("--help-top", $("appsHelpBtn").getBoundingClientRect().bottom + 10 + "px");
     $("tab-apps").classList.toggle("help-open", open);
     $("appsHelpBtn").setAttribute("aria-expanded", open);
+    if (open) placeTips($("appsHelp"), $("appsHelpBtn"));
   }
   $("appsHelpBtn").addEventListener("click", () => { tick(); setAppsHelp(!$("tab-apps").classList.contains("help-open")); });
-  // The glass pane floats over the page: a touch anywhere else (or scrolling) puts it away, and
-  // that touch only closes it (it doesn't also open the app under the finger), like an iPhone popover.
+  // The panes float over the page: a touch anywhere else (or scrolling) puts them away, and that
+  // touch only closes (it doesn't also open an app or click on the Mac), like an iPhone popover.
   document.addEventListener("pointerdown", e => {
-    if (!$("tab-apps").classList.contains("help-open") || e.target.closest("#appsHelp, #appsHelpBtn")) return;
-    setAppsHelp(false);
+    const apps = $("tab-apps").classList.contains("help-open") && !e.target.closest("#appsHelp, #appsHelpBtn");
+    const screen = !$("helpPanel").hidden && !e.target.closest("#helpPanel, #helpBtn");
+    if (!apps && !screen) return;
+    if (apps) setAppsHelp(false);
+    if (screen) setScreenHelp(false);
     if (e.target.closest(".tabbar")) return;  // switching pages still works in one tap
+    e.stopPropagation();
     const swallow = ev => { ev.stopPropagation(); ev.preventDefault(); };
     addEventListener("click", swallow, true);
     setTimeout(() => removeEventListener("click", swallow, true), 400);
@@ -1843,6 +1862,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("tab-apps").hidden = name !== "apps";
     $("tab-settings").hidden = name !== "settings";
     if (name !== "apps" && editingApps) setEditing(false);
+    // Help panes belong to their page.
+    if (name !== "apps" && $("tab-apps").classList.contains("help-open")) setAppsHelp(false);
+    if (name !== "screen" && !$("helpPanel").hidden) setScreenHelp(false);
     $("main").classList.toggle("wide", name === "screen");
     try { localStorage.setItem("tab", name); } catch (e) {}
     requestAnimationFrame(() => {
@@ -2855,8 +2877,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     panel.hidden = !open;
     btn.setAttribute("aria-expanded", open);
   }
+  // Help is a glass pane over the page (like the Apps one); it closes the quality slider.
+  function setScreenHelp(open) {
+    if (open) togglePanel($("helpBtn"), $("helpPanel"));
+    else { $("helpPanel").hidden = true; $("helpBtn").setAttribute("aria-expanded", "false"); }
+    if (open) placeTips($("helpPanel"), $("helpBtn"));
+  }
   $("qualityBtn").addEventListener("click", () => togglePanel($("qualityBtn"), $("qualityPanel")));
-  $("helpBtn").addEventListener("click", () => togglePanel($("helpBtn"), $("helpPanel")));
+  $("helpBtn").addEventListener("click", () => setScreenHelp($("helpPanel").hidden));
 
   // ---------- Ask card ----------
   // Our own "are you sure?" card (replaces confirm()). Resolves true for the main button.
