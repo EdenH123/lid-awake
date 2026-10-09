@@ -302,6 +302,28 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   body:has(.hist-sheet.open) { overflow: hidden; }
   body:has(.hist-sheet.open) .tabbar { visibility: hidden; }
   @media (prefers-reduced-motion: reduce) { .hist-sheet, .hist-sheet.open, .sheet-shade { transition: none; } }
+  /* Memory window: a live pressure graph while it's open, four numbers and the apps using the most. */
+  .health-list .row.tappable { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .health-list .row.tappable:active { opacity: .6; }
+  .row-chev { width: 7px; height: 12px; flex: none; margin-left: -4px; fill: none; stroke: var(--faint); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .mem-graph-card { position: relative; padding: 14px 16px 10px; }
+  .mem-graph-head { display: flex; justify-content: space-between; align-items: center; font-size: 15px; color: var(--muted); }
+  .mem-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; font-size: 13px; font-weight: 600;
+    --tint: var(--green); color: var(--tint); background: color-mix(in srgb, var(--tint) 16%, transparent); }
+  .mem-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .mem-pill.warn { --tint: #ffcc00; } .mem-pill.critical { --tint: var(--red); }
+  .mem-graph { display: block; width: 100%; height: 150px; margin-top: 10px; overflow: visible; }
+  .mem-graph .grid { stroke: var(--line); stroke-width: .5; vector-effect: non-scaling-stroke; }
+  #memLine { fill: none; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  #memArea { opacity: .28; stroke: none; }
+  .mem-note { position: absolute; left: 0; right: 0; top: 50%; text-align: center; font-size: 15px; color: var(--muted); }
+  .mem-graph-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .mem-tile { min-height: 0; padding: 12px 16px 14px; }
+  .mem-tile .tile-value { font-size: 28px; margin-top: 2px; }
+  .mem-apps .row { gap: 12px; }
+  .mem-icon { width: 32px; height: 32px; flex: none; border-radius: 8px; }
+  .mem-icon.blank { background: var(--fill); }
+  .mem-apps .title > i { display: block; height: 4px; margin-top: 5px; border-radius: 99px; background: var(--blue); transition: width .5s ease; }
 
   /* Status: Claude plan usage, two meters in one card. */
   .usage { display: grid; gap: 16px; padding: 16px; }
@@ -1010,7 +1032,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="section-head mac-head"><span class="apple-logo" aria-hidden="true">&#xF8FF;</span>Mac</div>
       <div class="list health-list">
         <div class="row"><span class="title">Processor</span><div class="meter"><div id="cpuBar" style="width:0"></div></div><span class="value" id="cpuValue">—</span></div>
-        <div class="row"><span class="title">Memory</span><div class="meter"><div id="memBar" style="width:0"></div></div><span class="value" id="memValue">—</span></div>
+        <div class="row tappable" id="memRow" role="button" tabindex="0" aria-label="Memory, show what's using it"><span class="title">Memory</span><div class="meter"><div id="memBar" style="width:0"></div></div><span class="value" id="memValue">—</span><svg class="row-chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5"/></svg></div>
         <div class="row"><span class="title">Storage</span><div class="meter"><div id="diskBar" style="width:0"></div></div><span class="value" id="diskValue">—</span></div>
         <div class="row plain"><span class="title">Heat</span><span class="value" id="thermal">—</span></div>
         <div class="row plain"><span class="title">Running</span><span class="value" id="uptimeValue">—</span></div>
@@ -1259,6 +1281,28 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     </div>
     <div class="list hist-story" id="histStory" hidden></div>
     <div class="section-foot" id="histFoot"></div>
+  </div>
+</section>
+<section class="hist-sheet" id="memSheet" role="dialog" aria-label="Memory" aria-hidden="true">
+  <div class="sheet-head" id="memHead"><span>Memory</span><button type="button" id="memDone">Done</button></div>
+  <div class="hist-body">
+    <div class="card mem-graph-card">
+      <div class="mem-graph-head"><span>Memory pressure · live</span><span class="mem-pill" id="memPill">—</span></div>
+      <svg class="mem-graph" viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="Memory pressure, last 2 minutes">
+        <line class="grid" x1="0" x2="300" y1="30" y2="30"/><line class="grid" x1="0" x2="300" y1="60" y2="60"/><line class="grid" x1="0" x2="300" y1="90" y2="90"/>
+        <path id="memArea"/><path id="memLine"/>
+      </svg>
+      <div class="mem-note" id="memNote">Measuring…</div>
+      <div class="mem-graph-foot"><span>2 min ago</span><span>now</span></div>
+    </div>
+    <div class="tiles">
+      <div class="card tile mem-tile"><div class="tile-head">Used</div><div class="tile-value" id="memUsedNum">—</div></div>
+      <div class="card tile mem-tile"><div class="tile-head">Free + files</div><div class="tile-value" id="memFreeNum">—</div></div>
+      <div class="card tile mem-tile"><div class="tile-head">Apps</div><div class="tile-value" id="memAppNum">—</div></div>
+      <div class="card tile mem-tile"><div class="tile-head">Overflow to disk</div><div class="tile-value" id="memSwapNum">—</div></div>
+    </div>
+    <div class="section" id="memAppsSection" hidden><div class="section-head">Using the most</div><div class="list mem-apps" id="memApps"></div></div>
+    <div class="section-foot">Pressure shows how hard your Mac is working to find room. Green is fine even when memory looks full: macOS keeps recent files in spare memory and hands it back the moment an app needs it. Overflow to disk is memory moved to storage when room ran out.</div>
   </div>
 </section>
 <input class="live-input" id="liveInput" aria-label="Type directly on your Mac"
@@ -3708,9 +3752,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (Date.now() - histData[kind].at > 30000) loadHistory(kind);
       histTimer = setInterval(() => loadHistory(kind), 60000);
     } else {
-      shade.classList.remove("show");
       sheet.classList.remove("open");
-      setTimeout(() => { if (!sheet.classList.contains("open")) shade.hidden = true; }, 350);
+      hideShade();
     }
   }
   function showHistoryRange() {
@@ -3863,8 +3906,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     addTickPad($(tile));
   }
   $("histDone").addEventListener("click", () => setHistoryOpen(false));
-  $("histShade").addEventListener("click", () => setHistoryOpen(false));
-  document.addEventListener("keydown", e => { if (e.key === "Escape" && $("histSheet").classList.contains("open")) setHistoryOpen(false); });
+  $("histShade").addEventListener("click", closeSheets);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheets(); });
   document.querySelectorAll("#histRange button").forEach(b => b.addEventListener("click", () => {
     histHours = +b.dataset.hours;
     try { localStorage.setItem("historyHours", histHours); } catch (e) {}
@@ -3872,26 +3915,156 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     renderHistory();
   }));
   addEventListener("resize", () => { if ($("histSheet").classList.contains("open")) renderHistory(); });
-  // Pull the sheet down by its top to close it.
-  let sheetDrag = null;
-  $("histHead").addEventListener("pointerdown", e => {
-    if (e.target.closest("button")) return;
-    sheetDrag = { y: e.clientY, t: performance.now(), dy: 0 };
-    $("histHead").setPointerCapture(e.pointerId);
-    $("histSheet").classList.add("dragging");
-  });
-  $("histHead").addEventListener("pointermove", e => {
-    if (!sheetDrag) return;
-    sheetDrag.dy = Math.max(0, e.clientY - sheetDrag.y);
-    $("histSheet").style.setProperty("--drag", sheetDrag.dy + "px");
-  });
-  for (const ev of ["pointerup", "pointercancel"]) $("histHead").addEventListener(ev, () => {
-    if (!sheetDrag) return;
-    const fast = sheetDrag.dy / (performance.now() - sheetDrag.t) > .5;
-    $("histSheet").classList.remove("dragging");
-    if (sheetDrag.dy > 120 || (fast && sheetDrag.dy > 30)) setHistoryOpen(false);
-    else $("histSheet").style.removeProperty("--drag");
-    sheetDrag = null;
+  // Both sheets share one shade; it goes once neither is open.
+  function hideShade() {
+    const shade = $("histShade");
+    shade.classList.remove("show");
+    setTimeout(() => { if (!document.querySelector(".hist-sheet.open")) shade.hidden = true; }, 350);
+  }
+  function closeSheets() {
+    if ($("memSheet").classList.contains("open")) setMemoryOpen(false);
+    if ($("histSheet").classList.contains("open")) setHistoryOpen(false);
+  }
+  // Pull a sheet down by its top to close it.
+  function dragToClose(head, sheet, close) {
+    let drag = null;
+    head.addEventListener("pointerdown", e => {
+      if (e.target.closest("button")) return;
+      drag = { y: e.clientY, t: performance.now(), dy: 0 };
+      head.setPointerCapture(e.pointerId);
+      sheet.classList.add("dragging");
+    });
+    head.addEventListener("pointermove", e => {
+      if (!drag) return;
+      drag.dy = Math.max(0, e.clientY - drag.y);
+      sheet.style.setProperty("--drag", drag.dy + "px");
+    });
+    for (const ev of ["pointerup", "pointercancel"]) head.addEventListener(ev, () => {
+      if (!drag) return;
+      const fast = drag.dy / (performance.now() - drag.t) > .5;
+      sheet.classList.remove("dragging");
+      if (drag.dy > 120 || (fast && drag.dy > 30)) close();
+      else sheet.style.removeProperty("--drag");
+      drag = null;
+    });
+  }
+  dragToClose($("histHead"), $("histSheet"), () => setHistoryOpen(false));
+
+  // ---------- Memory window ----------
+  // Tap the Memory row: where the memory goes right now, plus a pressure graph that draws for as
+  // long as the window is open (one reading every 2 s, last 2 minutes; forgotten on close).
+  const MEM_SPAN = 120000;
+  let memTimer = null, memPoints = [];
+  const memRows = new Map();
+  const memGB = b => b == null ? "—" : (b / GiB < 10 ? (b / GiB).toFixed(1) : Math.round(b / GiB)) + " GB";
+  function setMemoryOpen(open) {
+    const sheet = $("memSheet"), shade = $("histShade");
+    sheet.style.removeProperty("--drag");
+    sheet.setAttribute("aria-hidden", !open);
+    clearInterval(memTimer);
+    memTimer = null;
+    if (open) {
+      shade.hidden = false;
+      requestAnimationFrame(() => { shade.classList.add("show"); sheet.classList.add("open"); });
+      startMemory(true);
+    } else {
+      sheet.classList.remove("open");
+      hideShade();
+    }
+  }
+  function startMemory(fresh) {
+    if (fresh) {
+      memPoints = [];
+      renderMemGraph("normal");
+      $("memNote").textContent = "Measuring…";
+      $("memNote").hidden = false;
+    }
+    clearInterval(memTimer);
+    memTimer = setInterval(loadMemory, 2000);
+    loadMemory();
+  }
+  async function loadMemory() {
+    try {
+      const res = await fetchWithin(4000, "memory", { cache: "no-store" });
+      if (!res.ok) throw new Error(res.status);
+      const m = await res.json();
+      if (!memTimer) return;  // closed while asking
+      const now = Date.now();
+      memPoints.push({ t: now, p: Math.max(0, Math.min(100, m.pressure ?? 0)) });
+      memPoints = memPoints.filter(pt => now - pt.t <= MEM_SPAN);
+      renderMemory(m);
+    } catch (e) {
+      if (!memTimer) return;
+      $("memNote").textContent = "Can't reach the Mac";
+      $("memNote").hidden = false;
+    }
+  }
+  function renderMemGraph(level) {
+    const now = Date.now(), W = 300, H = 120;
+    const pts = memPoints.map(pt => [W - (now - pt.t) / MEM_SPAN * W, H - pt.p / 100 * H].map(v => v.toFixed(1)));
+    const line = pts.map((p, i) => (i ? "L" : "M") + p[0] + " " + p[1]).join(" ");
+    const draw = pts.length > 1;
+    $("memLine").setAttribute("d", draw ? line : "");
+    $("memArea").setAttribute("d", draw ? `${line} L${pts[pts.length - 1][0]} ${H} L${pts[0][0]} ${H} Z` : "");
+    const color = { warn: "#ffcc00", critical: "var(--red)" }[level] || "var(--green)";
+    $("memLine").style.stroke = color;
+    $("memArea").style.fill = color;
+  }
+  function memAppRow(a) {
+    const row = document.createElement("div");
+    row.className = "row";
+    let icon;
+    if (a.id) {
+      icon = document.createElement("img");
+      icon.src = "app-icon.png?id=" + encodeURIComponent(a.id);
+      icon.alt = "";
+      icon.addEventListener("error", () => { const blank = document.createElement("span"); blank.className = "mem-icon blank"; icon.replaceWith(blank); });
+    } else icon = document.createElement("span");
+    icon.className = a.id ? "mem-icon" : "mem-icon blank";
+    const title = document.createElement("div");
+    title.className = "title";
+    title.append(a.name, document.createElement("i"));
+    const value = document.createElement("span");
+    value.className = "value";
+    row.append(icon, title, value);
+    return row;
+  }
+  function renderMemory(m) {
+    const level = ["warn", "critical"].includes(m.level) ? m.level : "normal";
+    $("memPill").textContent = { normal: "Low", warn: "Medium", critical: "High" }[level];
+    $("memPill").className = "mem-pill " + level;
+    renderMemGraph(level);
+    $("memNote").textContent = "Measuring…";
+    $("memNote").hidden = memPoints.length > 1;
+    $("memUsedNum").textContent = memGB(m.used);
+    $("memFreeNum").textContent = m.free == null ? "—" : memGB(m.free + (m.cached || 0));
+    $("memAppNum").textContent = memGB(m.app);
+    $("memSwapNum").textContent = memGB(m.swapUsed);
+    const top = m.top || [], most = top.length ? top[0].bytes : 1, seen = new Set();
+    for (const a of top) {
+      let row = memRows.get(a.name);
+      if (!row) { row = memAppRow(a); memRows.set(a.name, row); }
+      row.querySelector(".title > i").style.width = Math.max(2, a.bytes / most * 100) + "%";
+      row.querySelector(".value").textContent = memGB(a.bytes);
+      $("memApps").append(row);
+      seen.add(a.name);
+    }
+    for (const [name, row] of memRows) if (!seen.has(name)) { row.remove(); memRows.delete(name); }
+    $("memAppsSection").hidden = !top.length;
+  }
+  $("memRow").addEventListener("click", () => { if (!document.querySelector("main.waiting")) { tick(); setMemoryOpen(true); } });
+  $("memRow").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMemoryOpen(true); } });
+  addTickPad($("memRow"));
+  $("memDone").addEventListener("click", () => setMemoryOpen(false));
+  dragToClose($("memHead"), $("memSheet"), () => setMemoryOpen(false));
+  // No asking while the phone's page is hidden; when it's back the graph starts again from empty
+  // (a line straight across the gap would look like a calm stretch nobody measured).
+  document.addEventListener("visibilitychange", () => {
+    if (!$("memSheet").classList.contains("open")) return;
+    clearInterval(memTimer);
+    memTimer = null;
+    if (document.hidden) return;
+    startMemory(true);
   });
 
   // ---------- Appearance ----------
