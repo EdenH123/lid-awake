@@ -64,13 +64,22 @@ enum RemoteInput {
     // Longest text typed in one go (a long paste is refused rather than typed for minutes).
     static let maxText = 2000
 
+    // Lets go of Control, Command, Option and Shift as far as macOS is concerned (key-up events
+    // with no modifiers), in case a shortcut from the phone left one marked as held.
+    static func releaseModifiers() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        for key: CGKeyCode in [59, 62, 55, 54, 58, 61, 56, 60] {  // left/right ⌃ ⌘ ⌥ ⇧
+            CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false)?.send()
+        }
+    }
+
     // Lets go of a button the phone was holding (it disconnected, or control was turned off).
     static func releaseButtons() {
         guard leftDown else { return }
         leftDown = false
         let at = CGEvent(source: nil)?.location ?? .zero
         CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: .leftMouseUp,
-                mouseCursorPosition: at, mouseButton: .left)?.post(tap: .cghidEventTap)
+                mouseCursorPosition: at, mouseButton: .left)?.send()
     }
 
     // A number from the phone, kept to a sane range so odd values can't crash the app.
@@ -108,37 +117,42 @@ enum RemoteInput {
             let p = CGPoint(x: min(max(current.x + dx, bounds.minX), bounds.maxX - 1),
                             y: min(max(current.y + dy, bounds.minY), bounds.maxY - 1))
             CGEvent(mouseEventSource: src, mouseType: leftDown ? .leftMouseDragged : .mouseMoved,
-                    mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+                    mouseCursorPosition: p, mouseButton: .left)?.send()
 
         case "mousedown", "mouseup":
             let down = cmd["type"] as? String == "mousedown"
             guard down != leftDown else { return }
             leftDown = down
             CGEvent(mouseEventSource: src, mouseType: down ? .leftMouseDown : .leftMouseUp,
-                    mouseCursorPosition: current, mouseButton: .left)?.post(tap: .cghidEventTap)
+                    mouseCursorPosition: current, mouseButton: .left)?.send()
 
         case "click":
             let p = point ?? current
             let right = (cmd["button"] as? String) == "right"
+            // Diagnostics for unusual clicks: right-clicks, or modifier keys involved (sent, or
+            // still considered held by macOS — a stuck Control once turned taps into right-clicks).
+            let held = CGEventSource.flagsState(.hidSystemState).intersection([.maskControl, .maskCommand, .maskAlternate, .maskShift])
+            let heldNames = [(CGEventFlags.maskControl, "ctrl"), (.maskCommand, "cmd"), (.maskAlternate, "alt"), (.maskShift, "shift")]
+                .filter { held.contains($0.0) }.map(\.1)
+            if right || !heldNames.isEmpty || !modifierFlags.isEmpty { StreamStats.shared.note("input click \(right ? "RIGHT" : "left") x\(cmd["count"] as? Int ?? 1)"
+                + " sent-mods \(cmd["mods"] as? [String] ?? []) mac-held \(heldNames) from \(cmd["x"] != nil ? "picture" : "trackpad")") }
             let count = Int64(min(max(cmd["count"] as? Int ?? 1, 1), 3))
             let button: CGMouseButton = right ? .right : .left
-            CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
-                .post(tap: .cghidEventTap)
+            CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?.send()
             for type in right ? [CGEventType.rightMouseDown, .rightMouseUp] : [.leftMouseDown, .leftMouseUp] {
                 let event = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: button)
                 event?.setIntegerValueField(.mouseEventClickState, value: count)
-                if !modifierFlags.isEmpty { event?.flags = modifierFlags }  // e.g. Option-click
-                event?.post(tap: .cghidEventTap)
+                event?.send(modifierFlags)  // e.g. Option-click; never a leftover Control
             }
+            if !modifierFlags.isEmpty { releaseModifiers() }
 
         case "scroll":
             if let p = point {
                 CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?
-                    .post(tap: .cghidEventTap)
+                    .send()
             }
             let dx = Int32(number(cmd["dx"])), dy = Int32(number(cmd["dy"]))
-            CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)?
-                .post(tap: .cghidEventTap)
+            CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)?.send()
 
         case "text":
             guard let text = cmd["text"] as? String, text.count <= maxText else { return }
@@ -147,7 +161,7 @@ enum RemoteInput {
                 for down in [true, false] {
                     let event = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)
                     event?.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
-                    event?.post(tap: .cghidEventTap)
+                    event?.send()
                 }
             }
 
@@ -166,13 +180,23 @@ enum RemoteInput {
             // Arrow keys carry these flags on a real keyboard; Mission Control shortcuts expect them.
             if (123...126).contains(code) { flags.formUnion([.maskSecondaryFn, .maskNumericPad]) }
             for down in [true, false] {
-                let event = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
-                event?.flags = flags
-                event?.post(tap: .cghidEventTap)
+                CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)?.send(flags)
             }
+            // Shortcuts like ⌃→ or ⌃⌘Q can leave macOS thinking the modifier is still held, which
+            // turns later clicks into Control-clicks (= right-clicks). Let go of them explicitly.
+            if !flags.subtracting([.maskSecondaryFn, .maskNumericPad]).isEmpty { releaseModifiers() }
 
         default:
             break
         }
+    }
+}
+
+private extension CGEvent {
+    // Posts with exactly these modifier keys (none by default), instead of whatever macOS
+    // currently believes is held.
+    func send(_ modifiers: CGEventFlags = []) {
+        flags = modifiers
+        post(tap: .cghidEventTap)
     }
 }

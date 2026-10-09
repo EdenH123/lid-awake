@@ -250,7 +250,7 @@ final class LiveServer: @unchecked Sendable {
                     self.activityLock.lock(); self.viewers = self.peers.count; self.activityLock.unlock()
                     if !self.checks.allowLoopback { AccessLog.write("Screen viewing ended · \(peer.device)") }
                     // Don't leave a mouse button held down if the phone was mid-drag.
-                    if peer.usedInput { DispatchQueue.main.async { RemoteInput.releaseButtons() } }
+                    if peer.usedInput { DispatchQueue.main.async { RemoteInput.releaseButtons(); RemoteInput.releaseModifiers() } }
                 }
             default:
                 break
