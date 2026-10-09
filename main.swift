@@ -308,6 +308,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             controlAllowed: { DispatchQueue.main.sync { self.remoteScreen && self.remoteControl } },
             screenPermission: { screenPermission() },
             controlPermission: { controlPermission() }))
+        // "Claude finished / needs you" alerts for the iPhone.
+        ClaudeAlerts.start()
         // The Wi-Fi name shown on the phone needs Location permission (asked once).
         SystemInfo.shared.requestWiFiNameAccess()
 

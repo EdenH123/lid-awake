@@ -699,6 +699,7 @@ let dashboardHTML = #"""
       <div class="alert-row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, low battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
       <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
       <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span><span class="title">Claude usage<small>Over 90% of a limit</small></span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch" aria-label="Claude usage"></button></div>
+      <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10.5h8"/></svg></span><span class="title">Claude sessions<small>Finished, or waiting for you, while you're away from the Mac</small></span><button type="button" class="mini-switch" data-alert="claudeSession" role="switch" aria-label="Claude sessions"></button></div>
       <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Mac warm<small>Battery at 37°C</small></span><button type="button" class="mini-switch" data-alert="warm" role="switch" aria-label="Mac warm"></button></div>
       <p class="alerts-note" id="alertsFoot" hidden></p>
     </section>
@@ -2352,7 +2353,7 @@ let dashboardHTML = #"""
 
   // ---------- iPhone alerts (Web Push) ----------
   // Works from the Home Screen icon. The Mac encrypts each alert for this iPhone only.
-  const ALERT_KINDS = ["turnedOff", "lowBattery", "claudeUsage", "warm"];
+  const ALERT_KINDS = ["turnedOff", "lowBattery", "claudeUsage", "claudeSession", "warm"];
   const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   // Install the service worker on every visit (not only with alerts), so the home-screen app
   // keeps a copy of this page and still opens while the Mac is off.

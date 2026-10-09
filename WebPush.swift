@@ -7,7 +7,7 @@ import Foundation
 // key (VAPID, RFC 8292). Alerts reach the phone even when the page is closed.
 enum WebPush {
     // `security` (new sign-in, Face ID added) always goes out; the others can be turned off per phone.
-    enum Kind: String, CaseIterable { case turnedOff, lowBattery, claudeUsage, warm, security }
+    enum Kind: String, CaseIterable { case turnedOff, lowBattery, claudeUsage, claudeSession, warm, security }
 
     private struct Subscription: Codable {
         let endpoint: String
