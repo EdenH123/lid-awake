@@ -590,7 +590,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right));
     background: rgba(30,30,32,.72); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.1);
+    transition: opacity .5s ease, transform .5s ease;
   }
+  /* After a few quiet seconds the bar fades so only the Mac shows; any touch brings it back. */
+  body.landscape-full .float-bar.faded { opacity: 0; transform: translateY(-6px); pointer-events: none; }
   .float-bar button {
     min-width: 38px; height: 34px; border: 0; border-radius: 99px; background: transparent;
     color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; display: grid; place-items: center;
@@ -2244,6 +2247,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const full = landscapeQuery.matches && currentTab === "screen" && unlocked;
     if (full === document.body.classList.contains("landscape-full")) return;
     document.body.classList.toggle("landscape-full", full);
+    if (full) wakeFloatBar(); else clearTimeout(barTimer);
     // The picture changes size, so start the zoom fresh.
     zoom = 1; panX = panY = 0; applyZoom();
   }
@@ -2253,6 +2257,22 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("padModeBtn").classList.toggle("on", trackpadMode);
     if (trackpadMode) { zoom = 1; panX = panY = 0; applyZoom(); }
   });
+  // Just watching: the button bar fades after 3 quiet seconds. Any touch brings it back
+  // (a tap on the picture still clicks; the black strips beside it don't). It stays up
+  // while typing or while ⌘/⌥ is on, so those never disappear mid-use.
+  let barTimer = null;
+  function wakeFloatBar() {
+    $("floatBar").classList.remove("faded");
+    clearTimeout(barTimer);
+    barTimer = setTimeout(fadeFloatBar, 3000);
+  }
+  function fadeFloatBar() {
+    if (document.activeElement === liveInput || latched.size) { barTimer = setTimeout(fadeFloatBar, 3000); return; }
+    $("floatBar").classList.add("faded");
+  }
+  document.addEventListener("pointerdown", () => {
+    if (document.body.classList.contains("landscape-full")) wakeFloatBar();
+  }, { capture: true, passive: true });
 
   // ---------- Screen tools: Keys sheet, picture quality, help ----------
   function setKeysOpen(open) {
