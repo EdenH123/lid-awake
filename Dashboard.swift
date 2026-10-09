@@ -2401,11 +2401,12 @@ let dashboardHTML = #"""
     zoom.className = "app-zoom";
     zoom.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background-image:url("${img.src}")`;
     document.body.append(zoom);
-    const scale = Math.max(innerWidth / r.width, innerHeight / r.height) * 1.08;
+    // Grows to about twice its size in the middle of the screen (not the whole screen), then fades.
+    const scale = Math.min(2.2, 150 / r.width);
     const dx = innerWidth / 2 - (r.left + r.width / 2), dy = innerHeight / 2 - (r.top + r.height / 2);
     zoom.animate([
       { transform: "translate(0,0) scale(1)", borderRadius: "15px" },
-      { transform: `translate(${dx}px,${dy}px) scale(${scale})`, borderRadius: `${40 / scale}px` },
+      { transform: `translate(${dx}px,${dy}px) scale(${scale})`, borderRadius: "15px" },
     ], { duration: 340, easing: SPRING, fill: "forwards" });
     // Timers rather than animation events, so the page always moves on (and the layer always goes).
     setTimeout(() => {
