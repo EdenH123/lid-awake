@@ -617,13 +617,15 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .tabbar button svg { transition: transform .35s cubic-bezier(.32,.72,0,1); }
   .tabbar button:active svg { transform: scale(.86); }
   /* The glass pill behind the current tab glides to the tab you pick with a soft spring. It
-     only ever moves sideways (a GPU transform), so it stays smooth even while the page updates. */
+     only ever moves sideways (a GPU transform), so it stays smooth even while the page updates.
+     Moved with `translate`, not `transform`: `scale` (the swell while dragging) would otherwise
+     multiply the distance too and push the pill out past the end of the bar. */
   .tab-pill {
     position: absolute; z-index: 0; top: 4px; left: 0; width: 84px; height: 54px; border-radius: 99px;
-    pointer-events: none; will-change: transform;
+    pointer-events: none; will-change: translate;
     background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0) 60%), var(--glass-pill);
     box-shadow: inset 0 1px 0 var(--glass-pill-rim), inset 0 0 0 .5px var(--glass-edge), 0 2px 8px rgba(0,0,0,.08);
-    transition: transform .42s cubic-bezier(.3,1.3,.5,1), scale .3s cubic-bezier(.3,1.3,.5,1);
+    transition: translate .42s cubic-bezier(.3,1.3,.5,1), scale .3s cubic-bezier(.3,1.3,.5,1);
   }
   .tabbar.no-anim .tab-pill { transition: scale .3s cubic-bezier(.3,1.3,.5,1); }
   /* Slide a finger along the bar: the pill follows it and swells a little, like a lens. */
@@ -1719,7 +1721,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!active || (swipe && swipe.live)) return;  // mid-swipe the pill follows the finger
     document.querySelector(".tabbar").classList.toggle("no-anim", !animate);
     $("tabPill").style.width = active.offsetWidth + "px";
-    $("tabPill").style.transform = `translateX(${active.offsetLeft}px)`;
+    $("tabPill").style.translate = `${active.offsetLeft}px 0`;
   }
   let pillPlaced = false;
   addEventListener("resize", () => movePill(false));
@@ -1841,7 +1843,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const from = document.querySelector(`.tabs button[data-tab="${currentTab}"]`);
     const to = swipe.peer && document.querySelector(`.tabs button[data-tab="${swipe.peer}"]`);
     const x = from.offsetLeft + (to ? (to.offsetLeft - from.offsetLeft) * progress : 0);
-    $("tabPill").style.transform = `translateX(${x}px)`;
+    $("tabPill").style.translate = `${x}px 0`;
     tabButtons.forEach(b => b.classList.toggle("active", b === (to && progress > 0.5 ? to : from)));
   }
 
@@ -1935,8 +1937,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (!slide.live && Math.abs(dx) < 8) return;
       if (!slide.live) { slide.live = true; bar.classList.add("dragging", "no-anim"); }
       const first = tabButtons[0].offsetLeft, last = tabButtons[tabButtons.length - 1].offsetLeft;
-      const x = slide.x = Math.max(first - 10, Math.min(last + 10, slide.from + dx));
-      $("tabPill").style.transform = `translateX(${x}px)`;
+      // Past either end the pill only gives a little, more slowly the further the finger goes.
+      const want = slide.from + dx, past = want < first ? want - first : want > last ? want - last : 0;
+      const x = slide.x = Math.max(first, Math.min(last, want)) + Math.sign(past) * 8 * (1 - 1 / (1 + Math.abs(past) / 40));
+      $("tabPill").style.translate = `${x}px 0`;
       const near = nearest(x);
       tabButtons.forEach(b => b.classList.toggle("active", b === near));
     });
