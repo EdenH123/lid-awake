@@ -376,7 +376,7 @@ let dashboardHTML = #"""
   .opened {
     position: fixed; z-index: 9; left: 50%; transform: translateX(-50%);
     bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 72px);
-    display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; border-radius: 99px; font-size: 15px; white-space: nowrap;
+    display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-radius: 99px; font-size: 15px; white-space: nowrap;
     background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
   }
@@ -782,7 +782,7 @@ let dashboardHTML = #"""
     </div>
     <div class="section-foot" id="appsFoot" hidden>Tap an app to open it on your Mac. Slide up on an app to open it and watch it on the screen. A dot means it's already open. To change this list, use Apps on phone in the Lid Awake menu on your Mac.</div>
     <div class="mac-dock" id="macDock" role="toolbar" aria-label="Other apps open on your Mac" hidden></div>
-    <div class="opened" id="openedBar" hidden><span id="openedText"></span><button type="button" id="openedShow">Show screen</button></div>
+    <div class="opened" id="openedBar" hidden><span id="openedText"></span></div>
   </div>
 
   <div class="tab" id="tab-settings" hidden>
@@ -2463,7 +2463,6 @@ let dashboardHTML = #"""
     openedTimer = setTimeout(() => { $("openedBar").hidden = true; }, 5000);
     poll();
   }
-  $("openedShow").addEventListener("click", () => { $("openedBar").hidden = true; showTab("screen"); });
 
   // Sideways: make the icons as big as the black screen allows (up to 130 px) with every app showing.
   // Gaps scale with the icon: 0.36× between columns, 0.3× between rows, plus room for the open dot.
