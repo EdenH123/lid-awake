@@ -2342,6 +2342,11 @@ let dashboardHTML = #"""
   // Works from the Home Screen icon. The Mac encrypts each alert for this iPhone only.
   const ALERT_KINDS = ["turnedOff", "lowBattery", "claudeUsage", "warm"];
   const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  // Install the service worker on every visit (not only with alerts), so the home-screen app
+  // keeps a copy of this page and still opens while the Mac is off.
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+  }
   const pushPossible = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   function alertsOff() { try { return JSON.parse(localStorage.getItem("alertsOff") || "[]"); } catch (e) { return []; } }
   async function currentSubscription() {
