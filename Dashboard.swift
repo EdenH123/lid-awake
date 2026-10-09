@@ -14,7 +14,11 @@ let dashboardHTML = #"""
 <link rel="icon" type="image/png" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <!--SPLASH-->
-<script>try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<script>try { const t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+// Opening the home-screen app: decide before anything is drawn, so the closed MacBook from the
+// launch screen is the very first frame (no "Connecting…" flash before the animation).
+try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standalone) && !sessionStorage.getItem("introShown")
+          && !matchMedia("(prefers-reduced-motion: reduce)").matches) document.documentElement.classList.add("intro"); } catch (e) {}</script>
 <style>
   /* iOS system colors and materials (light / dark), as in Settings, Battery and Weather. */
   :root {
@@ -396,7 +400,8 @@ let dashboardHTML = #"""
 
   /* Opening the home-screen app: the closed MacBook from the launch screen opens, its screen shows
      the sky of the moment (sunrise, day, sunset or night), and the view dives into it. */
-  #intro { position: fixed; inset: 0; z-index: 100; background: #000; display: grid; place-items: center;
+  #intro { display: none; }
+  html.intro #intro { position: fixed; inset: 0; z-index: 100; background: #000; display: grid; place-items: center;
     animation: intro-out .4s ease 2.05s forwards; }
   .intro-mac { position: relative; width: min(58vw, 300px); aspect-ratio: 220 / 170; perspective: 700px;
     animation: intro-zoom .75s cubic-bezier(.55,0,.75,.2) 1.45s forwards; }
@@ -407,8 +412,6 @@ let dashboardHTML = #"""
     animation: intro-fade .55s ease .75s forwards; }
   .intro-base { position: absolute; left: 0; right: 0; bottom: 0; height: 7%; border-radius: 2px 2px 10px 10px;
     background: linear-gradient(#d1d1d6, #8e8e93); }
-  .sky-sun, .sky-moon { position: absolute; border-radius: 50%; width: 15%; aspect-ratio: 1; }
-  .sky-star { position: absolute; width: 2px; height: 2px; border-radius: 50%; background: #fff; }
   @keyframes intro-lid { to { transform: rotateX(-8deg); } }
   @keyframes intro-fade { to { opacity: 1; } }
   @keyframes intro-zoom { to { transform: scale(7); } }
@@ -682,7 +685,7 @@ let dashboardHTML = #"""
 </style>
 </head>
 <body>
-<div id="intro" aria-hidden="true" hidden><div class="intro-mac"><div class="intro-lid"><div class="intro-screen" id="introSky"></div></div><div class="intro-base"></div></div></div>
+<div id="intro" aria-hidden="true"><div class="intro-mac"><div class="intro-lid"><div class="intro-screen" id="introSky"></div></div><div class="intro-base"></div></div></div>
 <div id="scroller">
 <main id="main">
   <div class="topbar">
@@ -2705,29 +2708,62 @@ let dashboardHTML = #"""
   const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 
   // ---------- Opening animation (home-screen app only, once per launch) ----------
-  // The sky on the little Mac's screen follows the time of day.
-  function skyNow() {
-    const h = new Date().getHours();
-    const stars = n => Array.from({ length: n }, (_, i) =>
-      `<span class="sky-star" style="left:${(i * 37 + 11) % 92 + 4}%;top:${(i * 23 + 7) % 55 + 5}%;opacity:${.4 + (i % 3) * .25}"></span>`).join("");
-    if (h >= 5 && h < 8) return `<div style="position:absolute;inset:0;background:linear-gradient(#1d2b5a,#c86b8a 60%,#f6a65c)"></div>`
-      + `<span class="sky-sun" style="left:42%;top:62%;background:#ffd8a0;box-shadow:0 0 18px 6px rgba(255,190,120,.7)"></span>`;
-    if (h >= 8 && h < 17) return `<div style="position:absolute;inset:0;background:linear-gradient(#2f7de1,#8cc4f5)"></div>`
-      + `<span class="sky-sun" style="left:66%;top:16%;background:#fff6d6;box-shadow:0 0 20px 8px rgba(255,236,170,.8)"></span>`
-      + `<span style="position:absolute;left:14%;top:46%;width:30%;height:13%;border-radius:99px;background:rgba(255,255,255,.85);box-shadow:16px -6px 0 2px rgba(255,255,255,.85)"></span>`;
-    if (h >= 17 && h < 20) return `<div style="position:absolute;inset:0;background:linear-gradient(#2a1f5c,#b8527a 55%,#f59a52)"></div>`
-      + `<span class="sky-sun" style="left:30%;top:66%;background:#ffcf8a;box-shadow:0 0 18px 6px rgba(255,160,90,.75)"></span>` + stars(3);
-    return `<div style="position:absolute;inset:0;background:linear-gradient(#050b1f,#14214a 65%,#2a2350)"></div>`
-      + `<span class="sky-moon" style="left:64%;top:18%;background:#f5f5f7;box-shadow:0 0 14px 4px rgba(255,255,255,.45)"></span>` + stars(9);
+  // The sky of the moment as a small landscape in the style of macOS wallpapers: layered ridges
+  // fading into haze, a glowing sun or moon, soft clouds by day and a field of stars at night.
+  function skyScene(h) {
+    const kind = h >= 5 && h < 8 ? "sunrise" : h >= 8 && h < 17 ? "day" : h >= 17 && h < 20 ? "sunset" : "night";
+    const P = {
+      sunrise: { sky: ["#2b3a6b", "#8a6aa3", "#f2a0a1", "#ffd3a1"], orb: [168, 92, 18, "#fff1d6", "#ffb88a"],
+                 ridges: ["#8e7aa8", "#6b5a8c", "#4c3f6e", "#2e2647"], haze: "#ffc7a8" },
+      day:     { sky: ["#1f6fd1", "#4b97e6", "#8fc3f2", "#d6ecfb"], orb: [230, 36, 16, "#ffffff", "#fff2c2"],
+                 ridges: ["#9cc0de", "#6f9cc4", "#4a7aa6", "#2f5a82"], haze: "#e8f4fd" },
+      sunset:  { sky: ["#1e1b4b", "#5b2b6e", "#d35d6e", "#f8b26a"], orb: [96, 104, 20, "#fff0c9", "#ff9e5e"],
+                 ridges: ["#a4506f", "#7a3a62", "#4f2750", "#2a1636"], haze: "#ffb07a" },
+      night:   { sky: ["#03071a", "#0a1638", "#16244f", "#25305e"], orb: [214, 40, 13, "#f4f6ff", "#b9c6ff"],
+                 ridges: ["#26305a", "#1b2347", "#121935", "#0a0f24"], haze: "#3a4a85" },
+    }[kind];
+    const [ox, oy, r, core, glow] = P.orb;
+    const id = "s" + kind;
+    let stars = "";
+    if (kind === "night" || kind === "sunset") {
+      const n = kind === "night" ? 70 : 14;
+      for (let i = 0; i < n; i++) {
+        const x = (i * 97.3 + 13) % 300, y = (i * 53.7 + 7) % (kind === "night" ? 120 : 60);
+        const rr = (i % 7 === 0 ? 1.1 : i % 3 === 0 ? 0.7 : 0.45);
+        stars += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${rr}" fill="#fff" opacity="${(0.35 + (i % 5) * 0.13).toFixed(2)}"/>`;
+      }
+    }
+    const clouds = kind === "day" ? `<g filter="url(#${id}b2)" fill="#fff" opacity=".9">
+        <ellipse cx="70" cy="62" rx="34" ry="9"/><ellipse cx="88" cy="56" rx="20" ry="9"/><ellipse cx="58" cy="58" rx="14" ry="7"/>
+        <ellipse cx="190" cy="80" rx="26" ry="6" opacity=".7"/><ellipse cx="204" cy="76" rx="14" ry="6" opacity=".7"/></g>` : "";
+    const ridge = (d, fill) => `<path d="${d}" fill="${fill}"/>`;
+    return `<svg viewBox="0 0 300 190" preserveAspectRatio="xMidYMid slice" style="position:absolute;inset:0;width:100%;height:100%">
+      <defs>
+        <linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1">${P.sky.map((c, i) => `<stop offset="${i / 3}" stop-color="${c}"/>`).join("")}</linearGradient>
+        <radialGradient id="${id}o"><stop offset="0" stop-color="${core}"/><stop offset=".55" stop-color="${core}"/><stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient>
+        <radialGradient id="${id}h" cx=".5" cy="1" r=".8"><stop offset="0" stop-color="${P.haze}" stop-opacity=".55"/><stop offset="1" stop-color="${P.haze}" stop-opacity="0"/></radialGradient>
+        <filter id="${id}b" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="9"/></filter>
+        <filter id="${id}b2" x="-50%" y="-100%" width="200%" height="300%"><feGaussianBlur stdDeviation="2.4"/></filter>
+      </defs>
+      <rect width="300" height="190" fill="url(#${id}g)"/>
+      ${stars}
+      <circle cx="${ox}" cy="${oy}" r="${r * (kind === "day" ? 2 : 2.6)}" fill="${glow}" opacity="${kind === "day" ? .28 : .32}" filter="url(#${id}b)"/>
+      <circle cx="${ox}" cy="${oy}" r="${r}" fill="url(#${id}o)"/>
+      ${clouds}
+      <rect y="80" width="300" height="110" fill="url(#${id}h)"/>
+      ${ridge("M0 128 C40 110 70 104 110 116 S180 96 220 110 S280 104 300 112 V190 H0Z", P.ridges[0])}
+      ${ridge("M0 142 C30 130 60 122 96 134 S150 120 196 136 S262 124 300 132 V190 H0Z", P.ridges[1])}
+      ${ridge("M0 156 C46 144 80 146 120 154 S190 140 236 152 S280 148 300 150 V190 H0Z", P.ridges[2])}
+      ${ridge("M0 172 C50 162 92 166 140 172 S220 160 300 168 V190 H0Z", P.ridges[3])}
+    </svg>`;
   }
+
   (function playIntro() {
-    let first = true;
-    try { first = !sessionStorage.getItem("introShown"); sessionStorage.setItem("introShown", "1"); } catch (e) {}
-    if (!standalone() || !first || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const intro = $("intro");
-    $("introSky").innerHTML = skyNow();
-    intro.hidden = false;
-    const done = () => intro.remove();
+    if (!document.documentElement.classList.contains("intro")) return intro.remove();
+    try { sessionStorage.setItem("introShown", "1"); } catch (e) {}
+    $("introSky").innerHTML = skyScene(new Date().getHours());
+    const done = () => { intro.remove(); document.documentElement.classList.remove("intro"); };
     intro.addEventListener("click", done);       // tap to skip
     setTimeout(done, 2600);
   })();
