@@ -81,6 +81,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     font: 17px/1.29 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased; letter-spacing: -0.022em;
   }
+  /* Like a native app: no selecting the interface's text or popping the iOS callout when a finger
+     rests on it (holding a dock icon used to select the whole page). Typing fields stay normal. */
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  input, textarea, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
   #scroller {
     position: fixed; inset: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
