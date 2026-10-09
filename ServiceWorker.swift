@@ -12,12 +12,12 @@ self.addEventListener("fetch", e => {
   if (req.mode !== "navigate" || url.origin !== self.location.origin || url.pathname !== "/") return;
   e.respondWith((async () => {
     const cache = await caches.open(PAGE_CACHE);
-    // The Mac first (always the newest page); the kept copy if it doesn't answer within 4 s.
+    // The Mac first (always the newest page); the kept copy if it doesn't answer within 3 s.
     const live = fetch(req).then(res => {
       if (res.ok && res.type === "basic") cache.put("/", res.clone());
       return res;
     });
-    const late = new Promise(resolve => setTimeout(resolve, 4000));
+    const late = new Promise(resolve => setTimeout(resolve, 3000));
     try {
       const first = await Promise.race([live, late]);
       if (first) return first;

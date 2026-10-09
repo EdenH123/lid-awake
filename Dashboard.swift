@@ -573,11 +573,11 @@ let dashboardHTML = #"""
     <p id="host"></p>
   </div>
 
-  <section class="gate" id="gate" hidden>
+  <section class="gate" id="gate">
     <div class="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
-    <h2 id="gateTitle">Locked</h2>
-    <p id="gateText"></p>
-    <form id="loginForm">
+    <h2 id="gateTitle">Connecting…</h2>
+    <p id="gateText">Reaching your Mac.</p>
+    <form id="loginForm" hidden>
       <button type="button" class="faceid-btn" id="faceIdBtn" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg>Sign in with Face ID</button>
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
       <button id="unlockBtn">Unlock</button>
@@ -852,6 +852,13 @@ let dashboardHTML = #"""
 <script>
   const $ = id => document.getElementById(id);
   let data = null, fetchedAt = 0, lastOk = 0;
+  // While Lid Awake is off the Mac doesn't answer at all (no error, just silence), so give up
+  // after a few seconds instead of waiting on a request that never ends.
+  function fetchWithin(ms, url, options = {}) {
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), ms);
+    return fetch(url, { ...options, signal: stop.signal }).finally(() => clearTimeout(timer));
+  }
   let currentTab = "status";
 
   // ---------- Status ----------
@@ -1011,7 +1018,7 @@ let dashboardHTML = #"""
     clearTimeout(gateTimer);
     let auth;
     try {
-      auth = await (await fetch("auth", { cache: "no-store" })).json();
+      auth = await (await fetchWithin(4000, "auth", { cache: "no-store" })).json();
     } catch (e) {
       // Over Tailscale the link disappears while lid-awake is off, so this is the usual "off" view.
       auth = { unreachable: true };
@@ -1317,7 +1324,7 @@ let dashboardHTML = #"""
     if (!unlocked) return;
     try {
       const sentAt = performance.now();
-      const res = await fetch("status", { cache: "no-store" });
+      const res = await fetchWithin(8000, "status", { cache: "no-store" });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) throw new Error(res.status);
       const rtt = performance.now() - sentAt;
