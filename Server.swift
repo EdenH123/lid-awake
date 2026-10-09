@@ -533,9 +533,11 @@ final class StatusServer: @unchecked Sendable {
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("GET", "/app-icon.png"):
-            // Icons only for apps on the owner's list.
+            // Icons only for apps on the owner's list, or open right now (the dock).
             let png: Data? = DispatchQueue.main.sync {
-                PhoneApps.path(for: req.query["id"] ?? "").flatMap { PhoneApps.iconPNG($0, size: Int(req.query["size"] ?? "") ?? 256) }
+                let id = req.query["id"] ?? ""
+                return (PhoneApps.path(for: id) ?? PhoneApps.runningPath(for: id))
+                    .flatMap { PhoneApps.iconPNG($0, size: Int(req.query["size"] ?? "") ?? 256) }
             }
             guard let png else { return text(c, "404 Not Found", "No such app.") }
             reply(c, "200 OK", "image/png", png)
@@ -549,6 +551,18 @@ final class StatusServer: @unchecked Sendable {
                 return true
             }
             guard opened else { return text(c, "404 Not Found", "That app isn't on your list any more.") }
+            FrameStream.shared.wakeNow()
+            reply(c, "204 No Content", "text/plain", Data())
+
+        // The dock: bring an app that's already open to the front (it can't start new apps).
+        case ("POST", "/focus-app"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            let name: String? = DispatchQueue.main.sync {
+                guard let path = PhoneApps.runningPath(for: body?["id"] as? String ?? ""), PhoneApps.activate(path) else { return nil }
+                return PhoneApps.name(path)
+            }
+            guard let name else { return text(c, "404 Not Found", "That app isn't open any more.") }
+            AccessLog.write("Brought \(name) to the front from the phone · \(device)")
             FrameStream.shared.wakeNow()
             reply(c, "204 No Content", "text/plain", Data())
 

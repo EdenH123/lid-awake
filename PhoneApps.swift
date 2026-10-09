@@ -44,6 +44,31 @@ enum PhoneApps {
 
     static func path(for id: String) -> String? { paths.first { self.id($0) == id } }
 
+    // The phone's dock: apps open on the Mac that aren't on the owner's list (ordinary windowed
+    // apps only, not Lid Awake itself), so they can be brought to the front with one tap.
+    static func others() -> [[String: Any]] {
+        let mine = Set(paths)
+        var seen = Set<String>()
+        return NSWorkspace.shared.runningApplications.compactMap { app in
+            guard app.activationPolicy == .regular, let url = app.bundleURL, url.pathExtension == "app",
+                  app.processIdentifier != getpid(), !mine.contains(url.path), seen.insert(url.path).inserted
+            else { return nil }
+            return ["id": id(url.path), "name": app.localizedName ?? name(url.path)]
+        }
+    }
+
+    // A running app by its id (for the dock: only apps that are already open).
+    static func runningPath(for id: String) -> String? {
+        NSWorkspace.shared.runningApplications.lazy.compactMap { $0.bundleURL?.path }.first { self.id($0) == id }
+    }
+
+    // Brings an open app to the front, as clicking it in the Dock does. False if it isn't open.
+    static func activate(_ path: String) -> Bool {
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == path }
+        apps.forEach { $0.unhide(); $0.activate(options: [.activateAllWindows]) }
+        return !apps.isEmpty
+    }
+
     // New order from the phone. Unknown ids are ignored; apps not mentioned keep their place at the end.
     static func reorder(_ ids: [String]) {
         var rest = paths

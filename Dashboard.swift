@@ -382,6 +382,24 @@ let dashboardHTML = #"""
   }
   .opened button { font-size: 15px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 7px 14px; cursor: pointer; }
 
+  /* Apps: a Mac-style dock above the tab bar with the other apps open on the Mac. */
+  .mac-dock {
+    position: fixed; z-index: 9; left: 50%; transform: translateX(-50%);
+    bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 72px);
+    display: flex; gap: 10px; padding: 8px 10px 5px; border-radius: 20px; max-width: calc(100vw - 32px); overflow-x: auto; scrollbar-width: none;
+    background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
+    -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+  }
+  .mac-dock::-webkit-scrollbar { display: none; }
+  .mac-dock button { flex: none; border: 0; padding: 0; background: none; display: grid; justify-items: center; gap: 3px; cursor: pointer; }
+  .mac-dock img { width: 42px; height: 42px; display: block; -webkit-user-drag: none; transition: transform .15s ease; }
+  .mac-dock button:active img { transform: scale(.88); }
+  .mac-dock .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--text); opacity: .55; }
+  .mac-dock button.launched { animation: launch .5s cubic-bezier(.32,.72,0,1); }
+  #tab-apps:has(#macDock:not([hidden])) { padding-bottom: 72px; }
+  #tab-apps:has(#macDock:not([hidden])) .opened { bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 144px); }
+  body.apps-full #macDock { display: none !important; }
+
   /* Apps, phone turned sideways: only the icons, centred on black, in balanced rows. */
   body.apps-full { padding: 0; overflow: hidden; background: #000; color: #fff; }
   body.apps-full main { max-width: none; }
@@ -746,6 +764,7 @@ let dashboardHTML = #"""
       <p>On your Mac, click the Lid Awake icon in the menu bar, then choose Apps on phone → Add apps…</p>
     </div>
     <div class="section-foot" id="appsFoot" hidden>Tap an app to open it on your Mac. Slide up on an app to open it and watch it on the screen. A dot means it's already open. To change this list, use Apps on phone in the Lid Awake menu on your Mac.</div>
+    <div class="mac-dock" id="macDock" role="toolbar" aria-label="Other apps open on your Mac" hidden></div>
     <div class="opened" id="openedBar" hidden><span id="openedText"></span><button type="button" id="openedShow">Show screen</button></div>
   </div>
 
@@ -2288,9 +2307,56 @@ let dashboardHTML = #"""
     const rows = apps.length <= 5 ? 1 : apps.length <= 12 ? 2 : 3;
     $("appGrid").style.setProperty("--cols", Math.max(1, Math.ceil(apps.length / rows)));
     sizeSidewaysIcons(apps.length, rows);
+    renderDock();
     $("appsEmpty").hidden = apps.length > 0;
     $("appsFoot").hidden = apps.length === 0;
   }
+  // The dock: other apps open on the Mac. A tap brings one to the front, like the Mac's Dock.
+  let dockKey = "";
+  function renderDock() {
+    const others = data.otherApps || [];
+    const key = others.map(a => a.id).join();
+    if (key !== dockKey) {
+      dockKey = key;
+      $("macDock").replaceChildren(...others.map(a => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("aria-label", "Bring " + a.name + " to the front");
+        const img = document.createElement("img");
+        img.src = "app-icon.png?id=" + encodeURIComponent(a.id);
+        img.alt = "";
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        b.append(img, dot);
+        b.addEventListener("click", () => focusApp(a, b));
+        return b;
+      }));
+    }
+    $("macDock").hidden = others.length === 0;
+  }
+  async function focusApp(app, button) {
+    let message = `Switched to ${app.name}`;
+    try {
+      const res = await fetch("focus-app", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ id: app.id }),
+      });
+      if (res.status === 401 || res.status === 423) return locked();
+      if (!res.ok) message = await res.text();
+    } catch (e) { message = "Can't reach your Mac."; }
+    if (message.startsWith("Switched")) {
+      button.classList.remove("launched");
+      void button.offsetWidth;
+      button.classList.add("launched");
+    }
+    $("openedText").textContent = message;
+    $("openedBar").hidden = false;
+    clearTimeout(openedTimer);
+    openedTimer = setTimeout(() => { $("openedBar").hidden = true; }, 5000);
+    poll();
+  }
+
   async function openApp(app, button) {
     button.classList.add("opening");
     let message = `Opened ${app.name}`;
