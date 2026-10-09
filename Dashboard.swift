@@ -380,6 +380,7 @@ let dashboardHTML = #"""
     background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
   }
+  .opened.fade-out { opacity: 0; transition: opacity .45s ease; }
   .opened button { font-size: 15px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 7px 14px; cursor: pointer; }
 
   /* Apps: a Mac-style dock above the tab bar with the other apps open on the Mac. */
@@ -2328,6 +2329,19 @@ let dashboardHTML = #"""
     $("appsEmpty").hidden = apps.length > 0;
     $("appsFoot").hidden = apps.length === 0;
   }
+  // A short note above the dock ("Opened Notes", "Hid Finder"): shown 2.5 s, then it fades away.
+  function showOpened(message) {
+    const bar = $("openedBar");
+    $("openedText").textContent = message;
+    bar.classList.remove("fade-out");
+    bar.hidden = false;
+    clearTimeout(openedTimer);
+    openedTimer = setTimeout(() => {
+      bar.classList.add("fade-out");
+      openedTimer = setTimeout(() => { bar.hidden = true; bar.classList.remove("fade-out"); }, 450);
+    }, 2500);
+  }
+
   // The dock: other apps open on the Mac. A tap brings one to the front, like the Mac's Dock.
   let dockKey = "";
   function renderDock() {
@@ -2432,10 +2446,7 @@ let dashboardHTML = #"""
       void button.offsetWidth;
       button.classList.add("launched");
     }
-    $("openedText").textContent = message;
-    $("openedBar").hidden = false;
-    clearTimeout(openedTimer);
-    openedTimer = setTimeout(() => { $("openedBar").hidden = true; }, 5000);
+    showOpened(message);
     poll();
   }
 
@@ -2457,10 +2468,7 @@ let dashboardHTML = #"""
       void button.offsetWidth;
       button.classList.add("launched");
     }
-    $("openedText").textContent = message;
-    $("openedBar").hidden = false;
-    clearTimeout(openedTimer);
-    openedTimer = setTimeout(() => { $("openedBar").hidden = true; }, 5000);
+    showOpened(message);
     poll();
   }
 
@@ -2639,10 +2647,7 @@ let dashboardHTML = #"""
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) message = await res.text();
     } catch (e) { message = "Can't reach your Mac."; }
-    $("openedText").textContent = message;
-    $("openedBar").hidden = false;
-    clearTimeout(openedTimer);
-    openedTimer = setTimeout(() => { $("openedBar").hidden = true; }, 5000);
+    showOpened(message);
     // Apps can take a moment to close (or stop to ask about saving), so check again shortly.
     setTimeout(poll, 1200);
   }
