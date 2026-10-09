@@ -493,7 +493,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   @keyframes dock-menu { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
   .dock-menu .menu-title { padding: 10px 14px 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
-  .dock-menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 11px 14px; font-size: 16px; color: var(--text); border-top: .5px solid var(--line); cursor: pointer; }
+  .dock-menu button { position: relative; display: block; width: 100%; text-align: left; border: 0; background: none; padding: 11px 14px; font-size: 16px; color: var(--text); border-top: .5px solid var(--line); cursor: pointer; }
   .dock-menu button.danger { color: var(--red); }
   .dock-menu button:active { background: var(--fill); }
   .dock-shade { position: fixed; inset: 0; z-index: 29; }
@@ -2849,6 +2849,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       item.setAttribute("role", "menuitem");
       item.textContent = label;
       if (danger) item.className = "danger";
+      addTickPad(item);
       item.addEventListener("click", async () => {
         closeDockMenu();
         focusApp(app, button, action);
