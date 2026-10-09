@@ -2126,11 +2126,17 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function liveURL() {
     return location.protocol === "https:" ? `wss://${location.host}/live` : `ws://${location.hostname}:8788/live`;
   }
+  // Coming from the video, the picture swaps over only once it has loaded: swapping first left the
+  // screen empty for a frame (it collapsed and the trackpad jumped up), e.g. when the Mac sends a
+  // still picture first on returning to the Screen tab. A video frame drawn meanwhile wins.
+  let videoDrawn = 0;
   function showFrame(blob) {
-    if (!$("screenCanvas").hidden) { $("screenCanvas").hidden = true; $("screenImg").hidden = false; }
-    const url = URL.createObjectURL(blob);
-    const img = $("screenImg");
-    img.onload = () => { if (frameUrl && frameUrl !== url) URL.revokeObjectURL(frameUrl); frameUrl = url; };
+    const url = URL.createObjectURL(blob), img = $("screenImg"), drawnBefore = videoDrawn;
+    img.onload = () => {
+      if (frameUrl && frameUrl !== url) URL.revokeObjectURL(frameUrl);
+      frameUrl = url;
+      if (!$("screenCanvas").hidden && videoDrawn === drawnBefore) { $("screenCanvas").hidden = true; img.hidden = false; }
+    };
     img.src = url;
     $("screenControls").hidden = false;
     setScreenMsg("");
@@ -2183,6 +2189,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     }
     canvasCtx.drawImage(frame, 0, 0);
     frame.close();
+    videoDrawn++;
     if (canvas.hidden) { canvas.hidden = false; $("screenImg").hidden = true; }
     $("screenControls").hidden = false;
     setScreenMsg("");
