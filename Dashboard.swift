@@ -117,6 +117,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); cursor: pointer;
   }
   .top-actions { display: flex; gap: 10px; margin-left: auto; }
+  .help-btn { position: relative; font: inherit; font-size: 20px; font-weight: 600; }
+  .help-btn[aria-expanded="true"] { color: var(--blue); }
   /* Locking lives in Settings ("Lock this page now"); this button only keeps the sign-in state. */
   #lockBtn { display: none !important; }
   .back-btn { display: flex; align-items: center; gap: 4px; margin-left: -6px; padding: 8px 6px; border: 0; background: none;
@@ -607,6 +609,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .app-grid .app { touch-action: none; transition: opacity .25s ease; }
   .app-grid.focusing .app:not(.focused) { opacity: 0; }
   #appsFoot, #openedBar { transition: opacity .25s ease; }
+  /* The Apps how-to stays out of the way: the ? button shows it (editing tips always show). */
+  #tab-apps:not(.help-open):not(:has(.app-grid.editing)) #appsFoot { display: none; }
   #tab-apps:has(.app-grid.focusing) #appsFoot, #tab-apps:has(.app-grid.focusing) #openedBar { opacity: 0; }
   .app-grid.focusing .app.focused > * { opacity: 0; transition: opacity .2s ease; }  /* the floating copy takes its place */
   .app-zoom {
@@ -886,6 +890,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="live" id="live"><span class="dot"></span><span id="liveText">Connecting…</span></div>
     <div class="top-actions">
     <button type="button" class="lock-btn" id="settingsBtn" aria-label="Settings" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.00 4.60 L13.87 2.58 L15.67 3.13 L16.11 5.85 L17.23 6.77 L19.98 6.67 L20.87 8.33 L19.26 10.56 L19.40 12.00 L21.42 13.87 L20.87 15.67 L18.15 16.11 L17.23 17.23 L17.33 19.98 L15.67 20.87 L13.44 19.26 L12.00 19.40 L10.13 21.42 L8.33 20.87 L7.89 18.15 L6.77 17.23 L4.02 17.33 L3.13 15.67 L4.74 13.44 L4.60 12.00 L2.58 10.13 L3.13 8.33 L5.85 7.89 L6.77 6.77 L6.67 4.02 L8.33 3.13 L10.56 4.74Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button type="button" class="lock-btn help-btn" id="appsHelpBtn" aria-label="How to use Apps" aria-expanded="false" aria-controls="appsFoot" hidden>?</button>
     <button class="lock-btn" id="lockBtn" aria-label="Lock this page" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
     </div>
@@ -1285,6 +1290,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("liveText").textContent = !lastOk ? (loading ? "Connecting…" : "Can't reach Mac") : stale ? `Last seen ${ago}s ago` : "Live";
     $("pageTitle").textContent = TAB_TITLES[currentTab] || greeting();
     $("settingsBtn").hidden = currentTab !== "status" || $("lockBtn").hidden;
+    $("appsHelpBtn").hidden = currentTab !== "apps" || $("lockBtn").hidden || !$("appsEmpty").hidden;
     if (!data) return;
     revealPage();
 
@@ -1712,6 +1718,11 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   renderFaceIDRow();
   $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
+  $("appsHelpBtn").addEventListener("click", () => {
+    tick();
+    const open = $("tab-apps").classList.toggle("help-open");
+    $("appsHelpBtn").setAttribute("aria-expanded", open);
+  });
   $("settingsBtn").addEventListener("click", () => { showTab("settings"); $("scroller").scrollTo(0, 0); loadDevices(); loadActivity(); });
   $("settingsBack").addEventListener("click", () => { showTab("status"); $("scroller").scrollTo(0, 0); });
   $("faceIdOn").addEventListener("click", faceIDSetup);
@@ -3472,7 +3483,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("hapticsSwitch").setAttribute("aria-checked", hapticsOn());
     document.body.classList.toggle("no-haptics", !hapticsOn());
   }
-  document.querySelectorAll(".mini-switch, #awakeSwitch, [data-q], #claudeSpark").forEach(addTickPad);
+  document.querySelectorAll(".mini-switch, #awakeSwitch, [data-q], #claudeSpark, #appsHelpBtn").forEach(addTickPad);
   $("hapticsSwitch").addEventListener("click", () => {
     try { localStorage.setItem("haptics", hapticsOn() ? "off" : "on"); } catch (e) {}
     showHaptics();
