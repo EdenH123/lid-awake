@@ -406,10 +406,14 @@ let dashboardHTML = #"""
   .app.lifting img { transition: transform .12s ease; }
   /* The finger's movement on an icon belongs to the icon (slide up to open, hold to rearrange),
      not to page scrolling; the page still scrolls from the spaces between icons. */
-  .app-grid .app { touch-action: none; }
+  .app-grid .app { touch-action: none; transition: opacity .25s ease; }
+  .app-grid.focusing .app:not(.focused) { opacity: 0; }
+  #appsFoot, #openedBar { transition: opacity .25s ease; }
+  #tab-apps:has(.app-grid.focusing) #appsFoot, #tab-apps:has(.app-grid.focusing) #openedBar { opacity: 0; }
+  .app-grid.focusing .app.focused img { opacity: 0; }  /* the floating copy takes its place */
   .app-zoom {
-    position: fixed; z-index: 40; pointer-events: none; border-radius: 15px; transform-origin: center;
-    background: var(--card) center / 100% 100% no-repeat; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+    position: fixed; z-index: 40; pointer-events: none; transform-origin: center;
+    background: transparent center / 100% 100% no-repeat; filter: drop-shadow(0 10px 24px rgba(0,0,0,.25));
   }
   /* Opening: a small press, then a spring back. */
   .app.launched { animation: launch .5s cubic-bezier(.32,.72,0,1); }
@@ -2401,19 +2405,26 @@ let dashboardHTML = #"""
     zoom.className = "app-zoom";
     zoom.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background-image:url("${img.src}")`;
     document.body.append(zoom);
-    // Grows to about twice its size in the middle of the screen (not the whole screen), then fades.
-    const scale = Math.min(2.2, 150 / r.width);
+    // Grows big in the middle of the screen while the other apps fade away, then fades itself.
+    const scale = Math.min(4.2, 250 / r.width);
+    appGrid.classList.add("focusing");
+    button.classList.add("focused");
     const dx = innerWidth / 2 - (r.left + r.width / 2), dy = innerHeight / 2 - (r.top + r.height / 2);
     zoom.animate([
-      { transform: "translate(0,0) scale(1)", borderRadius: "15px" },
-      { transform: `translate(${dx}px,${dy}px) scale(${scale})`, borderRadius: "15px" },
-    ], { duration: 340, easing: SPRING, fill: "forwards" });
+      { transform: "translate(0,0) scale(1)" },
+      { transform: `translate(${dx}px,${dy}px) scale(${scale})` },
+    ], { duration: 440, easing: SPRING, fill: "forwards" });
     // Timers rather than animation events, so the page always moves on (and the layer always goes).
     setTimeout(() => {
       showTab("screen");
       zoom.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "ease-out", fill: "forwards" });
-    }, 320);
-    setTimeout(() => zoom.remove(), 650);
+    }, 420);
+    setTimeout(() => {
+      zoom.remove();
+      $("openedBar").hidden = true;  // already watching it; no "Show screen" offer needed
+      appGrid.classList.remove("focusing");
+      button.classList.remove("focused");
+    }, 750);
   }
 
   function startDrag(app, pointerId, x, y) {
