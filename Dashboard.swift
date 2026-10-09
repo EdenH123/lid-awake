@@ -1061,6 +1061,11 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const $ = id => document.getElementById(id);
   let data = null, fetchedAt = 0, lastOk = 0;
   const TAB_TITLES = { screen: "Screen", apps: "Apps", settings: "Settings" };
+  // The Status page greets you by the time of day (the Mac's name stays underneath).
+  function greeting() {
+    const h = new Date().getHours();
+    return h >= 5 && h < 12 ? "Good morning" : h >= 12 && h < 17 ? "Good afternoon" : h >= 17 && h < 21 ? "Good evening" : "Good night";
+  }
   // While Lid Awake is off the Mac doesn't answer at all (no error, just silence), so give up
   // after a few seconds instead of waiting on a request that never ends.
   function fetchWithin(ms, url, options = {}) {
@@ -1090,7 +1095,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const stale = !lastOk || ago > 10;
     $("live").classList.toggle("stale", stale);
     $("liveText").textContent = !lastOk ? "Can't reach Mac" : stale ? `Last seen ${ago}s ago` : "Live";
-    $("pageTitle").textContent = TAB_TITLES[currentTab] || "Lid Awake";
+    $("pageTitle").textContent = TAB_TITLES[currentTab] || greeting();
     $("settingsBtn").hidden = currentTab !== "status" || $("lockBtn").hidden;
     if (!data) return;
 
@@ -1579,7 +1584,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       void page.offsetWidth;  // restart the animation
       page.classList.add("tab-enter");
     }
-    $("pageTitle").textContent = TAB_TITLES[name] || "Lid Awake";
+    $("pageTitle").textContent = TAB_TITLES[name] || greeting();
     $("settingsBack").hidden = name !== "settings";
     $("live").hidden = name === "settings";
     $("tab-status").hidden = name !== "status";
@@ -1651,7 +1656,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     page.style.top = shift + "px";
     const title = titles.cloneNode(true);
     title.querySelectorAll("[id]").forEach(n => n.removeAttribute("id"));
-    title.querySelector("h1").textContent = TAB_TITLES[s.peer] || "Lid Awake";
+    title.querySelector("h1").textContent = TAB_TITLES[s.peer] || greeting();
     title.setAttribute("aria-hidden", "true");
     title.style.cssText = `position:absolute;left:0;right:0;top:${shift}px;margin:0;translate:${dir * s.width}px 0`;
     titles.style.position = "relative";
