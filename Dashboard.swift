@@ -410,7 +410,7 @@ let dashboardHTML = #"""
   .app-grid.focusing .app:not(.focused) { opacity: 0; }
   #appsFoot, #openedBar { transition: opacity .25s ease; }
   #tab-apps:has(.app-grid.focusing) #appsFoot, #tab-apps:has(.app-grid.focusing) #openedBar { opacity: 0; }
-  .app-grid.focusing .app.focused img { opacity: 0; }  /* the floating copy takes its place */
+  .app-grid.focusing .app.focused > * { opacity: 0; transition: opacity .2s ease; }  /* the floating copy takes its place */
   .app-zoom {
     position: fixed; z-index: 40; pointer-events: none; transform-origin: center;
     background: transparent center / 100% 100% no-repeat; filter: drop-shadow(0 10px 24px rgba(0,0,0,.25));
@@ -2374,6 +2374,7 @@ let dashboardHTML = #"""
         if (up > 8 && up > side) {
           // Following the finger upward: the icon lifts a little and grows.
           clearTimeout(appHoldTimer);
+          if (!app.classList.contains("lifting")) new Image().src = bigIcon(app);
           app.classList.add("lifting");
           img.style.transform = `translateY(${-Math.min(up, 60) * 0.5}px) scale(${1 + Math.min(up, 60) / 300})`;
           if (up > 44) { stop(); slideOpen(app); }
@@ -2393,6 +2394,8 @@ let dashboardHTML = #"""
 
   // Slide up on an icon: open the app, zoom the icon to fill the screen, land on the Screen tab.
   let slideOpened = false;
+  // The sharper icon for the big zoom, fetched as soon as the finger starts to slide.
+  const bigIcon = button => "app-icon.png?size=512&id=" + encodeURIComponent(button.dataset.id);
   function slideOpen(button) {
     const app = (data.apps || []).find(a => a.id === button.dataset.id);
     if (!app) return;
@@ -2401,18 +2404,19 @@ let dashboardHTML = #"""
     openApp(app, button);
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return showTab("screen");
     const img = button.querySelector("img"), r = img.getBoundingClientRect();
+    // Drawn at its final size (from the sharper 512 px icon) and scaled down to start where the icon is.
+    const size = Math.min(innerWidth * 0.86, 360);
     const zoom = document.createElement("div");
     zoom.className = "app-zoom";
-    zoom.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background-image:url("${img.src}")`;
+    zoom.style.cssText = `left:${(innerWidth - size) / 2}px;top:${(innerHeight - size) / 2}px;width:${size}px;height:${size}px;`
+      + `background-image:url("${bigIcon(button)}"),url("${img.src}")`;
     document.body.append(zoom);
-    // Grows big in the middle of the screen while the other apps fade away, then fades itself.
-    const scale = Math.min(4.2, 250 / r.width);
     appGrid.classList.add("focusing");
     button.classList.add("focused");
-    const dx = innerWidth / 2 - (r.left + r.width / 2), dy = innerHeight / 2 - (r.top + r.height / 2);
+    const dx = r.left + r.width / 2 - innerWidth / 2, dy = r.top + r.height / 2 - innerHeight / 2;
     zoom.animate([
+      { transform: `translate(${dx}px,${dy}px) scale(${r.width / size})` },
       { transform: "translate(0,0) scale(1)" },
-      { transform: `translate(${dx}px,${dy}px) scale(${scale})` },
     ], { duration: 440, easing: SPRING, fill: "forwards" });
     // Timers rather than animation events, so the page always moves on (and the layer always goes).
     setTimeout(() => {

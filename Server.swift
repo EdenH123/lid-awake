@@ -535,7 +535,7 @@ final class StatusServer: @unchecked Sendable {
         case ("GET", "/app-icon.png"):
             // Icons only for apps on the owner's list.
             let png: Data? = DispatchQueue.main.sync {
-                PhoneApps.path(for: req.query["id"] ?? "").flatMap { PhoneApps.iconPNG($0) }
+                PhoneApps.path(for: req.query["id"] ?? "").flatMap { PhoneApps.iconPNG($0, size: Int(req.query["size"] ?? "") ?? 256) }
             }
             guard let png else { return text(c, "404 Not Found", "No such app.") }
             reply(c, "200 OK", "image/png", png)

@@ -5,7 +5,7 @@ import CryptoKit
 // phone. The phone only ever sends an id from this list, never a path.
 enum PhoneApps {
     private static let key = "phoneApps"
-    private static var iconCache: [String: Data] = [:]
+    private static var iconCache: [String: Data] = [:]  // by path and size
 
     // Saved app paths, in the order they were added. Main thread only.
     static var paths: [String] {
@@ -21,7 +21,7 @@ enum PhoneApps {
 
     static func remove(_ path: String) {
         paths.removeAll { $0 == path }
-        iconCache[path] = nil
+        iconCache = iconCache.filter { !$0.key.hasPrefix(path + "#") }
     }
 
     static func name(_ path: String) -> String {
@@ -54,10 +54,10 @@ enum PhoneApps {
         paths = ordered + rest
     }
 
-    // The app's icon as a 256×256 PNG (sharp at phone sizes).
-    static func iconPNG(_ path: String) -> Data? {
-        if let cached = iconCache[path] { return cached }
-        let size = 256
+    // The app's icon as a PNG: 256 px for the grid, 512 px for the big zoom when opening.
+    static func iconPNG(_ path: String, size: Int = 256) -> Data? {
+        let size = size >= 512 ? 512 : 256
+        if let cached = iconCache[path + "#\(size)"] { return cached }
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
                                          samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
@@ -66,7 +66,7 @@ enum PhoneApps {
         NSWorkspace.shared.icon(forFile: path).draw(in: NSRect(x: 0, y: 0, width: size, height: size))
         NSGraphicsContext.restoreGraphicsState()
         let png = rep.representation(using: .png, properties: [:])
-        iconCache[path] = png
+        iconCache[path + "#\(size)"] = png
         return png
     }
 
