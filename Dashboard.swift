@@ -323,7 +323,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   #memLine { fill: none; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
   #memArea { opacity: .28; stroke: none; }
   .mem-note { position: absolute; left: 0; right: 0; top: 50%; text-align: center; font-size: 15px; color: var(--muted); }
-  .mem-graph-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .mem-graph-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; padding-right: 40px; }
+  /* Values down the right like the history graphs; the 0% line is the time axis. */
+  .mem-plot { display: flex; gap: 8px; margin-top: 10px; }
+  .mem-plot .mem-graph { flex: 1; min-width: 0; margin-top: 0; }
+  .mem-graph .axis { stroke: var(--faint); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .mem-yaxis { position: relative; flex: none; width: 32px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mem-yaxis span { position: absolute; left: 0; transform: translateY(-50%); }
   .mem-tile { min-height: 0; padding: 12px 16px 14px; }
   .mem-tile .tile-value { font-size: 28px; margin-top: 2px; }
   .mem-apps .row { gap: 12px; }
@@ -1298,10 +1304,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   <div class="hist-body">
     <div class="card mem-graph-card">
       <div class="mem-graph-head"><span>Memory pressure · live</span><span class="mem-pill" id="memPill">—</span></div>
-      <svg class="mem-graph" viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="Memory pressure, last 2 minutes">
-        <line class="grid" x1="0" x2="300" y1="30" y2="30"/><line class="grid" x1="0" x2="300" y1="60" y2="60"/><line class="grid" x1="0" x2="300" y1="90" y2="90"/>
-        <path id="memArea"/><path id="memLine"/>
-      </svg>
+      <div class="mem-plot">
+        <svg class="mem-graph" viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="Memory pressure, last 2 minutes">
+          <line class="grid" x1="0" x2="300" y1="0" y2="0"/><line class="grid" x1="0" x2="300" y1="30" y2="30"/><line class="grid" x1="0" x2="300" y1="60" y2="60"/><line class="grid" x1="0" x2="300" y1="90" y2="90"/>
+          <path id="memArea"/><path id="memLine"/>
+          <line class="axis" x1="0" x2="300" y1="120" y2="120"/>
+        </svg>
+        <div class="mem-yaxis" aria-hidden="true"><span style="top:0">100%</span><span style="top:25%">75%</span><span style="top:50%">50%</span><span style="top:75%">25%</span><span style="top:100%">0%</span></div>
+      </div>
       <div class="mem-note" id="memNote">Measuring…</div>
       <div class="mem-graph-foot"><span>2 min ago</span><span>now</span></div>
     </div>
