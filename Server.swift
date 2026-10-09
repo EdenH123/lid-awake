@@ -351,7 +351,7 @@ final class StatusServer: @unchecked Sendable {
             return text(c, "403 Forbidden", "Forbidden")
         }
         let isStatic = ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icon-512.png", "/sw.js",
-                        "/manifest.webmanifest"].contains(req.path) || req.path.hasPrefix("/splash/")
+                        "/manifest.webmanifest"].contains(req.path) || req.path.hasPrefix("/splash/") || req.path.hasPrefix("/sky/")
 
         if Tailnet.isLoopback(host) {
             // On this Mac's own 127.0.0.1 address the page only points to the Tailscale address:
@@ -381,6 +381,13 @@ final class StatusServer: @unchecked Sendable {
             return reply(c, "200 OK", "image/png", appIcon180)
         case "/icon-512.png":
             return reply(c, "200 OK", "image/png", appIcon512)
+        case let path where path.hasPrefix("/sky/"):
+            // Photos for the opening animation (sunrise, day, sunset, night), bundled with the app.
+            let name = String(path.dropFirst("/sky/".count))
+            guard ["sunrise.jpg", "day.jpg", "sunset.jpg", "night.jpg"].contains(name),
+                  let url = Bundle.main.url(forResource: "sky-" + name.dropLast(4), withExtension: "jpg"),
+                  let jpeg = try? Data(contentsOf: url) else { return text(c, "404 Not Found", "Not found") }
+            return reply(c, "200 OK", "image/jpeg", jpeg)
         case let path where path.hasPrefix("/splash/"):
             // Launch screens (see Splash): needed by iOS before any sign-in.
             guard let png = Splash.png(forPath: path) else { return text(c, "404 Not Found", "Not found") }

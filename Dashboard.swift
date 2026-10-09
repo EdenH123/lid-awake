@@ -2755,7 +2755,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       ${ridge("M0 142 C30 130 60 122 96 134 S150 120 196 136 S262 124 300 132 V190 H0Z", P.ridges[1])}
       ${ridge("M0 156 C46 144 80 146 120 154 S190 140 236 152 S280 148 300 150 V190 H0Z", P.ridges[2])}
       ${ridge("M0 172 C50 162 92 166 140 172 S220 160 300 168 V190 H0Z", P.ridges[3])}
-    </svg>`;
+    </svg>`
+      // A real photo of the same moment on top (the drawing shows until it has loaded).
+      + `<img src="/sky/${kind}.jpg" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">`;
   }
 
   (function playIntro() {
