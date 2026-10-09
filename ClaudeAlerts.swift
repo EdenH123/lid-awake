@@ -47,7 +47,7 @@ enum ClaudeAlerts {
         let title: String, body: String
         switch event["hook_event_name"] as? String {
         case "Stop":
-            guard event["stop_hook_active"] as? Bool != true else { return }
+            guard event["stop_hook_active"] as? Bool != true else { return note(event, "skipped: hook re-run") }
             lastFinished[session] = now
             title = "Claude finished"
             body = lastReply(event["transcript_path"] as? String).map { "\(project): \($0)" } ?? "\(project) is done."
@@ -57,23 +57,31 @@ enum ClaudeAlerts {
             let waiting = type == "idle_prompt" || message.lowercased().contains("waiting for your input")
             if waiting {
                 // Already told them it finished; the 60-second "still waiting" nudge adds nothing.
-                if let done = lastFinished[session], now.timeIntervalSince(done) < 600 { return }
+                if let done = lastFinished[session], now.timeIntervalSince(done) < 600 { return note(event, "skipped: already said finished") }
                 title = "Claude is waiting for you"
             } else if type == "permission_prompt" || message.lowercased().contains("permission") {
                 title = "Claude needs your OK"
             } else if type.isEmpty || type == "elicitation_dialog" {
                 title = "Claude needs you"
             } else {
-                return  // e.g. "signed in"
+                return note(event, "skipped: not a call for you")  // e.g. "signed in"
             }
             body = message.isEmpty ? project : "\(project): \(message)"
         default:
-            return
+            return note(event, "skipped: other event")
         }
-        guard ownerAway() else { return }
-        if let last = lastAlert[session], now.timeIntervalSince(last) < 20 { return }
+        guard ownerAway() else { return note(event, "skipped: you were at the Mac") }
+        if let last = lastAlert[session], now.timeIntervalSince(last) < 20 { return note(event, "skipped: too soon after the last one") }
         lastAlert[session] = now
+        note(event, "sending \"\(title)\" to \(WebPush.count) phone(s)")
         WebPush.send(.claudeSession, title: title, body: body)
+    }
+
+    // One line per event in the stream log (no message text), to see why an alert did or didn't go.
+    private static func note(_ event: [String: Any], _ what: String) {
+        let kind = [event["hook_event_name"] as? String, event["notification_type"] as? String].compactMap { $0 }.joined(separator: "/")
+        let idle = Int(CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!))
+        StreamStats.shared.note("claude \(kind) → \(what) (idle \(idle) s, lid \(FrameStream.lidClosed() ? "closed" : "open"))")
     }
 
     // Away: no keyboard, mouse or trackpad on this Mac for 2 minutes, or the lid is closed.
