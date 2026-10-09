@@ -207,6 +207,15 @@ let dashboardHTML = #"""
     content: ""; position: absolute; left: 50%; top: 0; transform: translateX(-50%);
     width: 16%; height: 5px; background: var(--mac-groove); border-radius: 0 0 6px 6px;
   }
+  /* Holding still on the screen picture: a ring fills under the finger; when it closes, that's a right-click. */
+  .hold-ring {
+    position: fixed; z-index: 30; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
+    pointer-events: none; border: 3px solid rgba(255,255,255,.9); box-shadow: 0 0 0 1px rgba(0,0,0,.25), inset 0 0 0 1px rgba(0,0,0,.25);
+    opacity: 0; transform: scale(.4);
+  }
+  .hold-ring.on { animation: hold-ring .8s linear forwards; }
+  .hold-ring.done { animation: none; opacity: 1; transform: scale(1); background: rgba(255,255,255,.35); }
+  @keyframes hold-ring { 0% { opacity: 0; transform: scale(.4); } 25% { opacity: .9; } 100% { opacity: 1; transform: scale(1); } }
   .screen-wrap {
     position: relative; background: #000; border-radius: 4px; overflow: hidden; min-height: 120px;
     touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
@@ -1758,6 +1767,23 @@ let dashboardHTML = #"""
   $("zoomReset").addEventListener("click", () => { zoom = 1; panX = panY = 0; applyZoom(); });
 
   // ----- Touches on the screen picture -----
+  // A tap is a click; holding still for 0.8 s is a right-click, shown by a ring that fills
+  // under the finger (lift before it closes and it stays a normal click).
+  const holdRing = document.createElement("div");
+  holdRing.className = "hold-ring";
+  document.body.append(holdRing);
+  function showHoldRing(x, y) {
+    holdRing.className = "hold-ring";
+    holdRing.style.left = x + "px";
+    holdRing.style.top = y + "px";
+    void holdRing.offsetWidth;  // restart the fill
+    holdRing.classList.add("on");
+  }
+  function hideHoldRing() { holdRing.className = "hold-ring"; }
+  function holdRingDone() {
+    holdRing.className = "hold-ring done";
+    setTimeout(() => { if (holdRing.classList.contains("done")) hideHoldRing(); }, 350);
+  }
   const pointers = new Map();
   let start = null, last = null, moved = false, held = false, holdTimer = null, pinch = null;
   let lastTap = 0, lastTapPos = null;
@@ -1784,6 +1810,7 @@ let dashboardHTML = #"""
     if (pointers.size === 2) {
       // Second finger: this is a pinch, not a click.
       clearTimeout(holdTimer);
+      hideHoldRing();
       const p = pinchInfo();
       pinch = { ...p, zoom, panX, panY };
       return;
@@ -1795,11 +1822,13 @@ let dashboardHTML = #"""
     start = last = { x: e.clientX, y: e.clientY };
     moved = false; held = false;
     const p = norm(e);
+    showHoldRing(e.clientX, e.clientY);
     holdTimer = setTimeout(() => {
       held = true;
+      holdRingDone();
       send({ type: "click", button: "right", ...p });
       if (navigator.vibrate) navigator.vibrate(10);
-    }, 550);
+    }, 800);
   });
   wrap.addEventListener("pointermove", e => {
     if (padMode() || !pointers.has(e.pointerId)) return;
@@ -1820,6 +1849,7 @@ let dashboardHTML = #"""
     if (!moved && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) {
       moved = true;
       clearTimeout(holdTimer);
+      hideHoldRing();
     }
     if (moved && !held) {
       const dx = e.clientX - last.x, dy = e.clientY - last.y;
@@ -1845,6 +1875,7 @@ let dashboardHTML = #"""
       return;
     }
     clearTimeout(holdTimer);
+    if (!held) hideHoldRing();
     if (!start) return;
     if (e.type === "pointerup" && !moved && !held) {
       const p = norm(e);
