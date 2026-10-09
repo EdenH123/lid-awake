@@ -799,7 +799,9 @@ if CommandLine.arguments.contains("--selftest") {
                  "controlPermission \(controlPermission())",
                  // The temperature graph's source: macOS's power log, as read by the installed app.
                  "temperature history: \(((try? JSONSerialization.jsonObject(with: PowerHistory.temperature(hours: 6))) as? [String: Any])?["points"].flatMap { $0 as? [Any] }?.count ?? 0) readings in 6 h",
-                 "battery history: \(((try? JSONSerialization.jsonObject(with: PowerHistory.battery(hours: 6))) as? [String: Any])?["points"].flatMap { $0 as? [Any] }?.count ?? 0) readings in 6 h"]
+                 "battery history: \(((try? JSONSerialization.jsonObject(with: PowerHistory.battery(hours: 6))) as? [String: Any])?["points"].flatMap { $0 as? [Any] }?.count ?? 0) readings in 6 h",
+                 // The Memory window, as the installed app sees it (other programs' sizes need the same user).
+                 { let m = MemoryInfo.snapshot(); return "memory: top \((m["top"] as? [Any])?.count ?? 0) apps, used \(((m["used"] as? UInt64) ?? 0) >> 30) of \(((m["total"] as? UInt64) ?? 0) >> 30) GB, pressure \(m["pressure"] as? Int ?? -1) \(m["level"] as? String ?? "?")" }()]
     let done = DispatchSemaphore(value: 0)
     Task {
         let jpeg = await ScreenCapturer.shared.jpeg()
