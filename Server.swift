@@ -634,6 +634,11 @@ final class StatusServer: @unchecked Sendable {
         case ("GET", "/battery-history"):
             reply(c, "200 OK", "application/json", PowerHistory.battery(hours: Double(req.query["hours"] ?? "") ?? 24))
 
+        // The Memory window: read fresh each time (the phone asks every 2 s while it's open).
+        case ("GET", "/memory"):
+            let snap = MemoryInfo.snapshot { PhoneApps.id($0) }
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: snap)) ?? Data("{}".utf8))
+
         case ("GET", "/screen.jpg"):
             guard remoteAllowed() else {
                 return text(c, "403 Forbidden", "Screen access is off. Turn on “Allow screen & control from phone” in the Lid Awake menu on your Mac.")

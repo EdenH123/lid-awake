@@ -72,4 +72,11 @@ rm -f /tmp/lidawake-passkeys.$$
 if sh ./webpush_check.sh > /tmp/lidawake-push.$$ 2>&1; then echo "PASS alert encryption"
 else echo "FAIL alert encryption:"; cat /tmp/lidawake-push.$$; fail=1; fi
 rm -f /tmp/lidawake-push.$$
+# Memory window: numbers checked on this Mac, then what the installed app itself can read.
+if sh ./memory_check.sh > /tmp/lidawake-mem.$$ 2>&1; then echo "PASS memory numbers ($(grep -c '^PASS' /tmp/lidawake-mem.$$) checks)"
+else echo "FAIL memory numbers:"; grep -v '^PASS' /tmp/lidawake-mem.$$; fail=1; fi
+rm -f /tmp/lidawake-mem.$$
+mm=$(grep "^memory:" "$LOG")
+if echo "$mm" | grep -q "top [1-5] apps"; then echo "PASS memory in the app (${mm#memory: })"
+else echo "FAIL memory in the app: '$mm'"; fail=1; fi
 exit $fail
