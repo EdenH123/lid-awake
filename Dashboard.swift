@@ -241,6 +241,17 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   /* Status: Claude plan usage, two meters in one card. */
   .usage { display: grid; gap: 16px; padding: 16px; }
+  /* Claude's spark beside the title. A tap ripples its rays like Claude thinking, then a little pop. */
+  .claude-head { display: flex; align-items: center; gap: 6px; }
+  .claude-spark { position: relative; flex: none; width: 36px; height: 36px; margin: -10px -9px -10px -11px; padding: 10px;
+    border: 0; background: none; -webkit-tap-highlight-color: transparent; }
+  .claude-spark svg { display: block; width: 16px; height: 16px; overflow: visible; }
+  .claude-spark line { stroke: #d97757; stroke-linecap: round; transform-box: view-box; transform-origin: 12px 12px; }
+  .claude-spark.go line { animation: spark-think .6s ease-in-out calc(var(--i) * 50ms) 2; }
+  .claude-spark.go svg { animation: spark-pop .5s cubic-bezier(.3, 1.5, .5, 1) 1.7s; }
+  @keyframes spark-think { 50% { transform: scale(.4); } }
+  @keyframes spark-pop { 40% { transform: scale(1.35) rotate(20deg); } }
+  @media (prefers-reduced-motion: reduce) { .claude-spark.go line, .claude-spark.go svg { animation: none; } }
   .usage-row { display: grid; gap: 0; }
   .usage-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 17px; }
   .usage-pct { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -884,7 +895,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     </div>
 
     <div class="section" id="claudeSection" hidden>
-      <div class="section-head">Claude</div>
+      <div class="section-head claude-head"><button type="button" class="claude-spark" id="claudeSpark" aria-label="Claude"><svg viewBox="0 0 24 24" aria-hidden="true"><line style="--i:0" x1="12" y1="12" x2="12.00" y2="2.00" stroke-width="2.8"/><line style="--i:1" x1="12" y1="12" x2="15.75" y2="5.50" stroke-width="2.2"/><line style="--i:2" x1="12" y1="12" x2="20.23" y2="7.25" stroke-width="2.8"/><line style="--i:3" x1="12" y1="12" x2="19.00" y2="12.00" stroke-width="2.2"/><line style="--i:4" x1="12" y1="12" x2="20.66" y2="17.00" stroke-width="2.8"/><line style="--i:5" x1="12" y1="12" x2="16.00" y2="18.93" stroke-width="2.2"/><line style="--i:6" x1="12" y1="12" x2="12.00" y2="21.00" stroke-width="2.8"/><line style="--i:7" x1="12" y1="12" x2="8.25" y2="18.50" stroke-width="2.2"/><line style="--i:8" x1="12" y1="12" x2="3.34" y2="17.00" stroke-width="2.8"/><line style="--i:9" x1="12" y1="12" x2="5.00" y2="12.00" stroke-width="2.2"/><line style="--i:10" x1="12" y1="12" x2="3.77" y2="7.25" stroke-width="2.8"/><line style="--i:11" x1="12" y1="12" x2="8.00" y2="5.07" stroke-width="2.2"/></svg></button>Claude</div>
       <section class="card usage">
         <div class="usage-row">
           <div class="usage-top"><span>Current session</span><span class="usage-pct" id="claude5hPct">—</span></div>
@@ -2696,6 +2707,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   });
 
   // ---------- Claude plan usage ----------
+  $("claudeSpark").addEventListener("click", () => {
+    const spark = $("claudeSpark");
+    spark.classList.remove("go");
+    void spark.offsetWidth;  // restart the animation on every tap
+    spark.classList.add("go");
+  });
+  $("claudeSpark").addEventListener("animationend", e => { if (e.target.tagName === "svg") $("claudeSpark").classList.remove("go"); });
   // Numbers come from Claude Code after each reply, so show how old they are.
   function renderClaude() {
     const c = data.claude;
@@ -3314,7 +3332,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("hapticsSwitch").setAttribute("aria-checked", hapticsOn());
     document.body.classList.toggle("no-haptics", !hapticsOn());
   }
-  document.querySelectorAll(".mini-switch, #awakeSwitch, [data-q]").forEach(addTickPad);
+  document.querySelectorAll(".mini-switch, #awakeSwitch, [data-q], #claudeSpark").forEach(addTickPad);
   $("hapticsSwitch").addEventListener("click", () => {
     try { localStorage.setItem("haptics", hapticsOn() ? "off" : "on"); } catch (e) {}
     showHaptics();
