@@ -243,6 +243,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .usage { display: grid; gap: 16px; padding: 16px; }
   /* Claude's spark beside the title. A tap ripples its rays like Claude thinking, then a little pop. */
   .claude-head { display: flex; align-items: center; gap: 6px; }
+  /* Apple's logo beside the Mac title: the system font draws it on iPhone, in the title's own color. */
+  .mac-head { display: flex; align-items: center; gap: 6px; }
+  .apple-logo { font-family: -apple-system, system-ui; font-size: 15px; line-height: 1; text-transform: none; margin-top: -2px; }
   .claude-spark { position: relative; flex: none; width: 36px; height: 36px; margin: -10px -9px -10px -11px; padding: 10px;
     border: 0; background: none; -webkit-tap-highlight-color: transparent; }
   .claude-spark svg { display: block; width: 16px; height: 16px; overflow: visible; }
@@ -912,7 +915,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     </div>
 
     <div class="section">
-      <div class="section-head">Mac</div>
+      <div class="section-head mac-head"><span class="apple-logo" aria-hidden="true">&#xF8FF;</span>Mac</div>
       <div class="list health-list">
         <div class="row"><span class="title">Processor</span><div class="meter"><div id="cpuBar" style="width:0"></div></div><span class="value" id="cpuValue">—</span></div>
         <div class="row"><span class="title">Memory</span><div class="meter"><div id="memBar" style="width:0"></div></div><span class="value" id="memValue">—</span></div>
