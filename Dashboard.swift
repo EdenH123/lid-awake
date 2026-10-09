@@ -22,7 +22,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 <style>
   /* iOS system colors and materials (light / dark), as in Settings, Battery and Weather. */
   :root {
-    --bg: #f2f2f7; --card: #ffffff; --card2: #e5e5ea; --text: #000000;
+    --bg: #f2f2f7; --card: #ffffff; --card2: #e5e5ea; --text: #000000; --raised: #ffffff;
     --muted: rgba(60,60,67,.6); --faint: rgba(60,60,67,.3); --line: rgba(60,60,67,.29); --fill: rgba(120,120,128,.16);
     --green: #34c759; --amber: #ff9500; --red: #ff3b30; --blue: #007aff; --gray: #8e8e93;
     --bar: rgba(255,255,255,.78); --bar-edge: rgba(0,0,0,.06); --bar-shadow: 0 6px 24px rgba(0,0,0,.10);
@@ -39,7 +39,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   /* Dark: follows the iPhone (Automatic), or chosen in Settings → Appearance. */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #000000; --card: #1c1c1e; --card2: #2c2c2e; --text: #ffffff;
+      --bg: #000000; --card: #1c1c1e; --card2: #2c2c2e; --text: #ffffff; --raised: #2c2c2e;
       --muted: rgba(235,235,245,.6); --faint: rgba(235,235,245,.3); --line: rgba(84,84,88,.65); --fill: rgba(120,120,128,.32);
       --green: #30d158; --amber: #ff9f0a; --red: #ff453a; --blue: #0a84ff; --gray: #8e8e93;
       --bar: rgba(30,30,32,.72); --bar-edge: rgba(255,255,255,.08); --bar-shadow: 0 6px 24px rgba(0,0,0,.5);
@@ -54,7 +54,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     }
   }
   :root[data-theme="dark"] {
-      --bg: #000000; --card: #1c1c1e; --card2: #2c2c2e; --text: #ffffff;
+      --bg: #000000; --card: #1c1c1e; --card2: #2c2c2e; --text: #ffffff; --raised: #2c2c2e;
       --muted: rgba(235,235,245,.6); --faint: rgba(235,235,245,.3); --line: rgba(84,84,88,.65); --fill: rgba(120,120,128,.32);
       --green: #30d158; --amber: #ff9f0a; --red: #ff453a; --blue: #0a84ff; --gray: #8e8e93;
       --bar: rgba(30,30,32,.72); --bar-edge: rgba(255,255,255,.08); --bar-shadow: 0 6px 24px rgba(0,0,0,.5);
@@ -247,6 +247,26 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .tile-chev { width: 7px !important; height: 12px !important; margin-left: auto; stroke-width: 2.2 !important; color: var(--faint); }
   .sheet-shade { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.4); opacity: 0; transition: opacity .35s ease; }
   .sheet-shade.show { opacity: 1; }
+  /* Ask card: our own "are you sure?" box instead of the plain system one (option B). */
+  .ask-shade { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px;
+    background: rgba(0,0,0,.45); opacity: 0; transition: opacity .25s ease; }
+  .ask-shade.show { opacity: 1; }
+  .ask-card { width: 100%; max-width: 330px; padding: 26px 20px 18px; border-radius: 28px; background: var(--raised);
+    text-align: center; transform: scale(.9); transition: transform .32s cubic-bezier(.2,1.3,.4,1); }
+  .ask-shade.show .ask-card { transform: none; }
+  .ask-icon { --tint: var(--blue); width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 50%; display: grid; place-items: center;
+    color: var(--tint); background: color-mix(in srgb, var(--tint) 18%, transparent); }
+  .ask-icon svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .ask-card h2 { margin: 0 0 6px; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+  .ask-card p { margin: 0 0 20px; font-size: 15px; line-height: 1.4; color: var(--muted); }
+  .ask-card button { position: relative; display: block; width: 100%; padding: 15px 0; border: 0; border-radius: 16px;
+    font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .15s ease, opacity .15s ease; }
+  .ask-card button:active { transform: scale(.97); opacity: .85; }
+  .ask-card:focus, .ask-card button:focus { outline: none; }
+  .ask-card button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  #askOk { --tint: var(--red); background: var(--tint); color: #fff; margin-bottom: 8px; }
+  #askCancel { background: var(--fill); color: var(--text); }
+  @media (prefers-reduced-motion: reduce) { .ask-shade, .ask-card { transition: none; } }
   .hist-sheet {
     position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto;
     height: calc(100% - env(safe-area-inset-top) - 18px); display: flex; flex-direction: column;
@@ -1172,6 +1192,15 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <button data-tab="apps">
       <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="2.5" width="8" height="8" rx="2.4"/><rect x="14" y="2.5" width="8" height="8" rx="2.4"/><rect x="4" y="12.5" width="8" height="8" rx="2.4"/><rect x="14" y="12.5" width="8" height="8" rx="2.4"/></svg>Apps</button>
   </nav>
+<div class="ask-shade" id="askShade" hidden>
+  <div class="ask-card" id="askCard" tabindex="-1" role="alertdialog" aria-modal="true" aria-labelledby="askTitle" aria-describedby="askText">
+    <div class="ask-icon" id="askIcon"></div>
+    <h2 id="askTitle"></h2>
+    <p id="askText"></p>
+    <button type="button" id="askOk"></button>
+    <button type="button" id="askCancel"></button>
+  </div>
+</div>
 <div class="sheet-shade" id="histShade" hidden></div>
 <section class="hist-sheet" id="histSheet" role="dialog" aria-label="History" aria-hidden="true">
   <div class="sheet-head" id="histHead"><span id="histTitle"></span><button type="button" id="histDone">Done</button></div>
@@ -2684,12 +2713,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (!res.ok && res.status !== 204) setScreenMsg(await res.text());
     }).catch(() => setScreenMsg("Can't reach your Mac."));
   }
-  $("lockMacBtn").addEventListener("click", () => {
-    if (!confirm("Lock your Mac?\n\nTo unlock it from here, tap Type directly, type your Mac password and press Return.")) return;
+  $("lockMacBtn").addEventListener("click", async () => {
+    if (!await ask({ icon: "lock", title: "Lock your Mac?", ok: "Lock", tint: "--blue",
+      text: "To unlock it from here, tap Type directly, type your Mac password and press Return." })) return;
     power("lock");
   });
-  $("screenOffBtn").addEventListener("click", () => {
-    if (!confirm("Turn off your Mac's screen?\n\nYour Mac may lock too. Tap “Wake screen” to turn it back on.")) return;
+  $("screenOffBtn").addEventListener("click", async () => {
+    if (!await ask({ icon: "screenOff", title: "Turn off the screen?", ok: "Turn off",
+      text: "Your Mac may lock too. Tap “Wake screen” to turn it back on." })) return;
     screenOffAt = Date.now(); wakeAt = 0;
     showScreenOff();
     power("displayoff");
@@ -2758,12 +2789,51 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   $("qualityBtn").addEventListener("click", () => togglePanel($("qualityBtn"), $("qualityPanel")));
   $("helpBtn").addEventListener("click", () => togglePanel($("helpBtn"), $("helpPanel")));
 
+  // ---------- Ask card ----------
+  // Our own "are you sure?" card (replaces confirm()). Resolves true for the main button.
+  const ASK_ICONS = {
+    moon: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    screenOff: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/>',
+  };
+  let askDone = null;
+  function ask({ icon, title, text, ok, cancel = "Cancel", tint = "--red" }) {
+    if (askDone) askDone(false);
+    $("askIcon").innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + ASK_ICONS[icon] + '</svg>';
+    $("askOk").style.setProperty("--tint", "var(" + tint + ")");
+    $("askTitle").textContent = title;
+    $("askText").textContent = text;
+    $("askOk").firstChild.nodeValue = ok;
+    $("askCancel").firstChild.nodeValue = cancel;
+    const shade = $("askShade");
+    shade.hidden = false;
+    requestAnimationFrame(() => requestAnimationFrame(() => shade.classList.add("show")));
+    $("askCard").focus({ preventScroll: true });
+    return new Promise(resolve => {
+      askDone = answer => {
+        askDone = null;
+        shade.classList.remove("show");
+        setTimeout(() => { if (!askDone) shade.hidden = true; }, 260);
+        resolve(answer);
+      };
+    });
+  }
+  $("askOk").append(document.createTextNode(""));
+  $("askCancel").append(document.createTextNode(""));
+  addTickPad($("askOk"));
+  addTickPad($("askCancel"));
+  $("askOk").addEventListener("click", () => { tick(); if (askDone) askDone(true); });
+  $("askCancel").addEventListener("click", () => { tick(); if (askDone) askDone(false); });
+  $("askShade").addEventListener("click", e => { if (e.target === $("askShade") && askDone) askDone(false); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && askDone) askDone(false); });
+
   // ---------- Lid-awake switch ----------
   // Only "off" is possible from here: while lid-awake is off this page is closed.
   $("awakeSwitch").addEventListener("click", async () => {
     if (!data || !data.lidAwake) return;
     tick();
-    const ok = confirm("Turn off Lid Awake?\n\nYour Mac will sleep normally, and this page will close until you turn Lid Awake on again on the Mac.");
+    const ok = await ask({ icon: "moon", title: "Let your Mac sleep?", ok: "Turn off", cancel: "Keep awake",
+      text: "Lid Awake turns off and this page closes until you turn it back on at the Mac." });
     if (!ok) return;
     $("awakeSwitch").disabled = true;
     try {
