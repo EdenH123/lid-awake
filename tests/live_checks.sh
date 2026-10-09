@@ -52,6 +52,9 @@ else echo "FAIL fast still frame: first '$fastFirst', last '$fastLast'"; fail=1;
 th=$(grep "^temperature history:" "$LOG")
 if echo "$th" | grep -q "history: [1-9]"; then echo "PASS temperature history (${th#temperature history: })"
 else echo "FAIL temperature history: '$th'"; fail=1; fi
+bh=$(grep "^battery history:" "$LOG")
+if echo "$bh" | grep -q "history: [1-9]"; then echo "PASS battery history (${bh#battery history: })"
+else echo "FAIL battery history: '$bh'"; fail=1; fi
 grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL live input"; fail=1; }
 # Flow control: a page that confirms frames never has more than 2 waiting on the way.
 held=$(grep "^live flow:" "$LOG" | sed -n 's/^live flow: \([0-9]*\) frames.*/\1/p')

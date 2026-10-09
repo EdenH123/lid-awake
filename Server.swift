@@ -628,9 +628,11 @@ final class StatusServer: @unchecked Sendable {
             }
             reply(c, "200 OK", "application/json", data)
 
-        // Battery temperature over the last hours (from macOS's own power log) for the graph.
+        // Battery temperature and charge over the last hours (from macOS's own power log) for the graphs.
         case ("GET", "/temp-history"):
-            reply(c, "200 OK", "application/json", TempHistory.json(hours: Double(req.query["hours"] ?? "") ?? 24))
+            reply(c, "200 OK", "application/json", PowerHistory.temperature(hours: Double(req.query["hours"] ?? "") ?? 24))
+        case ("GET", "/battery-history"):
+            reply(c, "200 OK", "application/json", PowerHistory.battery(hours: Double(req.query["hours"] ?? "") ?? 24))
 
         case ("GET", "/screen.jpg"):
             guard remoteAllowed() else {
