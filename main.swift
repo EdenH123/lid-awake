@@ -802,6 +802,13 @@ if CommandLine.arguments.contains("--selftest") {
                  "battery history: \(((try? JSONSerialization.jsonObject(with: PowerHistory.battery(hours: 6))) as? [String: Any])?["points"].flatMap { $0 as? [Any] }?.count ?? 0) readings in 6 h",
                  // The Memory window, as the installed app sees it (other programs' sizes need the same user).
                  { let m = MemoryInfo.snapshot(); return "memory: top \((m["top"] as? [Any])?.count ?? 0) apps, used \(((m["used"] as? UInt64) ?? 0) >> 30) of \(((m["total"] as? UInt64) ?? 0) >> 30) GB, pressure \(m["pressure"] as? Int ?? -1) \(m["level"] as? String ?? "?")" }()]
+    // The processor graph: stretches and apps from the same log, and its icon route's guard.
+    let cpu = (try? JSONSerialization.jsonObject(with: PowerHistory.cpu(hours: 6))) as? [String: Any]
+    let cpuApps = cpu?["apps"] as? [[String: Any]] ?? []
+    let cpuApp = cpuApps.first { $0["kind"] as? String == "app" }?["key"] as? String
+    lines.append("cpu history: \((cpu?["intervals"] as? [Any])?.count ?? 0) stretches, \(cpuApps.count) apps in 6 h")
+    lines.append("cpu icon: \(cpuApp.flatMap { PowerHistory.iconPNG(key: $0) }?.count ?? 0) bytes, unlisted "
+                 + (PowerHistory.iconPNG(key: "com.apple.finder.not-listed") == nil ? "refused" : "SENT"))
     let done = DispatchSemaphore(value: 0)
     Task {
         let jpeg = await ScreenCapturer.shared.jpeg()

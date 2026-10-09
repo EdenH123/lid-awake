@@ -633,6 +633,13 @@ final class StatusServer: @unchecked Sendable {
             reply(c, "200 OK", "application/json", PowerHistory.temperature(hours: Double(req.query["hours"] ?? "") ?? 24))
         case ("GET", "/battery-history"):
             reply(c, "200 OK", "application/json", PowerHistory.battery(hours: Double(req.query["hours"] ?? "") ?? 24))
+        case ("GET", "/cpu-history"):
+            reply(c, "200 OK", "application/json", PowerHistory.cpu(hours: Double(req.query["hours"] ?? "") ?? 24))
+        case ("GET", "/cpu-icon"):
+            // Only apps seen in the processor history, so the page can't fetch just any app's icon.
+            let png: Data? = DispatchQueue.main.sync { PowerHistory.iconPNG(key: req.query["key"] ?? "") }
+            guard let png else { return text(c, "404 Not Found", "No such app.") }
+            reply(c, "200 OK", "image/png", png)
 
         // The Memory window: read fresh each time (the phone asks every 2 s while it's open).
         case ("GET", "/memory"):

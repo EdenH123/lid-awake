@@ -86,10 +86,8 @@ enum PhoneApps {
         paths = ordered + rest
     }
 
-    // The app's icon as a PNG: 256 px for the grid, 512 px for the big zoom when opening.
-    static func iconPNG(_ path: String, size: Int = 256) -> Data? {
-        let size = size >= 512 ? 512 : 256
-        if let cached = iconCache[path + "#\(size)"] { return cached }
+    // The app's icon drawn at `size` px (the processor graph also reads its colours).
+    static func iconBitmap(_ path: String, size: Int) -> NSBitmapImageRep? {
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
                                          samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
@@ -97,7 +95,14 @@ enum PhoneApps {
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         NSWorkspace.shared.icon(forFile: path).draw(in: NSRect(x: 0, y: 0, width: size, height: size))
         NSGraphicsContext.restoreGraphicsState()
-        let png = rep.representation(using: .png, properties: [:])
+        return rep
+    }
+
+    // The app's icon as a PNG: 256 px for the grid, 512 px for the big zoom when opening.
+    static func iconPNG(_ path: String, size: Int = 256) -> Data? {
+        let size = size >= 512 ? 512 : 256
+        if let cached = iconCache[path + "#\(size)"] { return cached }
+        let png = iconBitmap(path, size: size)?.representation(using: .png, properties: [:])
         iconCache[path + "#\(size)"] = png
         return png
     }
