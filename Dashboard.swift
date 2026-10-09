@@ -462,7 +462,6 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .mtp .tool svg { width: 21px; height: 21px; stroke-width: 1.7; }
   .mtp .tool .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .mtp .tool .hd { font-size: 11px; padding: 2px 5px; border-radius: 5px; border-width: 1.6px; }
-  .mtp .tool.help { margin-left: 0; font-size: 18px; font-weight: 500; }
   .mtp .tool:active { opacity: 1; transform: scale(.9); background: var(--alu-press); }
   .mtp .tool.on, .mtp .tool[aria-expanded="true"] { color: var(--blue); background: var(--alu-press); filter: none; }
   .mtp .trackpad { background: transparent; box-shadow: none; border-radius: 0; color: var(--alu-ink); opacity: .9; }
@@ -618,7 +617,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
      over the page, with a soft round icon on each row. Tapping anywhere else closes it. */
   .glass-tips {
     position: fixed; z-index: 20; top: 100px; right: 16px; width: min(360px, calc(100vw - 32px));
-    max-height: calc(100vh - 140px); overflow-y: auto; overscroll-behavior: contain;
+    overflow-y: auto; overscroll-behavior: contain;
     display: grid; gap: 2px; padding: 8px 16px; border-radius: 26px; isolation: isolate;
     background: var(--glass);
     box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim), inset 0 0 0 .5px var(--glass-edge);
@@ -715,7 +714,6 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   .tool svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .tool.icon { width: 34px; padding: 0; justify-content: center; }
-  .tool.help { margin-left: auto; font-size: 16px; }
   .tool.on, .tool[aria-expanded="true"] { background: var(--blue); color: #fff; }
   .tool:active { opacity: .6; }
   .tool .hd { font-size: 11px; font-weight: 800; letter-spacing: .03em; border: 1.5px solid currentColor; border-radius: 4px; padding: 1px 4px; line-height: 1.1; }
@@ -915,6 +913,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="top-actions">
     <button type="button" class="lock-btn" id="settingsBtn" aria-label="Settings" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.00 4.60 L13.87 2.58 L15.67 3.13 L16.11 5.85 L17.23 6.77 L19.98 6.67 L20.87 8.33 L19.26 10.56 L19.40 12.00 L21.42 13.87 L20.87 15.67 L18.15 16.11 L17.23 17.23 L17.33 19.98 L15.67 20.87 L13.44 19.26 L12.00 19.40 L10.13 21.42 L8.33 20.87 L7.89 18.15 L6.77 17.23 L4.02 17.33 L3.13 15.67 L4.74 13.44 L4.60 12.00 L2.58 10.13 L3.13 8.33 L5.85 7.89 L6.77 6.77 L6.67 4.02 L8.33 3.13 L10.56 4.74Z"/><circle cx="12" cy="12" r="3"/></svg></button>
     <button type="button" class="lock-btn help-btn" id="appsHelpBtn" aria-label="How to use Apps" aria-expanded="false" aria-controls="appsHelp" hidden>?</button>
+    <button type="button" class="lock-btn help-btn" id="helpBtn" aria-label="How to use Screen" aria-expanded="false" aria-controls="helpPanel" hidden>?</button>
     <button class="lock-btn" id="lockBtn" aria-label="Lock this page" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
     </div>
@@ -1185,7 +1184,6 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <button type="button" class="tool" id="keysBtn" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><text x="12" y="17" text-anchor="middle" font-size="13.5" fill="currentColor" stroke="none" font-family="-apple-system, system-ui, sans-serif">⌘</text></svg><span class="label">Keys</span></button>
         <button type="button" class="tool icon" id="lockMacBtn" aria-label="Lock Mac"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
         <button type="button" class="tool icon" id="screenOffBtn" aria-label="Turn the Mac's screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
-        <button type="button" class="tool icon help" id="helpBtn" aria-expanded="false" aria-label="How to use">?</button>
       </div>
       <div class="trackpad" id="trackpad">Trackpad</div>
     </div>
@@ -1327,6 +1325,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("pageTitle").textContent = TAB_TITLES[currentTab] || greeting();
     $("settingsBtn").hidden = currentTab !== "status" || $("lockBtn").hidden;
     $("appsHelpBtn").hidden = currentTab !== "apps" || $("lockBtn").hidden || !$("appsEmpty").hidden;
+    $("helpBtn").hidden = currentTab !== "screen" || $("lockBtn").hidden;
     if (!data) return;
     revealPage();
 
@@ -1764,14 +1763,15 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     renderFaceIDRow();
   }
   $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
-  // A glass how-to pane drops from its ? button: below it if it fits above the tab bar, else above it.
+  // A glass how-to pane drops from its ? button (top right, under the status bar) and, if it's
+  // taller than the room above the tab bar, scrolls inside rather than covering anything.
   function placeTips(pane, btn) {
-    const r = btn.getBoundingClientRect(), h = pane.offsetHeight, w = pane.offsetWidth;
-    const right = Math.max(12, innerWidth - r.right - 4), left = innerWidth - right - w;
-    const below = r.bottom + 10 + h <= innerHeight - 96;
-    pane.style.top = (below ? r.bottom + 10 : Math.max(12, r.top - 10 - h)) + "px";
+    const r = btn.getBoundingClientRect(), top = r.bottom + 10;
+    pane.style.top = top + "px";
+    pane.style.maxHeight = Math.max(160, innerHeight - top - 96) + "px";
+    const right = Math.max(12, innerWidth - r.right - 4), left = innerWidth - right - pane.offsetWidth;
     pane.style.right = right + "px";
-    pane.style.transformOrigin = `${r.left + r.width / 2 - left}px ${below ? -10 : h + 10}px`;
+    pane.style.transformOrigin = `${r.left + r.width / 2 - left}px -10px`;
   }
   function setAppsHelp(open) {
     $("tab-apps").classList.toggle("help-open", open);
@@ -3568,7 +3568,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("hapticsSwitch").setAttribute("aria-checked", hapticsOn());
     document.body.classList.toggle("no-haptics", !hapticsOn());
   }
-  document.querySelectorAll(".mini-switch, #awakeSwitch, [data-q], #claudeSpark, #appsHelpBtn").forEach(addTickPad);
+  document.querySelectorAll(".mini-switch, #awakeSwitch, [data-q], #claudeSpark, #appsHelpBtn, #helpBtn").forEach(addTickPad);
   $("hapticsSwitch").addEventListener("click", () => {
     try { localStorage.setItem("haptics", hapticsOn() ? "off" : "on"); } catch (e) {}
     showHaptics();
