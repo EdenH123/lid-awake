@@ -62,6 +62,13 @@ enum PhoneApps {
         NSWorkspace.shared.runningApplications.lazy.compactMap { $0.bundleURL?.path }.first { self.id($0) == id }
     }
 
+    // Hides an open app (⌘H). False if it isn't open.
+    static func hide(_ path: String) -> Bool {
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == path }
+        apps.forEach { $0.hide() }
+        return !apps.isEmpty
+    }
+
     // Brings an open app to the front, as clicking it in the Dock does. False if it isn't open.
     static func activate(_ path: String) -> Bool {
         let apps = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == path }

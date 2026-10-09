@@ -554,15 +554,19 @@ final class StatusServer: @unchecked Sendable {
             FrameStream.shared.wakeNow()
             reply(c, "204 No Content", "text/plain", Data())
 
-        // The dock: bring an app that's already open to the front (it can't start new apps).
+        // The dock: bring an app that's already open to the front, hide it, or quit it (as ⌘Q;
+        // it can still ask to save). Only apps already open; it can't start new ones.
         case ("POST", "/focus-app"):
             let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            let action = body?["action"] as? String ?? "focus"
+            guard ["focus", "hide", "quit"].contains(action) else { return text(c, "400 Bad Request", "Unknown action.") }
             let name: String? = DispatchQueue.main.sync {
-                guard let path = PhoneApps.runningPath(for: body?["id"] as? String ?? ""), PhoneApps.activate(path) else { return nil }
-                return PhoneApps.name(path)
+                guard let path = PhoneApps.runningPath(for: body?["id"] as? String ?? "") else { return nil }
+                let done = action == "hide" ? PhoneApps.hide(path) : action == "quit" ? PhoneApps.quit(path) : PhoneApps.activate(path)
+                return done ? PhoneApps.name(path) : nil
             }
             guard let name else { return text(c, "404 Not Found", "That app isn't open any more.") }
-            AccessLog.write("Brought \(name) to the front from the phone · \(device)")
+            AccessLog.write("\(["focus": "Brought", "hide": "Hid", "quit": "Quit"][action]!) \(name)\(action == "focus" ? " to the front" : "") from the phone · \(device)")
             FrameStream.shared.wakeNow()
             reply(c, "204 No Content", "text/plain", Data())
 

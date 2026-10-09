@@ -396,6 +396,23 @@ let dashboardHTML = #"""
   .mac-dock button:active img { transform: scale(.88); }
   .mac-dock .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--text); opacity: .55; }
   .mac-dock button.launched { animation: launch .5s cubic-bezier(.32,.72,0,1); }
+  .mac-dock button { touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  /* Hold an icon in the dock: a small menu above it, like the Mac Dock's. */
+  .dock-menu {
+    position: fixed; z-index: 30; min-width: 190px; border-radius: 14px; overflow: hidden;
+    background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
+    -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+    transform-origin: 50% 100%; animation: dock-menu .22s cubic-bezier(.32,.72,0,1);
+  }
+  @keyframes dock-menu { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
+  .dock-menu .menu-title { padding: 10px 14px 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .dock-menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 11px 14px; font-size: 16px; color: var(--text); border-top: .5px solid var(--line); cursor: pointer; }
+  .dock-menu button.danger { color: var(--red); }
+  .dock-menu button:active { background: var(--fill); }
+  .dock-shade { position: fixed; inset: 0; z-index: 29; }
+  #tab-apps .app-grid, #macDock { transition: opacity .25s ease; }
+  #tab-apps.dock-focusing .app-grid, #tab-apps.dock-focusing #appsFoot, #tab-apps.dock-focusing #openedBar,
+  #tab-apps.dock-focusing #macDock { opacity: 0; }
   #tab-apps:has(#macDock:not([hidden])) { padding-bottom: 72px; }
   #tab-apps:has(#macDock:not([hidden])) .opened { bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 144px); }
   body.apps-full #macDock { display: none !important; }
@@ -2328,24 +2345,89 @@ let dashboardHTML = #"""
         const dot = document.createElement("span");
         dot.className = "dot";
         b.append(img, dot);
-        b.addEventListener("click", () => focusApp(a, b));
+        b.addEventListener("click", () => { if (dockHeld) { dockHeld = false; return; } focusApp(a, b); });
+        // Slide up: bring it to the front and zoom into the Screen tab. Hold: Hide / Quit menu.
+        let holdTimer = null;
+        b.addEventListener("pointerdown", e => {
+          dockHeld = false;
+          const start = { x: e.clientX, y: e.clientY };
+          const cancel = ev => {
+            const up = start.y - ev.clientY;
+            if (up > 44 && up > Math.abs(ev.clientX - start.x)) {
+              end();
+              dockHeld = true;  // the click that follows isn't a plain tap
+              dockSlideOpen(a, b);
+            } else if (up < 8 && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 10) end();
+            else if (up >= 8) clearTimeout(holdTimer);
+          };
+          const end = () => { clearTimeout(holdTimer); removeEventListener("pointermove", cancel); removeEventListener("pointerup", end); removeEventListener("pointercancel", end); };
+          addEventListener("pointermove", cancel);
+          addEventListener("pointerup", end);
+          addEventListener("pointercancel", end);
+          holdTimer = setTimeout(() => { end(); dockHeld = true; showDockMenu(a, b); }, 450);
+        });
+        b.addEventListener("contextmenu", e => e.preventDefault());
         return b;
       }));
     }
     $("macDock").hidden = others.length === 0;
   }
-  async function focusApp(app, button) {
-    let message = `Switched to ${app.name}`;
+  let dockHeld = false;  // the hold opened a menu, so the tap that ends it isn't a click
+  function showDockMenu(app, button) {
+    closeDockMenu();
+    if (navigator.vibrate) navigator.vibrate(10);
+    const shade = document.createElement("div");
+    shade.className = "dock-shade";
+    shade.addEventListener("pointerdown", e => { e.preventDefault(); closeDockMenu(); });
+    const menu = document.createElement("div");
+    menu.className = "dock-menu";
+    menu.setAttribute("role", "menu");
+    const title = document.createElement("div");
+    title.className = "menu-title";
+    title.textContent = app.name;
+    menu.append(title);
+    for (const [label, action, danger] of [["Hide", "hide"], ["Quit", "quit", true]]) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.textContent = label;
+      if (danger) item.className = "danger";
+      item.addEventListener("click", async () => {
+        closeDockMenu();
+        focusApp(app, button, action);
+      });
+      menu.append(item);
+    }
+    document.body.append(shade, menu);
+    const r = button.getBoundingClientRect(), w = menu.offsetWidth;
+    menu.style.left = Math.min(Math.max(12, r.left + r.width / 2 - w / 2), innerWidth - w - 12) + "px";
+    menu.style.top = (r.top - menu.offsetHeight - 10) + "px";
+  }
+  function dockSlideOpen(app, button) {
+    focusApp(app, button);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return showTab("screen");
+    const tab = $("tab-apps");
+    tab.classList.add("dock-focusing");
+    button.classList.add("focused");
+    zoomIntoScreen(button.querySelector("img"), "app-icon.png?size=512&id=" + encodeURIComponent(app.id), () => {
+      tab.classList.remove("dock-focusing");
+      button.classList.remove("focused");
+    });
+  }
+  function closeDockMenu() { document.querySelectorAll(".dock-menu, .dock-shade").forEach(n => n.remove()); }
+
+  async function focusApp(app, button, action = "focus") {
+    let message = { focus: `Switched to ${app.name}`, hide: `Hid ${app.name}`, quit: `Asked ${app.name} to quit` }[action];
     try {
       const res = await fetch("focus-app", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
-        body: JSON.stringify({ id: app.id }),
+        body: JSON.stringify({ id: app.id, action }),
       });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) message = await res.text();
     } catch (e) { message = "Can't reach your Mac."; }
-    if (message.startsWith("Switched")) {
+    if (action === "focus" && message.startsWith("Switched")) {
       button.classList.remove("launched");
       void button.offsetWidth;
       button.classList.add("launched");
@@ -2469,16 +2551,24 @@ let dashboardHTML = #"""
     setTimeout(() => { slideOpened = false; }, 600);
     openApp(app, button);
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return showTab("screen");
-    const img = button.querySelector("img"), r = img.getBoundingClientRect();
-    // Drawn at its final size (from the sharper 512 px icon) and scaled down to start where the icon is.
+    appGrid.classList.add("focusing");
+    button.classList.add("focused");
+    zoomIntoScreen(button.querySelector("img"), bigIcon(button), () => {
+      appGrid.classList.remove("focusing");
+      button.classList.remove("focused");
+    });
+  }
+
+  // The zoom shared by the grid and the dock: the icon floats to the middle and grows (drawn at its
+  // final size from the sharper icon), then the Screen tab appears and the icon fades.
+  function zoomIntoScreen(img, big, done) {
+    const r = img.getBoundingClientRect();
     const size = Math.min(innerWidth * 0.86, 360);
     const zoom = document.createElement("div");
     zoom.className = "app-zoom";
     zoom.style.cssText = `left:${(innerWidth - size) / 2}px;top:${(innerHeight - size) / 2}px;width:${size}px;height:${size}px;`
-      + `background-image:url("${bigIcon(button)}"),url("${img.src}")`;
+      + `background-image:url("${big}"),url("${img.src}")`;
     document.body.append(zoom);
-    appGrid.classList.add("focusing");
-    button.classList.add("focused");
     const dx = r.left + r.width / 2 - innerWidth / 2, dy = r.top + r.height / 2 - innerHeight / 2;
     zoom.animate([
       { transform: `translate(${dx}px,${dy}px) scale(${r.width / size})` },
@@ -2492,8 +2582,7 @@ let dashboardHTML = #"""
     setTimeout(() => {
       zoom.remove();
       $("openedBar").hidden = true;  // already watching it; no "Show screen" offer needed
-      appGrid.classList.remove("focusing");
-      button.classList.remove("focused");
+      done();
     }, 750);
   }
 
