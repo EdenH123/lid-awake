@@ -145,12 +145,57 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .picker.saving .value { opacity: .4; }
   .picker .chev { width: 9px; height: 15px; margin-left: -6px; fill: none; stroke: var(--blue); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .picker select { position: absolute; inset: 0; width: 100%; opacity: 0; font-size: 16px; cursor: pointer; -webkit-appearance: none; appearance: none; }
-  .hero .app-icon {
-    width: 58px; height: 58px; border-radius: 14px; flex: none; display: grid; place-items: center;
-    background: var(--gray); color: #fff; transition: background .3s ease;
+  /* A drawing of the MacBook above the switch that follows the real one: the lid folds open and
+     shut, the screen lights up or goes dark, a MagSafe cable shows when it's plugged in (light
+     amber while charging, green when full) and a green glow breathes under it while charging. */
+  .mac-pic { position: relative; height: 196px; display: grid; place-items: end center; padding: 20px 16px 18px 0; transition: height .45s cubic-bezier(.32,.72,0,1); }
+  /* Shut, the card shrinks to fit (after the lid has folded); opening, it grows first, then the lid rises. */
+  .mac-pic.closed { height: 88px; transition-delay: .75s; }
+  .mac-pic:not(.closed) .mp-lid { transition-delay: .35s, 0s; }
+  .mp-mac { position: relative; width: 236px; display: grid; justify-items: center; }  /* only hinge + base take room; the lid stands above */
+  .mp-lid { position: absolute; left: 8px; bottom: 12px; width: 220px; height: 146px; transform-origin: 50% 100%;
+    transform: perspective(520px) rotateX(0deg); transition: transform .85s cubic-bezier(.45,.05,.2,1), opacity .15s ease .7s; }
+  .mp-front { position: absolute; inset: 0; padding: 1.5px; border-radius: 12px 12px 4px 4px; background: var(--mac-groove); }
+  .mp-bezel { position: relative; height: 100%; padding: 6px 6px 8px; border-radius: 10.5px 10.5px 3px 3px; background: #08080a; }
+  .mp-bezel::before {  /* the notch, with the camera */
+    content: ""; position: absolute; z-index: 2; left: 50%; top: 6px; width: 30px; height: 6px; transform: translateX(-50%);
+    background: radial-gradient(circle at 50% 45%, #24304a 0 1.1px, transparent 1.6px), #08080a; border-radius: 0 0 4px 4px;
   }
-  .hero.on .app-icon { background: var(--green); }
-  .hero .app-icon svg { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .mp-screen { position: relative; width: 100%; height: 100%; border-radius: 5px 5px 1px 1px; overflow: hidden; background: #1f6fd1 center / cover; }
+  .mp-screen::before { content: ""; position: absolute; inset: 0; background: #0a0a0c; opacity: 0; transition: opacity .5s ease; }
+  .mp-screen::after {  /* glass */
+    content: ""; position: absolute; inset: 0; background: linear-gradient(118deg, rgba(255,255,255,.16), rgba(255,255,255,0) 40%);
+  }
+  .mac-pic.dark .mp-screen::before { opacity: 1; }
+  .mp-hinge { width: 178px; height: 3px; background: #1c1c1e; border-radius: 0 0 3px 3px; }
+  .mp-base { position: relative; width: 236px; height: 9px; background: var(--mac-base); border-radius: 2px 2px 10px 10px / 2px 2px 8px 8px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.55); }
+  .mp-base::after {  /* the thumb groove */
+    content: ""; position: absolute; left: 50%; top: 0; width: 40px; height: 3.5px; transform: translateX(-50%);
+    background: var(--mac-groove); border-radius: 0 0 5px 5px;
+  }
+  .mp-shadow { position: absolute; left: 50%; bottom: -5px; width: 250px; height: 10px; transform: translateX(-50%); border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(0,0,0,.35), transparent); filter: blur(2px); }
+  /* Closed: the lid folds down toward you, then the shut lid's front edge sits on the base. */
+  .mp-shut { position: absolute; left: 4px; right: 4px; bottom: 9px; height: 5px; border-radius: 3px 3px 0 0;
+    background: var(--mac-base); box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 1px 0 rgba(0,0,0,.25); opacity: 0; transition: opacity .15s ease; }
+  .mac-pic.closed .mp-lid { transform: perspective(520px) rotateX(-89deg); opacity: 0; }
+  .mac-pic.closed .mp-shut { opacity: 1; transition-delay: .7s; }
+  .mac-pic.closed .mp-hinge { opacity: 0; }
+  /* MagSafe: cable into the left side while plugged in. */
+  .mp-plug { position: absolute; right: 100%; bottom: 2px; width: 44px; height: 5px; opacity: 0; transition: opacity .4s ease; }
+  .mp-plug::before { content: ""; position: absolute; right: 0; top: 0; width: 10px; height: 5px; border-radius: 2px 1px 1px 2px; background: var(--mac-base); }
+  .mp-plug::after { content: ""; position: absolute; right: 10px; top: 1.5px; width: 34px; height: 2px; background: linear-gradient(90deg, transparent, var(--mac-groove)); }
+  .mp-led { position: absolute; right: 3px; top: 1.5px; z-index: 1; width: 2px; height: 2px; border-radius: 50%; background: var(--green); box-shadow: 0 0 3px var(--green); }
+  .mac-pic.plugged .mp-plug { opacity: 1; }
+  .mac-pic.charging .mp-led { background: var(--amber); box-shadow: 0 0 3px var(--amber); }
+  .mp-glow { position: absolute; left: calc(50% - 8px); bottom: 2px; width: 270px; height: 34px; transform: translateX(-50%); border-radius: 50%;
+    background: radial-gradient(closest-side, var(--green), transparent); filter: blur(10px); opacity: 0; transition: opacity .6s ease; pointer-events: none; }
+  .mac-pic.charging .mp-glow { opacity: .55; animation: mp-breathe 3.2s ease-in-out infinite; }
+  @keyframes mp-breathe { 0%, 100% { opacity: .45; } 50% { opacity: .75; } }
+  @media (prefers-reduced-motion: reduce) { .mac-pic * { transition: none !important; animation: none !important; } }
+  .mac-pic-caption { text-align: center; font-size: 13px; color: var(--muted); padding-right: 16px; margin-top: -6px; }
+  .mac-pic-caption b { font-weight: 600; color: var(--green); }
   .hero .text { flex: 1; min-width: 0; }
   .hero .state { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
   .hero .sub { font-size: 15px; color: var(--muted); margin-top: 1px; font-variant-numeric: tabular-nums; }
@@ -739,10 +784,17 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     </section>
     <div class="section">
       <div class="hero-group">
-      <section class="hero" id="statusCard">
-        <div class="app-icon" aria-hidden="true">
-          <svg viewBox="0 0 34 34"><rect x="6" y="8" width="22" height="14.5" rx="1.8"/><path d="M3 26h28"/></svg>
+      <div class="mac-pic closed dark" id="macPic" aria-hidden="true">
+        <div class="mp-glow"></div>
+        <div class="mp-mac">
+          <div class="mp-lid"><div class="mp-front"><div class="mp-bezel"><div class="mp-screen" id="macPicScreen"></div></div></div></div>
+          <div class="mp-hinge"></div>
+          <div class="mp-shut"></div>
+          <div class="mp-base"><div class="mp-plug"><span class="mp-led"></span></div><div class="mp-shadow"></div></div>
         </div>
+      </div>
+      <div class="mac-pic-caption" id="macPicCaption"></div>
+      <section class="hero" id="statusCard">
         <div class="text">
           <div class="state" id="state">—</div>
           <div class="sub" id="stateSub"></div>
@@ -1052,6 +1104,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("state").textContent = on ? "On" : "Off";
     const left = data.timerRemaining != null ? data.timerRemaining - (Date.now() - fetchedAt) / 1000 : null;
     $("stateSub").textContent = !on ? "" : left != null && left > 0 ? `Turns off in ${fmtCountdown(left)}` : "Stays on until you turn it off";
+
+    renderMacPic();
 
     if (data.battery != null) {
       const pct = data.battery;
@@ -2964,11 +3018,33 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const ALERT_KINDS = ["turnedOff", "lowBattery", "claudeUsage", "claudeSession", "warm"];
   const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 
+  // ---------- The Mac drawing on Status ----------
+  // Lid closed/open and screen on/off come from the Mac; the lit screen shows the sky of the moment.
+  let macPicSky = "";
+  function renderMacPic() {
+    const closed = !!data.lidClosed, dark = closed || !!data.displayAsleep || !!data.screenOff;
+    const pic = $("macPic");
+    pic.classList.toggle("closed", closed);
+    pic.classList.toggle("dark", dark);
+    pic.classList.toggle("charging", !!data.charging);
+    pic.classList.toggle("plugged", data.onBattery === false);
+    const kind = skyKind(new Date().getHours());
+    if (kind !== macPicSky) { macPicSky = kind; $("macPicScreen").style.backgroundImage = `url(/sky/${kind}.jpg)`; }
+    const cap = $("macPicCaption");
+    cap.textContent = (closed ? "Lid closed" : dark ? "Lid open · Screen off" : "Lid open · Screen on")
+      + (data.onBattery == null ? "" : " · ");
+    if (data.charging) cap.appendChild(document.createElement("b")).textContent = "Charging";
+    else if (data.onBattery != null) cap.append(data.onBattery ? "On battery" : "Plugged in");
+  }
+
   // ---------- Opening animation (home-screen app only, once per launch) ----------
   // The sky of the moment as a small landscape in the style of macOS wallpapers: layered ridges
   // fading into haze, a glowing sun or moon, soft clouds by day and a field of stars at night.
+  function skyKind(h) {
+    return h >= 5 && h < 8 ? "sunrise" : h >= 8 && h < 17 ? "day" : h >= 17 && h < 20 ? "sunset" : "night";
+  }
   function skyScene(h) {
-    const kind = h >= 5 && h < 8 ? "sunrise" : h >= 8 && h < 17 ? "day" : h >= 17 && h < 20 ? "sunset" : "night";
+    const kind = skyKind(h);
     const P = {
       sunrise: { sky: ["#2b3a6b", "#8a6aa3", "#f2a0a1", "#ffd3a1"], orb: [168, 92, 18, "#fff1d6", "#ffb88a"],
                  ridges: ["#8e7aa8", "#6b5a8c", "#4c3f6e", "#2e2647"], haze: "#ffc7a8" },

@@ -732,6 +732,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "controlPermission": controlPermission(),
             "screenWidth": CGDisplayBounds(CGMainDisplayID()).width,
             "screenOff": FrameStream.shared.isScreenOff,
+            // For the Mac drawing on Status.
+            "lidClosed": FrameStream.lidClosed(),
+            "displayAsleep": CGDisplayIsAsleep(CGMainDisplayID()) != 0,
         ]
         if isOn, let end = endDate, end > Date() { s["timerRemaining"] = end.timeIntervalSinceNow }
         if let t = batteryTemperature() { s["batteryTemp"] = (t * 10).rounded() / 10 }
