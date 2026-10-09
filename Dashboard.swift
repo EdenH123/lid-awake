@@ -1434,6 +1434,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       // Over Tailscale the link disappears while lid-awake is off, so this is the usual "off" view.
       auth = { unreachable: true };
     }
+    // "On" is remembered on this phone; if the Mac has no Face ID sign-ins any more (removed from
+    // the Mac menu, or a new password), forget it so Settings offers "Set up" again.
+    if (auth.faceID === false && faceIDState() === "on") { setFaceIDState(""); renderFaceIDRow(); }
     if (auth.loopback) {
       // On the Mac's own 127.0.0.1 address: sign-in only happens at the Tailscale address.
       unlocked = false;
@@ -1717,13 +1720,20 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("faceIdRowBtn").hidden = on;
   }
   renderFaceIDRow();
+  async function syncFaceID() {
+    try {
+      const auth = await (await fetch("auth", { cache: "no-store" })).json();
+      if (auth.faceID === false && faceIDState() === "on") setFaceIDState("");
+    } catch (e) {}
+    renderFaceIDRow();
+  }
   $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
   $("appsHelpBtn").addEventListener("click", () => {
     tick();
     const open = $("tab-apps").classList.toggle("help-open");
     $("appsHelpBtn").setAttribute("aria-expanded", open);
   });
-  $("settingsBtn").addEventListener("click", () => { showTab("settings"); $("scroller").scrollTo(0, 0); loadDevices(); loadActivity(); });
+  $("settingsBtn").addEventListener("click", () => { showTab("settings"); $("scroller").scrollTo(0, 0); loadDevices(); loadActivity(); syncFaceID(); });
   $("settingsBack").addEventListener("click", () => { showTab("status"); $("scroller").scrollTo(0, 0); });
   $("faceIdOn").addEventListener("click", faceIDSetup);
   $("faceIdRowBtn").addEventListener("click", faceIDSetup);
