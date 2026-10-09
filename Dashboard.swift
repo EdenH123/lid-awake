@@ -91,6 +91,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     padding: max(10px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom));
   }
   body.apps-full #scroller, body.landscape-full #scroller { padding: 0; overflow: hidden; }
+  /* no grey scroll line on the side while scrolling (any scroll area) */
+  * { scrollbar-width: none; }
+  *::-webkit-scrollbar { display: none; }
   /* The browser only scrolls the page up and down; a sideways swipe moves between tabs. */
   #scroller { touch-action: pan-y; }
   #screenImg:not([src]) { visibility: hidden; }  /* no picture yet (e.g. swiping in for the first time) */
