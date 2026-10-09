@@ -298,6 +298,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .hist-story .row { gap: 12px; }
   .hist-story .row i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   .hist-story .row .title { white-space: normal; }
+  .hist-apps { display: grid; gap: 8px; }
+  .hist-apps[hidden] { display: none; }
+  .hist-apps .row { min-height: 48px; }
+  .hist-apps .app-ico { width: 28px; height: 28px; border-radius: 7px; flex: none; display: grid; place-items: center;
+                        overflow: hidden; color: #fff; font-size: 15px; background: var(--fill); }
+  .hist-apps .app-ico img { width: 100%; height: 100%; display: block; }
   .hist-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; font-size: 15px; color: var(--muted); }
   body:has(.hist-sheet.open) { overflow: hidden; }
   body:has(.hist-sheet.open) .tabbar { visibility: hidden; }
@@ -1031,7 +1037,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section">
       <div class="section-head mac-head"><span class="apple-logo" aria-hidden="true">&#xF8FF;</span>Mac</div>
       <div class="list health-list">
-        <div class="row"><span class="title">Processor</span><div class="meter"><div id="cpuBar" style="width:0"></div></div><span class="value" id="cpuValue">—</span></div>
+        <div class="row tappable" id="cpuRow" role="button" tabindex="0" aria-label="Processor, show the last hours"><span class="title">Processor</span><div class="meter"><div id="cpuBar" style="width:0"></div></div><span class="value" id="cpuValue">—</span><svg class="row-chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5"/></svg></div>
         <div class="row tappable" id="memRow" role="button" tabindex="0" aria-label="Memory, show what's using it"><span class="title">Memory</span><div class="meter"><div id="memBar" style="width:0"></div></div><span class="value" id="memValue">—</span><svg class="row-chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5"/></svg></div>
         <div class="row"><span class="title">Storage</span><div class="meter"><div id="diskBar" style="width:0"></div></div><span class="value" id="diskValue">—</span></div>
         <div class="row plain"><span class="title">Heat</span><span class="value" id="thermal">—</span></div>
@@ -1278,6 +1284,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="card hist-chart-card">
       <svg class="hist-chart" id="histChart" role="img"></svg>
       <div class="hist-empty" id="histEmpty" hidden></div>
+    </div>
+    <div class="hist-apps" id="histAppsBox" hidden>
+      <div class="section-head" id="histAppsHead">Who used it</div>
+      <div class="list" id="histApps"></div>
     </div>
     <div class="list hist-story" id="histStory" hidden></div>
     <div class="section-foot" id="histFoot"></div>
@@ -3623,7 +3633,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The Mac reads its own power log (about one battery reading a minute), so there's history
   // from the first tap. One sheet shows either; drag a finger along the bars to read any slot.
   let histKind = "temp", histHours = 6, histGraph = null, histTimer = 0, scrubbing = false;
-  const histData = { temp: { points: null, at: 0, failed: false }, battery: { points: null, at: 0, failed: false } };
+  const histData = { temp: { points: null, at: 0, failed: false }, battery: { points: null, at: 0, failed: false },
+                     cpu: { points: null, at: 0, failed: false } };
   try { histHours = +(localStorage.getItem("historyHours") || localStorage.getItem("tempHours")) || 6; } catch (e) {}
   const SVG_NS = "http://www.w3.org/2000/svg";
   const clock = (sec, withMinutes = true) =>
@@ -3714,6 +3725,16 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         return events;
       },
     },
+    cpu: {
+      title: "Processor", url: "cpu-history", chartLabel: "Processor use graph, split by app", stacked: true,
+      foot: "Each bar is the average processor use in its slot, split by app. From the log your Mac keeps itself.",
+      live: () => data && data.mac && data.mac.cpu != null ? data.mac.cpu : null,
+      fmt: v => Math.round(v) + "%",
+      range: (lo, hi) => (hi < 1 ? "<1" : Math.round(hi)) + "%",
+      nowText: v => v < 30 ? "Light use" : v < 70 ? "Busy" : "Very busy",
+      parse: json => Array.isArray(json.intervals) && Array.isArray(json.apps) ? json : null,
+      onPick: bin => showCpuApps(bin),
+    },
   };
 
   function svgEl(name, attrs, parent) {
@@ -3727,7 +3748,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     try {
       const res = await fetchWithin(8000, HISTORY[kind].url + "?hours=24", { cache: "no-store" });
       if (!res.ok) throw new Error(res.status);
-      h.points = (await res.json()).points || [];
+      const json = await res.json(), k = HISTORY[kind];
+      h.points = k.parse ? k.parse(json) : json.points || [];
+      if (!h.points) throw new Error("unreadable");
       h.failed = false;
     } catch (e) { h.failed = !h.points; }
     h.at = Date.now();
@@ -3768,9 +3791,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       $("histWhen").textContent = v == null ? "" : "Now · " + k.nowText(v);
     } else {
       $("histBig").textContent = k.range(bin.lo, bin.hi);
-      const end = Math.min(bin.s + bin.size, Date.now() / 1000);
-      $("histWhen").textContent = `${clock(bin.s).replace(/\s?[AP]\.?M\.?$/i, "")}–${clock(end)}` + (bin.plugged ? " · plugged in" : "");
+      $("histWhen").textContent = slotLabel(bin) + (bin.plugged ? " · plugged in" : "");
     }
+    if (k.onPick) k.onPick(bin);
   }
   // The timeline under the graph, newest first, at most 8 lines.
   function renderHistoryStory(pts, hi, lo) {
@@ -3789,10 +3812,181 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       box.append(row);
     }
   }
+  // The graph's frame: x for times, y for values, one slot per bin.
+  function historyFrame(svg, sc, from, to, n) {
+    const W = svg.getBoundingClientRect().width || 320, H = 240;
+    const L = 0, R = W - 34, T = 6, B = H - 24;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const x = s => L + (s - from) / (to - from) * (R - L);
+    const y = v => B - (v - sc.yMin) / (sc.yMax - sc.yMin) * (B - T);
+    const slot = (R - L) / n;
+    return { W, H, L, R, T, B, x, y, slot, bw: Math.min(14, slot * .62) };
+  }
+  // Grid: values on the right, times along the bottom, and the turn-off limit if any.
+  function drawHistoryGrid(svg, f, sc, from, to) {
+    const { H, L, R, x, y } = f, offset = new Date().getTimezoneOffset() * 60;
+    for (let v = sc.yMin; v <= sc.yMax + 1e-9; v += sc.step) {
+      svgEl("line", { class: "grid", x1: L, x2: R, y1: y(v), y2: y(v) }, svg);
+      svgEl("text", { x: R + 8, y: y(v) + 4 }, svg).textContent = sc.label(v);
+    }
+    const tickEvery = { 1: 900, 6: 3600, 24: 6 * 3600 }[histHours];
+    for (let s = Math.ceil((from - offset) / tickEvery) * tickEvery + offset; s < to; s += tickEvery) {
+      if (x(s) < 14 || x(s) > R - 14) continue;
+      const label = histHours === 1 ? clock(s).replace(/\s?[AP]\.?M\.?$/i, "") : clock(s, false);
+      svgEl("text", { x: x(s), y: H - 6, "text-anchor": "middle" }, svg).textContent = label;
+    }
+    if (sc.limit) {
+      svgEl("line", { class: "limit", x1: L, x2: R, y1: y(sc.limit.at), y2: y(sc.limit.at) }, svg);
+      svgEl("text", { class: "limit-label", x: L + 4, y: y(sc.limit.at) - 6 }, svg).textContent = sc.limit.text;
+    }
+  }
+  const slotLabel = bin => `${clock(bin.s).replace(/\s?[AP]\.?M\.?$/i, "")}–${clock(Math.min(bin.s + bin.size, Date.now() / 1000))}`;
+
+  // Each app's colour comes from its icon (sent by the Mac); macOS's own jobs and grey icons get greys.
+  // A colour too close to one already used is lightened so neighbouring segments stay apart.
+  const MAC_GREYS = ["#8e8e93", "#aeaeb2", "#636366"];
+  const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  function cpuColors(d, keys) {
+    const colors = new Map(), used = [];
+    let grey = 0;
+    for (const key of keys) {
+      let c = d.apps[key].color || MAC_GREYS[grey++ % MAC_GREYS.length];
+      const rgb = hexRgb(c);
+      if (used.some(u => Math.hypot(u[0] - rgb[0], u[1] - rgb[1], u[2] - rgb[2]) < 70))
+        c = "#" + rgb.map(v => Math.round(v + (255 - v) * .45).toString(16).padStart(2, "0")).join("");
+      used.push(hexRgb(c));
+      colors.set(key, c);
+    }
+    return colors;
+  }
+
+  // Processor: one bar per slot, its height the slot's average use, split by app: the range's three
+  // busiest apps in their icon colours at the bottom, everyone else as the grey top of the bar.
+  let histCpu = null;
+  function renderCpuHistory(h, svg, size, now, from, n, to) {
+    $("histStory").hidden = true;
+    const d = h.points, cores = (d && d.cores) || 1;
+    const bins = [];
+    for (let i = 0; i < n; i++) bins.push({ s: from + i * size, size, covered: 0, secs: new Map(), total: 0, count: 0 });
+    // Each logged stretch counts in every slot it overlaps, in proportion.
+    for (const [s, e, apps, other] of d ? d.intervals : []) {
+      if (e <= from || e <= s) continue;
+      for (let i = Math.max(0, Math.floor((s - from) / size)); i < n && bins[i].s < e; i++) {
+        const b = bins[i], part = Math.min(e, b.s + size) - Math.max(s, b.s);
+        if (part <= 0) continue;
+        const share = part / (e - s);
+        b.covered += part;
+        for (const key in apps) b.secs.set(+key, (b.secs.get(+key) || 0) + apps[key] * share);
+        b.secs.set(-1, (b.secs.get(-1) || 0) + other * share);
+      }
+    }
+    const pct = (secs, covered) => secs / (covered * cores) * 100;
+    const range = new Map();
+    let rangeCovered = 0, top = 0;
+    for (const b of bins) {
+      if (b.covered < 1) continue;
+      b.count = 1;
+      for (const [key, secs] of b.secs) { b.total += secs; range.set(key, (range.get(key) || 0) + secs); }
+      b.lo = b.hi = pct(b.total, b.covered);
+      rangeCovered += b.covered;
+      top = Math.max(top, b.hi);
+    }
+    const ranked = [...range].filter(([key]) => key >= 0).sort((a, b) => b[1] - a[1]).map(([key]) => key);
+    const top3 = ranked.slice(0, 3);
+    histCpu = { d, range, rangeCovered, top3, colors: d ? cpuColors(d, top3) : new Map(), pct };
+    const empty = $("histEmpty"), hasData = bins.some(b => b.count);
+    empty.hidden = hasData;
+    empty.textContent = h.failed ? "Couldn't load the history from your Mac." : !d ? "Loading…" : "No readings for this time yet.";
+    showCpuApps(null);
+    if (!hasData) return;
+
+    const yMax = [10, 15, 20, 30, 50, 100].find(m => top <= m) || 100;
+    const sc = { yMin: 0, yMax, step: { 10: 5, 15: 5, 20: 5, 30: 10, 50: 10, 100: 25 }[yMax], label: t => t + "%", limit: null };
+    const f = historyFrame(svg, sc, from, to, n), { x, y, slot, bw, B } = f;
+    drawHistoryGrid(svg, f, sc, from, to);
+    bins.forEach((b, i) => {
+      const cx = x(b.s) + slot / 2, left = cx - bw / 2;
+      if (!b.count) {
+        // Asleep (or not reached yet): a small grey dash on the floor.
+        if (b.s < now) b.el = svgEl("rect", { class: "bar-off", x: left, y: B - 4, width: bw, height: 4, rx: 2 }, svg);
+        return;
+      }
+      const g = svgEl("g", { class: "bar" }, svg), topY = Math.min(y(b.hi), B - 3);
+      const clip = svgEl("clipPath", { id: "cpuClip" + i }, g);
+      svgEl("rect", { x: left, y: topY, width: bw, height: B - topY, rx: Math.min(bw / 2, 4) }, clip);
+      const inner = svgEl("g", { "clip-path": `url(#cpuClip${i})` }, g);
+      svgEl("rect", { x: left, y: topY, width: bw, height: B - topY, fill: "var(--fill)" }, inner);  // everyone else
+      let base = 0;
+      for (const key of top3) {
+        const v = pct(b.secs.get(key) || 0, b.covered);
+        if (v <= 0) continue;
+        svgEl("rect", { x: left, y: y(base + v), width: bw, height: y(base) - y(base + v) + .5, fill: histCpu.colors.get(key) }, inner);
+        base += v;
+      }
+      b.el = g;
+    });
+    histGraph = { bins: bins.filter(b => b.count), x, slot, svg, left: () => svg.getBoundingClientRect().left,
+                  scale: () => f.W / svg.getBoundingClientRect().width };
+  }
+
+  // "Who used it": the range's top three and everyone else, or (finger on a bar) that bar's own.
+  const RANGE_WORDS = { 1: "last hour", 6: "last 6 hours", 24: "last 24 hours" };
+  const cpuIcons = new Map();  // app key → promise of a blob URL (or null)
+  function cpuIcon(key) {
+    if (!cpuIcons.has(key)) cpuIcons.set(key, fetchWithin(8000, "cpu-icon?key=" + encodeURIComponent(key))
+      .then(r => r.ok ? r.blob() : null).then(b => b && URL.createObjectURL(b)).catch(() => null)
+      .then(url => { if (!url) cpuIcons.delete(key); return url; }));
+    return cpuIcons.get(key);
+  }
+  const pctText = v => v < .1 ? "<0.1%" : v < 10 ? v.toFixed(1) + "%" : Math.round(v) + "%";
+  function cpuAppRow(app, key, v) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const ico = document.createElement("span");
+    ico.className = "app-ico";
+    const color = app ? histCpu.colors.get(key) || app.color || MAC_GREYS[0] : null;
+    if (app && app.kind === "app") {
+      cpuIcon(app.key).then(url => {
+        if (!url) { ico.style.background = color; return; }
+        const img = new Image();
+        img.alt = "";
+        img.src = url;
+        ico.append(img);
+      });
+    } else if (app) {
+      ico.style.background = color;
+      if (app.kind === "macos") ico.textContent = "";
+    }
+    const title = document.createElement("span");
+    title.className = "title";
+    title.textContent = app ? app.name : "Everything else";
+    const value = document.createElement("span");
+    value.className = "value";
+    value.textContent = pctText(v);
+    row.append(ico, title, value);
+    return row;
+  }
+  function showCpuApps(bin) {
+    const box = $("histAppsBox"), c = histCpu;
+    if (!c || !c.rangeCovered) { box.hidden = true; return; }
+    box.hidden = false;
+    const secs = bin ? bin.secs : c.range, covered = bin ? bin.covered : c.rangeCovered;
+    const keys = bin ? [...bin.secs].filter(([k, s]) => k >= 0 && s > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k) : c.top3;
+    let total = 0;
+    for (const s of secs.values()) total += s;
+    let rest = total;
+    const rows = keys.map(k => { rest -= secs.get(k) || 0; return cpuAppRow(c.d.apps[k], k, c.pct(secs.get(k) || 0, covered)); });
+    if (rest > 0.005 * total) rows.push(cpuAppRow(null, null, c.pct(rest, covered)));
+    $("histAppsHead").textContent = "Who used it · " + (bin ? slotLabel(bin) : RANGE_WORDS[histHours]);
+    $("histApps").replaceChildren(...rows);
+  }
+
   // Range bars: the readings grouped into bins (5 min for 1H, 15 min for 6H, 1 hour for 24H),
   // each bar running from that bin's lowest to highest reading, coloured by height.
   function renderHistory() {
     const k = HISTORY[histKind], h = histData[histKind];
+    histCpu = null;
+    $("histAppsBox").hidden = true;
     showHistoryRange();
     showHistoryReading(null);
     const svg = $("histChart");
@@ -3802,6 +3996,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const now = Date.now() / 1000, offset = new Date().getTimezoneOffset() * 60;  // bins on round local times
     const from = Math.floor((now - histHours * 3600 - offset) / size) * size + offset;
     const n = Math.ceil((now - from) / size), to = from + n * size;
+    if (k.stacked) return renderCpuHistory(h, svg, size, now, from, n, to);
     const pts = (h.points || []).filter(p => p[0] >= from);
     const empty = $("histEmpty");
     empty.hidden = pts.length > 1;
@@ -3820,12 +4015,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     }
 
     const sc = k.scale(lo[1], hi[1]);
-    const W = svg.getBoundingClientRect().width || 320, H = 240;
-    const L = 0, R = W - 34, T = 6, B = H - 24;
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const x = s => L + (s - from) / (to - from) * (R - L);
-    const y = v => B - (v - sc.yMin) / (sc.yMax - sc.yMin) * (B - T);
-    const slot = (R - L) / n, bw = Math.min(14, slot * .62);
+    const f = historyFrame(svg, sc, from, to, n), { W, T, B, x, y, slot, bw } = f;
 
     // Plugged in: a soft green band behind those bars (one band per stretch).
     for (let i = 0; i < n; i++) {
@@ -3834,21 +4024,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       while (j + 1 < n && bins[j + 1].plugged) j++;
       svgEl("rect", { class: "plugged", x: x(bins[i].s) + 1, y: T, width: x(bins[j].s) + slot - x(bins[i].s) - 2, height: B - T, rx: 8 }, svg);
     }
-    // Grid: values on the right, times along the bottom.
-    for (let v = sc.yMin; v <= sc.yMax + 1e-9; v += sc.step) {
-      svgEl("line", { class: "grid", x1: L, x2: R, y1: y(v), y2: y(v) }, svg);
-      svgEl("text", { x: R + 8, y: y(v) + 4 }, svg).textContent = sc.label(v);
-    }
-    const tickEvery = { 1: 900, 6: 3600, 24: 6 * 3600 }[histHours];
-    for (let s = Math.ceil((from - offset) / tickEvery) * tickEvery + offset; s < to; s += tickEvery) {
-      if (x(s) < 14 || x(s) > R - 14) continue;
-      const label = histHours === 1 ? clock(s).replace(/\s?[AP]\.?M\.?$/i, "") : clock(s, false);
-      svgEl("text", { x: x(s), y: H - 6, "text-anchor": "middle" }, svg).textContent = label;
-    }
-    if (sc.limit) {
-      svgEl("line", { class: "limit", x1: L, x2: R, y1: y(sc.limit.at), y2: y(sc.limit.at) }, svg);
-      svgEl("text", { class: "limit-label", x: L + 4, y: y(sc.limit.at) - 6 }, svg).textContent = sc.limit.text;
-    }
+    drawHistoryGrid(svg, f, sc, from, to);
 
     // One colour scale for every bar, set by height.
     const g = k.gradient(y);
@@ -3900,7 +4076,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   chart.addEventListener("pointermove", e => { if (chart.hasPointerCapture(e.pointerId)) scrubHistory(e); });
   for (const ev of ["pointerup", "pointercancel"]) chart.addEventListener(ev, endScrub);
 
-  for (const [tile, kind] of [["batteryTile", "battery"], ["tempTile", "temp"]]) {
+  for (const [tile, kind] of [["batteryTile", "battery"], ["tempTile", "temp"], ["cpuRow", "cpu"]]) {
     $(tile).addEventListener("click", () => { if (!document.querySelector("main.waiting")) { tick(); setHistoryOpen(true, kind); } });
     $(tile).addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setHistoryOpen(true, kind); } });
     addTickPad($(tile));

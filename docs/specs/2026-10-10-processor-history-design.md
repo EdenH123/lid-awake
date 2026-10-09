@@ -15,7 +15,7 @@ The user picked mockup **B · Coloured by app** (over A "range bars + busiest ap
   graphs). Bar height = average processor use in the slot (% of all cores, the same measure as the live
   row). Segments bottom-up: the 3 busiest apps of the visible range in rank order, then "Everything else"
   in grey. Slots with no data before now = grey floor dash (asleep), like the other graphs.
-- Y scale: 0 to the smallest of 10 / 25 / 50 / 100 % that fits the tallest bar, gridlines with labels on the right.
+- Y scale: 0 to the smallest of 10 / 15 / 20 / 30 / 50 / 100 % that fits the tallest bar, gridlines with labels on the right.
 - "Who used it · <range>" list under the graph: icon, name, share (% of all cores, averaged over the range),
   top 3 + "Everything else". Hidden when there is no data.
 - Holding a finger on a bar: the other bars fade (existing `picking` style), big number = that bar's total,
