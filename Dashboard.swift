@@ -380,7 +380,17 @@ let dashboardHTML = #"""
     background: var(--bar); box-shadow: var(--bar-shadow), inset 0 0 0 .5px var(--bar-edge);
     -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
   }
-  .opened.fade-out { opacity: 0; transition: opacity .45s ease; }
+  /* The note pops in with a little spring, then sinks, shrinks and blurs away. */
+  .opened:not([hidden]) { animation: note-in .35s cubic-bezier(.32,.72,0,1); }
+  .opened.fade-out { animation: note-out .5s cubic-bezier(.4,0,.6,1) forwards; }
+  @keyframes note-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(.9); }
+    to { opacity: 1; transform: translateX(-50%); }
+  }
+  @keyframes note-out {
+    from { opacity: 1; transform: translateX(-50%); filter: blur(0); }
+    to { opacity: 0; transform: translateX(-50%) translateY(14px) scale(.82); filter: blur(6px); }
+  }
   .opened button { font-size: 15px; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 7px 14px; cursor: pointer; }
 
   /* Apps: a Mac-style dock above the tab bar with the other apps open on the Mac. */
@@ -2329,17 +2339,19 @@ let dashboardHTML = #"""
     $("appsEmpty").hidden = apps.length > 0;
     $("appsFoot").hidden = apps.length === 0;
   }
-  // A short note above the dock ("Opened Notes", "Hid Finder"): shown 2.5 s, then it fades away.
+  // A short note above the dock ("Opened Notes", "Hid Finder"): shown 1.5 s, then it fades away.
   function showOpened(message) {
     const bar = $("openedBar");
     $("openedText").textContent = message;
     bar.classList.remove("fade-out");
+    bar.hidden = true;
+    void bar.offsetWidth;  // restart the pop-in when a new note replaces one on screen
     bar.hidden = false;
     clearTimeout(openedTimer);
     openedTimer = setTimeout(() => {
       bar.classList.add("fade-out");
-      openedTimer = setTimeout(() => { bar.hidden = true; bar.classList.remove("fade-out"); }, 450);
-    }, 2500);
+      openedTimer = setTimeout(() => { bar.hidden = true; bar.classList.remove("fade-out"); }, 500);
+    }, 1500);
   }
 
   // The dock: other apps open on the Mac. A tap brings one to the front, like the Mac's Dock.
