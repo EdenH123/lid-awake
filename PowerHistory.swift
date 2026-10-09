@@ -25,26 +25,30 @@ enum PowerHistory {
     }
 
     private static func rows(_ columns: String, hours: Double, _ point: (Double, [Double]) -> [Double]?) -> Data {
-        let since = Date().timeIntervalSince1970 - min(max(hours, 1), 48) * 3600
         let count = columns.split(separator: ",").count
         var points: [[Double]] = []
+        query("SELECT timestamp, \(columns) FROM PLBatteryAgent_EventBackward_Battery WHERE timestamp > ? ORDER BY timestamp", hours: hours) { stmt in
+            if (1...count).contains(where: { sqlite3_column_type(stmt, Int32($0)) == SQLITE_NULL }) { return }
+            let values = (1...count).map { sqlite3_column_double(stmt, Int32($0)) }
+            if let p = point(sqlite3_column_double(stmt, 0).rounded(), values) { points.append(p) }
+        }
+        let body: [String: Any] = ["points": points, "now": Date().timeIntervalSince1970.rounded()]
+        return (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
+    }
+
+    // One read-only query on the power log, for rows newer than `hours` ago (1…48); `?` = that time.
+    private static func query(_ sql: String, hours: Double, _ row: (OpaquePointer) -> Void) {
+        let since = Date().timeIntervalSince1970 - min(max(hours, 1), 48) * 3600
         var db: OpaquePointer?
         if sqlite3_open_v2("file:\(logPath)?mode=ro", &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK {
             sqlite3_busy_timeout(db, 500)
             var stmt: OpaquePointer?
-            let sql = "SELECT timestamp, \(columns) FROM PLBatteryAgent_EventBackward_Battery WHERE timestamp > ? ORDER BY timestamp"
-            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt {
                 sqlite3_bind_double(stmt, 1, since)
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    if (1...count).contains(where: { sqlite3_column_type(stmt, Int32($0)) == SQLITE_NULL }) { continue }
-                    let values = (1...count).map { sqlite3_column_double(stmt, Int32($0)) }
-                    if let p = point(sqlite3_column_double(stmt, 0).rounded(), values) { points.append(p) }
-                }
+                while sqlite3_step(stmt) == SQLITE_ROW { row(stmt) }
             }
             sqlite3_finalize(stmt)
         }
         sqlite3_close(db)
-        let body: [String: Any] = ["points": points, "now": Date().timeIntervalSince1970.rounded()]
-        return (try? JSONSerialization.data(withJSONObject: body)) ?? Data("{}".utf8)
     }
 }
