@@ -87,6 +87,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     padding: max(10px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom));
   }
   body.apps-full #scroller, body.landscape-full #scroller { padding: 0; overflow: hidden; }
+  /* The browser only scrolls the page up and down; a sideways swipe moves between tabs. */
+  #scroller { touch-action: pan-y; }
+  #screenImg:not([src]) { visibility: hidden; }  /* no picture yet (e.g. swiping in for the first time) */
+  body.swiping { -webkit-user-select: none; user-select: none; }
   button { font: inherit; color: inherit; letter-spacing: inherit; -webkit-user-select: none; user-select: none; }
   button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   main { max-width: 480px; margin: 0 auto; display: grid; gap: 20px; }
@@ -518,9 +522,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     pointer-events: none; will-change: transform;
     background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0) 60%), var(--glass-pill);
     box-shadow: inset 0 1px 0 var(--glass-pill-rim), inset 0 0 0 .5px var(--glass-edge), 0 2px 8px rgba(0,0,0,.08);
-    transition: transform .42s cubic-bezier(.3,1.3,.5,1);
+    transition: transform .42s cubic-bezier(.3,1.3,.5,1), scale .3s cubic-bezier(.3,1.3,.5,1);
   }
-  .tabbar.no-anim .tab-pill { transition: none; }
+  .tabbar.no-anim .tab-pill { transition: scale .3s cubic-bezier(.3,1.3,.5,1); }
+  /* Slide a finger along the bar: the pill follows it and swells a little, like a lens. */
+  .tabbar { touch-action: none; }
+  .tabbar.dragging .tab-pill { scale: 1.12 1.08; }
   /* A new page fades in (opacity only: smooth on iPhone, and the floating bars stay put). */
   .tab-enter { animation: tab-enter .22s ease-out; }
   @keyframes tab-enter { from { opacity: 0; } to { opacity: 1; } }
@@ -988,6 +995,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 <script>
   const $ = id => document.getElementById(id);
   let data = null, fetchedAt = 0, lastOk = 0;
+  const TAB_TITLES = { screen: "Screen", apps: "Apps", settings: "Settings" };
   // While Lid Awake is off the Mac doesn't answer at all (no error, just silence), so give up
   // after a few seconds instead of waiting on a request that never ends.
   function fetchWithin(ms, url, options = {}) {
@@ -1017,7 +1025,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const stale = !lastOk || ago > 10;
     $("live").classList.toggle("stale", stale);
     $("liveText").textContent = !lastOk ? "Can't reach Mac" : stale ? `Last seen ${ago}s ago` : "Live";
-    $("pageTitle").textContent = { screen: "Screen", apps: "Apps", settings: "Settings" }[currentTab] || "Lid Awake";
+    $("pageTitle").textContent = TAB_TITLES[currentTab] || "Lid Awake";
     $("settingsBtn").hidden = currentTab !== "status" || $("lockBtn").hidden;
     if (!data) return;
 
@@ -1482,14 +1490,16 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The highlight glides to the current tab (jumps without animating the first time).
   function movePill(animate) {
     const active = document.querySelector(".tabs button.active");
-    if (!active) return;
+    if (!active || (swipe && swipe.live)) return;  // mid-swipe the pill follows the finger
     document.querySelector(".tabbar").classList.toggle("no-anim", !animate);
     $("tabPill").style.width = active.offsetWidth + "px";
     $("tabPill").style.transform = `translateX(${active.offsetLeft}px)`;
   }
   let pillPlaced = false;
   addEventListener("resize", () => movePill(false));
-  function showTab(name) {
+  function showTab(name, swiped) {
+    if (settleSwipe) settleSwipe();  // a tap on the tab bar while a swipe is still settling
+    else if (swipe && swipe.live) { clearSwipePeer(); swipe = null; document.body.classList.remove("swiping"); }
     const changed = currentTab !== name;
     currentTab = name;
     tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (name === "settings" ? "status" : name)));
@@ -1497,11 +1507,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     movePill(pillPlaced);
     pillPlaced = true;
     const page = $("tab-" + name);
-    if (changed && page) {
+    if (changed && page && !swiped) {
       page.classList.remove("tab-enter");
       void page.offsetWidth;  // restart the animation
       page.classList.add("tab-enter");
     }
+    $("pageTitle").textContent = TAB_TITLES[name] || "Lid Awake";
     $("settingsBack").hidden = name !== "settings";
     $("live").hidden = name === "settings";
     $("tab-status").hidden = name !== "status";
@@ -1519,6 +1530,207 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     });
   }
   tabButtons.forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+  // ---------- Swipe between tabs ----------
+  // Swipe sideways to go Status ↔ Screen ↔ Apps: the page follows the finger with the next page
+  // sliding in beside it, and the tab-bar pill follows too. Up and down stays page scrolling.
+  // What already uses the finger keeps it: sliders, the dock, the tool row, and on the Screen tab
+  // the picture, trackpad and tools (there, swipe from the phone's edge or the title instead).
+  const TAB_ORDER = ["status", "screen", "apps"];
+  const SWIPE_EASE = "cubic-bezier(.25,1,.5,1)";
+  let swipe = null, settleSwipe = null;
+  function swipeAllowed(e) {
+    if (!unlocked || $("app").hidden || !TAB_ORDER.includes(currentTab)) return false;  // Settings has its Back button
+    const body = document.body.classList;
+    if (body.contains("landscape-full") || body.contains("apps-full") || editingApps || drag) return false;
+    if (document.querySelector(".key-sheet.open, .dock-shade, .app-zoom")) return false;
+    const t = e.target;
+    if (t.closest("input, select, textarea, .qs-track, .screen-tools, .mac-dock")) return false;
+    if (currentTab === "screen" && t.closest("#screenControls")) {
+      if (t.closest("#screenWrap, .trackpad")) return false;
+      return e.clientX < 22 || e.clientX > innerWidth - 22;
+    }
+    return true;
+  }
+  // Moving everything sideways uses each element's `translate` (not the page's `transform`), so the
+  // Apps dock and notes, which are pinned to the screen, travel with their page instead of jumping.
+  function placeSwipe(dx) {
+    for (const [el, base] of swipe.movers) el.style.translate = `${base + dx}px 0`;
+  }
+  function setSwipePeer(dir) {
+    const s = swipe;
+    if (s.dir === dir) return;
+    clearSwipePeer();
+    s.dir = dir;
+    const titles = document.querySelector(".titles"), cur = $("tab-" + currentTab);
+    s.movers = [[titles, 0], ...[...cur.children].map(el => [el, 0])];
+    s.peer = TAB_ORDER[TAB_ORDER.indexOf(currentTab) + dir];
+    if (!s.peer) return;  // nothing further this way: the page just stretches
+    const sc = $("scroller"), page = $("tab-" + s.peer);
+    const tallNow = sc.scrollHeight, curHeight = cur.offsetHeight;
+    $("app").style.position = "relative";
+    page.style.cssText = `position:absolute;left:0;top:0;width:${$("app").clientWidth}px`;
+    page.hidden = false;
+    // Before its first picture the Screen page is empty; show the (still dark) MacBook coming in.
+    if (s.peer === "screen" && $("screenControls").hidden && $("screenMsg").hidden) {
+      $("screenControls").hidden = false;
+      s.revealed = true;
+    }
+    // Show the new page where it will be once it's the current one: scrolled as close to where we
+    // are now as its length allows, so letting go doesn't make anything jump.
+    const most = Math.max(0, tallNow - curHeight + page.offsetHeight - sc.clientHeight);
+    s.scrollAfter = Math.min(sc.scrollTop, most);
+    const shift = sc.scrollTop - s.scrollAfter;
+    page.style.top = shift + "px";
+    const title = titles.cloneNode(true);
+    title.querySelectorAll("[id]").forEach(n => n.removeAttribute("id"));
+    title.querySelector("h1").textContent = TAB_TITLES[s.peer] || "Lid Awake";
+    title.setAttribute("aria-hidden", "true");
+    title.style.cssText = `position:absolute;left:0;right:0;top:${shift}px;margin:0;translate:${dir * s.width}px 0`;
+    titles.style.position = "relative";
+    titles.append(title);
+    s.title = title;
+    s.movers.push(...[...page.children].map(el => [el, dir * s.width]));
+  }
+  function clearSwipePeer(landed) {
+    const s = swipe;
+    for (const [el] of s.movers || []) { el.style.translate = ""; el.style.transition = ""; }
+    if (s.title) s.title.remove();
+    if (s.peer) {
+      const page = $("tab-" + s.peer);
+      page.style.cssText = "";
+      page.hidden = !landed;
+    }
+    // Landing on the Screen tab keeps the MacBook up while its picture arrives (if it can).
+    if (s.revealed && !(landed && data && data.remoteScreen && data.screenPermission)) {
+      $("screenControls").hidden = true;
+    }
+    s.revealed = false;
+    document.querySelector(".titles").style.position = "";
+    $("app").style.position = "";
+    s.movers = s.title = s.peer = null;
+  }
+  // The pill sits between the two tabs' buttons as far as the page has come.
+  function swipePill(progress) {
+    const from = document.querySelector(`.tabs button[data-tab="${currentTab}"]`);
+    const to = swipe.peer && document.querySelector(`.tabs button[data-tab="${swipe.peer}"]`);
+    const x = from.offsetLeft + (to ? (to.offsetLeft - from.offsetLeft) * progress : 0);
+    $("tabPill").style.transform = `translateX(${x}px)`;
+    tabButtons.forEach(b => b.classList.toggle("active", b === (to && progress > 0.5 ? to : from)));
+  }
+
+  $("scroller").addEventListener("pointerdown", e => {
+    if ((swipe && swipe.live) || settleSwipe || !e.isPrimary || e.button > 0 || !swipeAllowed(e)) return;
+    swipe = { id: e.pointerId, x0: e.clientX, y0: e.clientY, live: false, track: [[e.timeStamp, e.clientX]] };
+  });
+  addEventListener("pointermove", e => {
+    const s = swipe;
+    if (!s || s.settling || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x0, dy = e.clientY - s.y0;
+    s.track.push([e.timeStamp, e.clientX]);
+    if (s.track.length > 6) s.track.shift();
+    if (!s.live) {
+      // Mostly up or down: it's a scroll (or the finger is busy with something else).
+      if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) { swipe = null; return; }
+      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+      s.live = true;
+      s.x0 = e.clientX - Math.sign(dx) * 10;  // no jump as the page picks up the finger
+      s.width = innerWidth;
+      document.body.classList.add("swiping");
+      document.querySelector(".tabbar").classList.add("no-anim");
+    }
+    const off = e.clientX - s.x0;
+    setSwipePeer(off < 0 ? 1 : -1);
+    // With a page that way it follows the finger; at either end the page stretches and resists.
+    const moved = s.peer
+      ? Math.max(-s.width, Math.min(s.width, off))
+      : Math.sign(off) * (1 - 1 / (Math.abs(off) * 0.55 / s.width + 1)) * s.width;
+    s.off = moved;
+    placeSwipe(moved);
+    swipePill(Math.abs(moved) / s.width);
+  });
+  // While a swipe is under way, the browser mustn't start scrolling the page as well.
+  document.addEventListener("touchmove", e => { if (swipe && swipe.live) e.preventDefault(); }, { passive: false });
+
+  function endSwipe(e) {
+    const s = swipe;
+    if (!s || s.settling || e.pointerId !== s.id) return;
+    if (!s.live) { swipe = null; return; }
+    s.settling = true;  // kept until the page has settled
+    document.body.classList.remove("swiping");
+    // Speed over the last moments: a quick flick turns the page even if it only moved a little.
+    const [t0, x0] = s.track[0], [t1, x1] = s.track[s.track.length - 1];
+    const speed = t1 > t0 && e.timeStamp - t1 < 100 ? (x1 - x0) / (t1 - t0) : 0;  // px per ms, + = rightward
+    const off = s.off || 0, toward = -s.dir;  // the direction the finger moves to bring the new page in
+    const go = e.type === "pointerup" && s.peer &&
+      (Math.abs(off) > s.width * 0.3 ? speed * toward > -0.3 : speed * toward > 0.3 && Math.abs(off) > 16);
+    const target = go ? toward * s.width : 0;
+    const ms = Math.round(Math.max(220, Math.min(420, Math.abs(target - off) / Math.max(Math.abs(speed), 1.4) * 1.6)));
+    for (const [el] of s.movers) el.style.transition = `translate ${ms}ms ${SWIPE_EASE}`;
+    placeSwipe(target);
+    document.querySelector(".tabbar").classList.remove("no-anim");
+    swipePill(go ? 1 : 0);
+    // A swipe that started on a button or an app icon isn't a tap on it.
+    const swallow = ev => { ev.stopPropagation(); ev.preventDefault(); };
+    addEventListener("click", swallow, true);
+    setTimeout(() => removeEventListener("click", swallow, true), 400);
+
+    const timer = setTimeout(() => settleSwipe(), ms + 20);
+    settleSwipe = () => {
+      clearTimeout(timer);
+      settleSwipe = null;
+      const peer = s.peer, scrollAfter = s.scrollAfter;
+      clearSwipePeer(go);
+      swipe = null;
+      if (go) {
+        showTab(peer, true);
+        $("scroller").scrollTop = scrollAfter;
+      } else movePill(true);
+      tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (currentTab === "settings" ? "status" : currentTab)));
+    };
+  }
+  addEventListener("pointerup", endSwipe);
+  addEventListener("pointercancel", endSwipe);
+
+  // Slide a finger along the tab bar: the pill follows it and lands on the nearest tab.
+  {
+    const bar = document.querySelector(".tabbar");
+    let slide = null;
+    const nearest = x => [...tabButtons].reduce((a, b) =>
+      Math.abs(b.offsetLeft - x) < Math.abs(a.offsetLeft - x) ? b : a);
+    bar.addEventListener("pointerdown", e => {
+      if (!e.isPrimary || e.button > 0) return;
+      const active = document.querySelector(".tabs button.active");
+      slide = { id: e.pointerId, x0: e.clientX, from: active ? active.offsetLeft : 0, live: false };
+    });
+    addEventListener("pointermove", e => {
+      if (!slide || e.pointerId !== slide.id) return;
+      const dx = e.clientX - slide.x0;
+      if (!slide.live && Math.abs(dx) < 8) return;
+      if (!slide.live) { slide.live = true; bar.classList.add("dragging", "no-anim"); }
+      const first = tabButtons[0].offsetLeft, last = tabButtons[tabButtons.length - 1].offsetLeft;
+      const x = slide.x = Math.max(first - 10, Math.min(last + 10, slide.from + dx));
+      $("tabPill").style.transform = `translateX(${x}px)`;
+      const near = nearest(x);
+      tabButtons.forEach(b => b.classList.toggle("active", b === near));
+    });
+    const end = e => {
+      if (!slide || e.pointerId !== slide.id) return;
+      const s = slide;
+      slide = null;
+      if (!s.live) return;
+      bar.classList.remove("dragging", "no-anim");
+      const near = nearest(s.x);
+      if (e.type === "pointerup" && near.dataset.tab !== currentTab) showTab(near.dataset.tab);
+      else { tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (currentTab === "settings" ? "status" : currentTab))); movePill(true); }
+      // The finger lifting over a button isn't a tap on it.
+      const swallow = ev => { ev.stopPropagation(); ev.preventDefault(); };
+      addEventListener("click", swallow, true);
+      setTimeout(() => removeEventListener("click", swallow, true), 400);
+    };
+    addEventListener("pointerup", end);
+    addEventListener("pointercancel", end);
+  }
 
   // ---------- Screen frames ----------
   let framesRunning = false, frameUrl = null, frameId = 0;
