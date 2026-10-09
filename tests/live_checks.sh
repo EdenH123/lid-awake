@@ -55,6 +55,12 @@ else echo "FAIL temperature history: '$th'"; fail=1; fi
 bh=$(grep "^battery history:" "$LOG")
 if echo "$bh" | grep -q "history: [1-9]"; then echo "PASS battery history (${bh#battery history: })"
 else echo "FAIL battery history: '$bh'"; fail=1; fi
+ch=$(grep "^cpu history:" "$LOG")
+if echo "$ch" | grep -q "history: [1-9][0-9]* stretches, [1-9]"; then echo "PASS cpu history (${ch#cpu history: })"
+else echo "FAIL cpu history: '$ch'"; fail=1; fi
+ci=$(grep "^cpu icon:" "$LOG")
+if echo "$ci" | grep -q "icon: [1-9][0-9]* bytes, unlisted refused"; then echo "PASS cpu icon (${ci#cpu icon: })"
+else echo "FAIL cpu icon: '$ci'"; fail=1; fi
 grep -q "^live input echo: ok" "$LOG" && echo "PASS live input" || { echo "FAIL live input"; fail=1; }
 # Flow control: a page that confirms frames never has more than 2 waiting on the way.
 held=$(grep "^live flow:" "$LOG" | sed -n 's/^live flow: \([0-9]*\) frames.*/\1/p')

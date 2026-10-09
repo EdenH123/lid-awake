@@ -28,13 +28,15 @@ The user picked mockup **B · Coloured by app** (over A "range bars + busiest ap
 
 - Rows are grouped per app: by `BundleId` when present (several Claude/Chrome coalitions → one row),
   otherwise by `LaunchdName`.
-- Apps with a bundle id: display name from the app bundle (`NSWorkspace.urlForApplication(withBundleIdentifier:)`
-  → `FileManager.displayName`), icon from that bundle. If the bundle can't be found: last part of the id.
-- Apple background jobs (`LaunchdName` starting `com.apple.`): `com.apple.WindowServer` → "Screen & windows",
-  `com.apple.kernel_task` → "macOS core", all others merged into one "macOS (other)" row. They use a grey
-  Apple-logo icon drawn by the page (no image request).
-- Other background helpers: last dot-separated part of the name (e.g. "hindsight-shared-memory"), a plain
-  grey rounded-square icon drawn by the page.
+- Apps: the log id (bundle id, else launchd name) or its parent id with trailing parts dropped
+  (`local.lidawake.selftest` → Lid Awake) that macOS can find an app bundle for. Apple bundles count as apps
+  only in /Applications, /System/Applications, or Finder (agents like WiFiAgent are macOS). Display name from
+  the bundle, icon from the bundle.
+- Apple background jobs: `com.apple.WindowServer` → "Screen & windows", `com.apple.kernel_task` → "macOS core",
+  all other `com.apple.` ids merged into one "macOS (other)" row. They use a grey Apple-logo icon drawn by the
+  page (no image request).
+- Other background helpers: last dot-separated part of the name (e.g. "hindsight-shared-memory"; unexpanded
+  `$(…)` ids → "Unnamed helper"), a plain grey rounded-square icon drawn by the page.
 - Colour per app: the Mac computes it from the app's icon (average of saturated, opaque pixels of a 32 px
   render; grey if the icon is colourless) and sends it as `#rrggbb`. Page side: if a segment's colour is too
   close to the one before it in the same bar's palette (simple RGB distance under a threshold), it is
