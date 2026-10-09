@@ -207,6 +207,14 @@ let dashboardHTML = #"""
     content: ""; position: absolute; left: 50%; top: 0; transform: translateX(-50%);
     width: 16%; height: 5px; background: var(--mac-groove); border-radius: 0 0 6px 6px;
   }
+  .trackpad { position: relative; }
+  .pad-note {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%); padding: 4px 12px; border-radius: 99px;
+    font-size: 13px; font-weight: 600; color: var(--text); background: var(--card); box-shadow: 0 1px 4px rgba(0,0,0,.12);
+    opacity: 0; pointer-events: none;
+  }
+  .pad-note.show { animation: pad-note 1.1s ease forwards; }
+  @keyframes pad-note { 0% { opacity: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
   /* Holding still on the screen picture: a ring fills under the finger; when it closes, that's a right-click. */
   .hold-ring {
     position: fixed; z-index: 30; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
@@ -1897,6 +1905,18 @@ let dashboardHTML = #"""
   // Mission Control shortcuts (Control + arrow keys).
   const pad = $("trackpad");
   let padStart = null, padLast = null, padFingers = 0, padMoved = false;
+  // When the second finger landed (ms after the first); a right-click needs both together.
+  let secondFingerAt = null;
+  // A short label on the trackpad saying what a tap did ("Right-click"), so nothing is a surprise.
+  const padNote = document.createElement("span");
+  padNote.className = "pad-note";
+  function flashPadNote(text) {
+    padNote.textContent = text;
+    pad.append(padNote);
+    padNote.classList.remove("show");
+    void padNote.offsetWidth;
+    padNote.classList.add("show");
+  }
   let threeStart = null, gestureDone = false, pendingDrag = false, dragging = false, lastPadTap = 0;
 
   function centroid(touches) {
@@ -1911,10 +1931,11 @@ let dashboardHTML = #"""
     const c = centroid(e.touches);
     if (!padStart) {
       padStart = { time: Date.now(), x: c.x, y: c.y };
-      padFingers = 0; padMoved = false; gestureDone = false; threeStart = null;
+      padFingers = 0; padMoved = false; gestureDone = false; threeStart = null; secondFingerAt = null;
       // A quick second tap that then slides becomes a drag.
       pendingDrag = e.touches.length === 1 && Date.now() - lastPadTap < 300;
     }
+    if (e.touches.length === 2 && secondFingerAt == null) secondFingerAt = Date.now() - padStart.time;
     padFingers = Math.max(padFingers, e.touches.length);
     if (e.touches.length >= 3 && !threeStart) threeStart = c;
     padLast = c;  // re-anchor when the finger count changes, so nothing jumps
@@ -1956,11 +1977,14 @@ let dashboardHTML = #"""
     const quick = Date.now() - padStart.time < 300;
     if (dragging) {
       send({ type: "mouseup" });
-    } else if (!padMoved && quick && padFingers === 1) {
+    } else if (!padMoved && quick && (padFingers === 1 || (padFingers === 2 && !(secondFingerAt < 150)))) {
+      // One finger, or a tap that another finger brushed a moment later: a normal click.
       send({ type: "click", button: "left", count: pendingDrag ? 2 : 1 });
       lastPadTap = pendingDrag ? 0 : Date.now();
-    } else if (!padMoved && quick && padFingers === 2) {
+    } else if (!padMoved && quick && padFingers === 2 && secondFingerAt != null && secondFingerAt < 150) {
+      // Both fingers came down together: a deliberate two-finger tap, not a finger brushing the pad.
       send({ type: "click", button: "right" });
+      flashPadNote("Right-click");
     }
     dragging = false; pendingDrag = false; padStart = null;
   }
