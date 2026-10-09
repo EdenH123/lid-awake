@@ -845,7 +845,7 @@ let dashboardHTML = #"""
       <div class="screen-tools" role="toolbar" aria-label="Screen tools">
         <button type="button" class="tool" id="qualityBtn" aria-expanded="false" aria-label="Picture quality: Balanced"><span class="hd">SD</span></button>
         <button type="button" class="tool" id="kbBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><span class="label" id="kbLabel">Type</span></button>
-        <button type="button" class="tool" id="keysBtn" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h4v4H7zM13 4h4v4h-4zM4 11h16v4H4zM8 18h8"/></svg><span class="label">Keys</span></button>
+        <button type="button" class="tool" id="keysBtn" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><text x="12" y="17" text-anchor="middle" font-size="13.5" fill="currentColor" stroke="none" font-family="-apple-system, system-ui, sans-serif">⌘</text></svg><span class="label">Keys</span></button>
         <button type="button" class="tool icon" id="lockMacBtn" aria-label="Lock Mac"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
         <button type="button" class="tool icon" id="screenOffBtn" aria-label="Turn the Mac's screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
         <button type="button" class="tool icon help" id="helpBtn" aria-expanded="false" aria-label="How to use">?</button>
