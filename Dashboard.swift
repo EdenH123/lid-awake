@@ -576,7 +576,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .dock-menu button:active { background: var(--fill); }
   .dock-shade { position: fixed; inset: 0; z-index: 29; }
   #tab-apps .app-grid, #macDock { transition: opacity .25s ease; }
-  #tab-apps.dock-focusing .app-grid, #tab-apps.dock-focusing #appsFoot, #tab-apps.dock-focusing #openedBar,
+  #tab-apps.dock-focusing .app-grid, #tab-apps.dock-focusing #appsFoot, #tab-apps.dock-focusing #appsHelp, #tab-apps.dock-focusing #openedBar,
   #tab-apps.dock-focusing #macDock { opacity: 0; }
   #tab-apps:has(#macDock:not([hidden])) { padding-bottom: 72px; }
   #tab-apps:has(#macDock:not([hidden])) .opened { bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 144px); }
@@ -586,7 +586,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   body.apps-full { padding: 0; overflow: hidden; background: #000; color: #fff; }
   body.apps-full main { max-width: none; }
   body.apps-full .topbar, body.apps-full .titles, body.apps-full .tabbar,
-  body.apps-full #appsFoot, body.apps-full #openedBar { display: none !important; }
+  body.apps-full #appsFoot, body.apps-full #appsHelp, body.apps-full #openedBar { display: none !important; }
   body.apps-full #tab-apps {
     position: fixed; inset: 0; z-index: 5; background: #000; display: grid; place-items: center;
     padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left));
@@ -608,10 +608,33 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
      not to page scrolling; the page still scrolls from the spaces between icons. */
   .app-grid .app { touch-action: none; transition: opacity .25s ease; }
   .app-grid.focusing .app:not(.focused) { opacity: 0; }
-  #appsFoot, #openedBar { transition: opacity .25s ease; }
-  /* The Apps how-to stays out of the way: the ? button shows it (editing tips always show). */
-  #tab-apps:not(.help-open):not(:has(.app-grid.editing)) #appsFoot { display: none; }
-  #tab-apps:has(.app-grid.focusing) #appsFoot, #tab-apps:has(.app-grid.focusing) #openedBar { opacity: 0; }
+  #appsFoot, #appsHelp, #openedBar { transition: opacity .25s ease; }
+  /* The Apps how-to stays out of the way: the ? button shows it. While rearranging, a one-line
+     tip shows instead. */
+  #tab-apps:not(:has(.app-grid.editing)) #appsFoot { display: none; }
+  #tab-apps:not(.help-open) #appsHelp, #tab-apps:has(.app-grid.editing) #appsHelp { display: none; }
+  #tab-apps:has(.app-grid.focusing) :is(#appsFoot, #appsHelp, #openedBar) { opacity: 0; }
+  /* The how-to: a pane of frosted glass (like the tab bar) that drops from the ? button over the
+     page, with a soft round icon on each row. Tapping anywhere else closes it. */
+  .apps-help {
+    position: fixed; z-index: 20; top: var(--help-top, 100px); right: 16px; width: min(360px, calc(100vw - 32px));
+    display: grid; gap: 2px; padding: 8px 16px; border-radius: 26px; isolation: isolate;
+    background: var(--glass);
+    box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim), inset 0 0 0 .5px var(--glass-edge);
+    -webkit-backdrop-filter: blur(28px) saturate(190%) brightness(1.04); backdrop-filter: blur(28px) saturate(190%) brightness(1.04);
+    transform-origin: calc(100% - 22px) -10px; animation: help-pop .32s cubic-bezier(.32,.72,0,1);
+  }
+  .apps-help::before {  /* the sheen: light catching the upper half of the glass */
+    content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+    background: linear-gradient(180deg, var(--glass-sheen) 0%, transparent 55%); opacity: .55;
+  }
+  @keyframes help-pop { from { opacity: 0; transform: scale(.88); } }
+  @media (prefers-reduced-motion: reduce) { .apps-help { animation: none; } }
+  .apps-help .tip { display: flex; align-items: center; gap: 14px; padding: 9px 0; font-size: 15px; line-height: 1.25; }
+  .apps-help .tip small { display: block; font-size: 13px; color: var(--muted); }
+  .apps-help .tip-icon { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgba(120,120,128,.2); }
+  .apps-help svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .apps-help svg .fill { fill: currentColor; stroke: none; }
   .app-grid.focusing .app.focused > * { opacity: 0; transition: opacity .2s ease; }  /* the floating copy takes its place */
   .app-zoom {
     position: fixed; z-index: 40; pointer-events: none; transform-origin: center;
@@ -890,7 +913,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="live" id="live"><span class="dot"></span><span id="liveText">Connecting…</span></div>
     <div class="top-actions">
     <button type="button" class="lock-btn" id="settingsBtn" aria-label="Settings" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.00 4.60 L13.87 2.58 L15.67 3.13 L16.11 5.85 L17.23 6.77 L19.98 6.67 L20.87 8.33 L19.26 10.56 L19.40 12.00 L21.42 13.87 L20.87 15.67 L18.15 16.11 L17.23 17.23 L17.33 19.98 L15.67 20.87 L13.44 19.26 L12.00 19.40 L10.13 21.42 L8.33 20.87 L7.89 18.15 L6.77 17.23 L4.02 17.33 L3.13 15.67 L4.74 13.44 L4.60 12.00 L2.58 10.13 L3.13 8.33 L5.85 7.89 L6.77 6.77 L6.67 4.02 L8.33 3.13 L10.56 4.74Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-    <button type="button" class="lock-btn help-btn" id="appsHelpBtn" aria-label="How to use Apps" aria-expanded="false" aria-controls="appsFoot" hidden>?</button>
+    <button type="button" class="lock-btn help-btn" id="appsHelpBtn" aria-label="How to use Apps" aria-expanded="false" aria-controls="appsHelp" hidden>?</button>
     <button class="lock-btn" id="lockBtn" aria-label="Lock this page" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
     </div>
@@ -1020,7 +1043,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <h2>No apps yet</h2>
       <p>On your Mac, click the Lid Awake icon in the menu bar, then choose Apps on phone → Add apps…</p>
     </div>
-    <div class="section-foot" id="appsFoot" hidden>Tap an app to open it on your Mac. Slide up on an app to open it and watch it on the screen. A dot means it's already open. To change this list, use Apps on phone in the Lid Awake menu on your Mac.</div>
+    <div class="apps-help" id="appsHelp" hidden>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V6a2 2 0 0 1 4 0v5"/><path d="M13 9.5a2 2 0 0 1 4 .5v3a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4.2-2.3L4 13a1.6 1.6 0 0 1 2.6-1.8L9 14"/></svg></span><span>Tap<small>Opens the app on your Mac</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/></svg></span><span>Slide up<small>Opens it and shows it on Screen</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Rearrange your apps, or quit an open one</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.6" class="fill"/><circle cx="12" cy="12" r="8.5" opacity=".35"/></svg></span><span>Dot<small>The app is already open</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 12h16M4 17h8"/><circle cx="17" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg></span><span>Change this list<small>Lid Awake menu on your Mac → Apps on phone</small></span></div>
+    </div>
+    <div class="section-foot" id="appsFoot" hidden>Drag an app to move it. Tap × to quit an open app. Tap Done when you're finished.</div>
     <div class="mac-dock" id="macDock" role="toolbar" aria-label="Other apps open on your Mac" hidden></div>
     <div class="opened" id="openedBar" hidden><span id="openedText"></span></div>
   </div>
@@ -1728,11 +1758,22 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     renderFaceIDRow();
   }
   $("lockNowBtn").addEventListener("click", () => $("lockBtn").click());
-  $("appsHelpBtn").addEventListener("click", () => {
-    tick();
-    const open = $("tab-apps").classList.toggle("help-open");
+  function setAppsHelp(open) {
+    if (open) $("appsHelp").style.setProperty("--help-top", $("appsHelpBtn").getBoundingClientRect().bottom + 10 + "px");
+    $("tab-apps").classList.toggle("help-open", open);
     $("appsHelpBtn").setAttribute("aria-expanded", open);
-  });
+  }
+  $("appsHelpBtn").addEventListener("click", () => { tick(); setAppsHelp(!$("tab-apps").classList.contains("help-open")); });
+  // The glass pane floats over the page: a touch anywhere else (or scrolling) puts it away, and
+  // that touch only closes it (it doesn't also open the app under the finger), like an iPhone popover.
+  document.addEventListener("pointerdown", e => {
+    if (!$("tab-apps").classList.contains("help-open") || e.target.closest("#appsHelp, #appsHelpBtn")) return;
+    setAppsHelp(false);
+    if (e.target.closest(".tabbar")) return;  // switching pages still works in one tap
+    const swallow = ev => { ev.stopPropagation(); ev.preventDefault(); };
+    addEventListener("click", swallow, true);
+    setTimeout(() => removeEventListener("click", swallow, true), 400);
+  }, true);
   $("settingsBtn").addEventListener("click", () => { showTab("settings"); $("scroller").scrollTo(0, 0); loadDevices(); loadActivity(); syncFaceID(); });
   $("settingsBack").addEventListener("click", () => { showTab("status"); $("scroller").scrollTo(0, 0); });
   $("faceIdOn").addEventListener("click", faceIDSetup);
@@ -2953,7 +2994,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     sizeSidewaysIcons(apps.length, rows);
     renderDock();
     $("appsEmpty").hidden = apps.length > 0;
-    $("appsFoot").hidden = apps.length === 0;
+    $("appsFoot").hidden = $("appsHelp").hidden = apps.length === 0;
   }
   // A short note above the dock ("Opened Notes", "Hid Finder"): shown 1.5 s, then it fades away.
   function showOpened(message) {
@@ -3120,13 +3161,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   // ---------- Apps: hold an icon to rearrange ----------
   let editingApps = false, appHoldTimer = null, drag = null;
-  const appGrid = $("appGrid"), APPS_FOOT = $("appsFoot").textContent;
+  const appGrid = $("appGrid");
   const SPRING = "cubic-bezier(.32,.72,0,1)";
   function setEditing(on) {
     editingApps = on;
     appGrid.classList.toggle("editing", on);
     $("appsDone").hidden = !on;
-    $("appsFoot").textContent = on ? "Drag an app to move it. Tap × to quit an open app. Tap Done when you're finished." : APPS_FOOT;
     if (!on && data) renderApps();
   }
   $("appsDone").addEventListener("click", () => setEditing(false));
