@@ -628,6 +628,10 @@ final class StatusServer: @unchecked Sendable {
             }
             reply(c, "200 OK", "application/json", data)
 
+        // Battery temperature over the last hours (from macOS's own power log) for the graph.
+        case ("GET", "/temp-history"):
+            reply(c, "200 OK", "application/json", TempHistory.json(hours: Double(req.query["hours"] ?? "") ?? 24))
+
         case ("GET", "/screen.jpg"):
             guard remoteAllowed() else {
                 return text(c, "403 Forbidden", "Screen access is off. Turn on “Allow screen & control from phone” in the Lid Awake menu on your Mac.")

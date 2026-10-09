@@ -238,6 +238,44 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     background: linear-gradient(90deg, var(--green) 0%, #ffcc00 62%, var(--amber) 80%, var(--red) 100%); }
   .scale i { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
     background: #fff; box-shadow: 0 0 0 2px var(--card), 0 1px 3px rgba(0,0,0,.3); transition: left .5s ease; }
+  /* Tapping the tile opens the last hours as a graph (a sheet, like a Weather detail). */
+  .tile.tappable { position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .2s ease, opacity .2s ease; }
+  .tile.tappable:active { transform: scale(.97); opacity: .85; }
+  .tile-chev { width: 7px !important; height: 12px !important; margin-left: auto; stroke-width: 2.2 !important; color: var(--faint); }
+  .sheet-shade { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.4); opacity: 0; transition: opacity .35s ease; }
+  .sheet-shade.show { opacity: 1; }
+  .temp-sheet {
+    position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto;
+    height: calc(100% - env(safe-area-inset-top) - 18px); display: flex; flex-direction: column;
+    background: var(--bg); border-radius: 26px 26px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.2);
+    transform: translateY(105%); visibility: hidden;
+    transition: transform .45s cubic-bezier(.32,.72,0,1), visibility 0s linear .45s;
+  }
+  .temp-sheet.open { transform: translateY(var(--drag, 0px)); visibility: visible; transition: transform .45s cubic-bezier(.32,.72,0,1), visibility 0s; }
+  .temp-sheet.dragging { transition: none; }
+  .temp-sheet .sheet-head { position: relative; padding: 20px 16px 8px 20px; touch-action: none; cursor: grab; }
+  .temp-sheet .sheet-head::before { background: var(--faint); }
+  .temp-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 16px;
+    padding: 6px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .temp-readout { padding: 2px 4px 0; }
+  .temp-big { font-size: 44px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .temp-when { font-size: 15px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; min-height: 1.3em; }
+  .temp-chart-card { position: relative; padding: 14px 6px 8px 14px; }
+  .temp-chart { display: block; width: 100%; height: 240px; overflow: visible; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+  .temp-chart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .temp-chart .grid { stroke: var(--line); stroke-width: .5; }
+  .temp-chart .limit { stroke: var(--red); stroke-width: 1.2; stroke-dasharray: 4 4; }
+  .temp-chart text.limit-label { fill: var(--red); font-weight: 600; }
+  .temp-chart .bar { transition: opacity .15s ease; }
+  .temp-chart .bar-off { fill: var(--fill); }
+  .temp-chart.picking .bar:not(.picked) { opacity: .3; }
+  .temp-story .row { gap: 12px; }
+  .temp-story .row i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .temp-story .row .title { white-space: normal; }
+  .temp-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center; font-size: 15px; color: var(--muted); }
+  body:has(.temp-sheet.open) { overflow: hidden; }
+  body:has(.temp-sheet.open) .tabbar { visibility: hidden; }
+  @media (prefers-reduced-motion: reduce) { .temp-sheet, .temp-sheet.open, .sheet-shade { transition: none; } }
 
   /* Status: Claude plan usage, two meters in one card. */
   .usage { display: grid; gap: 16px; padding: 16px; }
@@ -889,8 +927,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <div class="meter"><div id="batteryBar" style="width:0"></div></div>
         <div class="tile-detail" id="batterySub"></div>
       </section>
-      <section class="card tile">
-        <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a2 2 0 0 0-2 2v6.1a3.4 3.4 0 1 0 4 0V3.5a2 2 0 0 0-2-2z"/></svg>Temperature</div>
+      <section class="card tile tappable" id="tempTile" role="button" tabindex="0" aria-label="Temperature, show the last hours">
+        <div class="tile-head"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a2 2 0 0 0-2 2v6.1a3.4 3.4 0 1 0 4 0V3.5a2 2 0 0 0-2-2z"/></svg>Temperature<svg class="tile-chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5"/></svg></div>
         <div class="tile-value" id="temp">—</div>
         <div class="scale"><i id="tempDot" style="left:0"></i></div>
         <div class="tile-detail" id="tempSub"></div>
@@ -1128,6 +1166,27 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <button data-tab="apps">
       <svg viewBox="0 0 26 24" aria-hidden="true"><rect x="4" y="2.5" width="8" height="8" rx="2.4"/><rect x="14" y="2.5" width="8" height="8" rx="2.4"/><rect x="4" y="12.5" width="8" height="8" rx="2.4"/><rect x="14" y="12.5" width="8" height="8" rx="2.4"/></svg>Apps</button>
   </nav>
+<div class="sheet-shade" id="tempShade" hidden></div>
+<section class="temp-sheet" id="tempSheet" role="dialog" aria-label="Temperature history" aria-hidden="true">
+  <div class="sheet-head" id="tempHead"><span>Temperature</span><button type="button" id="tempDone">Done</button></div>
+  <div class="temp-body">
+    <div class="segmented" id="tempRange" role="radiogroup" aria-label="Time range">
+      <button type="button" role="radio" data-hours="1" aria-checked="false">1H</button>
+      <button type="button" role="radio" data-hours="6" aria-checked="true">6H</button>
+      <button type="button" role="radio" data-hours="24" aria-checked="false">24H</button>
+    </div>
+    <div class="temp-readout">
+      <div class="temp-big" id="tempBig">—</div>
+      <div class="temp-when" id="tempWhen">Now</div>
+    </div>
+    <div class="card temp-chart-card">
+      <svg class="temp-chart" id="tempChart" role="img" aria-label="Battery temperature graph"></svg>
+      <div class="temp-empty" id="tempEmpty" hidden></div>
+    </div>
+    <div class="list temp-story" id="tempStory" hidden></div>
+    <div class="section-foot">Each bar runs from the lowest to the highest reading in its slot. Battery temperature, from the log your Mac keeps itself (about one reading a minute).</div>
+  </div>
+</section>
 <input class="live-input" id="liveInput" aria-label="Type directly on your Mac"
        autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="go">
 <script>
@@ -1710,7 +1769,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!unlocked || $("app").hidden || !TAB_ORDER.includes(currentTab)) return false;  // Settings has its Back button
     const body = document.body.classList;
     if (body.contains("landscape-full") || body.contains("apps-full") || editingApps || drag) return false;
-    if (document.querySelector(".key-sheet.open, .dock-shade, .app-zoom")) return false;
+    if (document.querySelector(".key-sheet.open, .temp-sheet.open, .dock-shade, .app-zoom")) return false;
     const t = e.target;
     if (t.closest("input, select, textarea, .qs-track, .screen-tools, .mac-dock")) return false;
     if (currentTab === "screen" && t.closest("#screenControls")) {
@@ -3341,6 +3400,254 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     showHaptics();
   });
   showHaptics();
+
+  // ---------- Temperature history: tap the Temperature tile ----------
+  // The Mac reads its own power log (about one battery reading a minute), so there's history
+  // from the first tap. Drag a finger along the graph to read any moment, like in Weather.
+  let tempPoints = null, tempFetchedAt = 0, tempFailed = false, tempHours = 6, tempGraph = null, tempTimer = 0, scrubbing = false;
+  try { tempHours = +localStorage.getItem("tempHours") || 6; } catch (e) {}
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const clock = (sec, withMinutes = true) =>
+    new Date(sec * 1000).toLocaleTimeString([], withMinutes ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" });
+  const tempLimit = () => (data && data.maxBatteryTemp) || 40;
+  const tempWord = t => t >= tempLimit() ? "Too hot" : t >= tempLimit() - 4 ? "Getting warm" : "Normal";
+  function svgEl(name, attrs, parent) {
+    const el = document.createElementNS(SVG_NS, name);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    if (parent) parent.append(el);
+    return el;
+  }
+  async function loadTempHistory() {
+    try {
+      const res = await fetchWithin(8000, "temp-history?hours=24", { cache: "no-store" });
+      if (!res.ok) throw new Error(res.status);
+      tempPoints = (await res.json()).points || [];
+      tempFailed = false;
+    } catch (e) { tempFailed = !tempPoints; }
+    tempFetchedAt = Date.now();
+    if (!scrubbing) renderTempGraph();  // a finger on the graph keeps its reading
+  }
+  function setTempOpen(open) {
+    const sheet = $("tempSheet"), shade = $("tempShade");
+    sheet.style.removeProperty("--drag");
+    sheet.setAttribute("aria-hidden", !open);
+    clearInterval(tempTimer);
+    if (open) {
+      shade.hidden = false;
+      requestAnimationFrame(() => { shade.classList.add("show"); sheet.classList.add("open"); });
+      renderTempGraph();
+      if (Date.now() - tempFetchedAt > 30000) loadTempHistory();
+      tempTimer = setInterval(loadTempHistory, 60000);
+    } else {
+      shade.classList.remove("show");
+      sheet.classList.remove("open");
+      setTimeout(() => { if (!sheet.classList.contains("open")) shade.hidden = true; }, 350);
+    }
+  }
+  function showTempRange() {
+    document.querySelectorAll("#tempRange button").forEach(b => b.setAttribute("aria-checked", +b.dataset.hours === tempHours));
+  }
+  // The big number: now, or the bar under the finger (its low–high).
+  function showTempReading(bin) {
+    if (!bin) {
+      const t = data && data.batteryTemp != null ? data.batteryTemp : tempPoints && tempPoints.length ? tempPoints[tempPoints.length - 1][1] : null;
+      $("tempBig").textContent = t == null ? "—" : t.toFixed(1) + "°";
+      $("tempWhen").textContent = t == null ? "" : "Now · " + tempWord(t);
+    } else {
+      $("tempBig").textContent = bin.lo.toFixed(1) === bin.hi.toFixed(1) ? bin.hi.toFixed(1) + "°" : `${bin.lo.toFixed(1)}–${bin.hi.toFixed(1)}°`;
+      const end = Math.min(bin.s + bin.size, Date.now() / 1000);
+      $("tempWhen").textContent = `${clock(bin.s).replace(/\s?[AP]\.?M\.?$/i, "")}–${clock(end)}`;
+    }
+  }
+  const spokenMinutes = sec => {
+    const m = Math.round(sec / 60);
+    return m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`;
+  };
+  // Event times: "8:21 PM", or "Yesterday 8:21 PM" on the 24-hour view.
+  function eventTime(sec) {
+    const d = new Date(sec * 1000), today = new Date();
+    return (d.toDateString() === today.toDateString() ? "" : "Yesterday ") + clock(sec);
+  }
+  // The timeline under the graph, newest first: now, sleeps, the peak and the coolest moment.
+  function renderTempStory(pts, hi, lo) {
+    const box = $("tempStory");
+    box.replaceChildren();
+    if (pts.length < 2) { box.hidden = true; return; }
+    box.hidden = false;
+    const last = pts[pts.length - 1], limit = tempLimit();
+    const before = pts.find(p => p[0] >= last[0] - 900) || pts[0];
+    const change = (data && data.batteryTemp != null ? data.batteryTemp : last[1]) - before[1];
+    const trend = change > .5 ? "rising" : change < -.5 ? "cooling down" : "steady";
+    const color = t => t >= limit ? "var(--red)" : t >= limit - 4 ? "var(--amber)" : t >= limit - 7 ? "#ffcc00" : "var(--green)";
+    // "Now" is the live reading, same as the big number above (the log can lag a minute).
+    const nowT = data && data.batteryTemp != null ? data.batteryTemp : last[1];
+    const events = [[last[0] + 1, "Now", `${nowT.toFixed(1)}°, ${trend}`, color(nowT)]];
+    for (let i = 1; i < pts.length; i++) {
+      const gap = pts[i][0] - pts[i - 1][0];
+      if (gap <= 300) continue;
+      events.push([pts[i][0], eventTime(pts[i][0]), "Woke up", "var(--blue)"]);
+      events.push([pts[i - 1][0], eventTime(pts[i - 1][0]), `Mac slept for ${spokenMinutes(gap)}`, "var(--gray)"]);
+    }
+    if (hi[1] - lo[1] >= .3) {
+      events.push([hi[0], eventTime(hi[0]), `Peaked at ${hi[1].toFixed(1)}°`, color(hi[1])]);
+      events.push([lo[0], eventTime(lo[0]), `Coolest, ${lo[1].toFixed(1)}°`, color(lo[1])]);
+    }
+    events.sort((a, b) => b[0] - a[0]);
+    for (const [, when, text, dot] of events.slice(0, 8)) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const d = document.createElement("i"); d.style.background = dot;
+      const t = document.createElement("span"); t.className = "title"; t.textContent = text;
+      const v = document.createElement("span"); v.className = "value"; v.textContent = when;
+      row.append(d, t, v);
+      box.append(row);
+    }
+  }
+  // Range bars: the readings grouped into bins (5 min for 1H, 15 min for 6H, 1 hour for 24H),
+  // each bar running from that bin's lowest to highest reading, coloured by height.
+  function renderTempGraph() {
+    showTempRange();
+    showTempReading(null);
+    const svg = $("tempChart");
+    svg.replaceChildren();
+    tempGraph = null;
+    const size = { 1: 300, 6: 900, 24: 3600 }[tempHours];
+    const now = Date.now() / 1000, offset = new Date().getTimezoneOffset() * 60;  // bins on round local times
+    const from = Math.floor((now - tempHours * 3600 - offset) / size) * size + offset;
+    const n = Math.ceil((now - from) / size), to = from + n * size;
+    const pts = (tempPoints || []).filter(p => p[0] >= from);
+    const empty = $("tempEmpty");
+    empty.hidden = pts.length > 1;
+    empty.textContent = tempFailed ? "Couldn't load the history from your Mac." : !tempPoints ? "Loading…" : "No readings for this time yet.";
+    let hi = pts[0], lo = pts[0];
+    for (const p of pts) { if (p[1] > hi[1]) hi = p; if (p[1] < lo[1]) lo = p; }
+    renderTempStory(pts, hi, lo);
+    if (pts.length < 2) return;
+
+    const bins = [];
+    for (let i = 0; i < n; i++) bins.push({ s: from + i * size, size, lo: Infinity, hi: -Infinity, count: 0 });
+    for (const p of pts) {
+      const b = bins[Math.min(n - 1, Math.floor((p[0] - from) / size))];
+      b.lo = Math.min(b.lo, p[1]); b.hi = Math.max(b.hi, p[1]); b.count++;
+    }
+
+    // Scale: the readings with a little room; the turn-off limit joins in once it's near.
+    const limit = tempLimit();
+    let yMin = Math.floor(lo[1] - .5), yMax = Math.ceil(hi[1] + .5);
+    if (yMax - yMin < 4) { const mid = (yMax + yMin) / 2; yMin = Math.floor(mid - 2); yMax = yMin + 4; }
+    const showLimit = hi[1] >= limit - 4;
+    if (showLimit) yMax = Math.max(yMax, limit + 1);
+    const step = [1, 2, 5, 10].find(s => (yMax - yMin) / s <= 4);
+    yMin = Math.floor(yMin / step) * step; yMax = Math.ceil(yMax / step) * step;
+
+    const W = svg.getBoundingClientRect().width || 320, H = 240;
+    const L = 0, R = W - 34, T = 6, B = H - 24;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const x = s => L + (s - from) / (to - from) * (R - L);
+    const y = t => B - (t - yMin) / (yMax - yMin) * (B - T);
+
+    // Grid: degrees on the right, times along the bottom.
+    for (let t = yMin; t <= yMax + 1e-9; t += step) {
+      svgEl("line", { class: "grid", x1: L, x2: R, y1: y(t), y2: y(t) }, svg);
+      svgEl("text", { x: R + 8, y: y(t) + 4 }, svg).textContent = t + "°";
+    }
+    const tickEvery = { 1: 900, 6: 3600, 24: 6 * 3600 }[tempHours];
+    for (let s = Math.ceil((from - offset) / tickEvery) * tickEvery + offset; s < to; s += tickEvery) {
+      if (x(s) < 14 || x(s) > R - 14) continue;
+      const label = tempHours === 1 ? clock(s).replace(/\s?[AP]\.?M\.?$/i, "") : clock(s, false);
+      svgEl("text", { x: x(s), y: H - 6, "text-anchor": "middle" }, svg).textContent = label;
+    }
+    if (showLimit) {
+      svgEl("line", { class: "limit", x1: L, x2: R, y1: y(limit), y2: y(limit) }, svg);
+      svgEl("text", { class: "limit-label", x: L + 4, y: y(limit) - 6 }, svg).textContent = `Turns off at ${limit}°`;
+    }
+
+    // One colour scale for every bar, set by height, like the tile's scale (green, yellow, orange, red).
+    const defs = svgEl("defs", {}, svg);
+    const grad = svgEl("linearGradient", { id: "tempGrad", gradientUnits: "userSpaceOnUse", x1: 0, x2: 0,
+                                           y1: y(20), y2: y(20 + (limit - 20) * 1.25) }, defs);
+    for (const [o, c] of [[0, "var(--green)"], [.62, "#ffcc00"], [.8, "var(--amber)"], [1, "var(--red)"]])
+      svgEl("stop", { offset: o, style: `stop-color:${c}` }, grad);
+
+    const slot = (R - L) / n, bw = Math.min(14, slot * .62);
+    for (const b of bins) {
+      const cx = x(b.s) + slot / 2;
+      if (!b.count) {
+        // Asleep (or not reached yet): a small grey dash on the floor.
+        if (b.s < now) b.el = svgEl("rect", { class: "bar-off", x: cx - bw / 2, y: B - 4, width: bw, height: 4, rx: 2 }, svg);
+        continue;
+      }
+      // Steady bins still show as a round dot.
+      let top = y(b.hi), bottom = y(b.lo);
+      if (bottom - top < bw) { const mid = (top + bottom) / 2; top = mid - bw / 2; bottom = mid + bw / 2; }
+      b.el = svgEl("rect", { class: "bar", x: cx - bw / 2, y: top, width: bw, height: bottom - top, rx: bw / 2, fill: "url(#tempGrad)" }, svg);
+    }
+    tempGraph = { bins: bins.filter(b => b.count), x, slot, svg, left: () => svg.getBoundingClientRect().left, scale: () => W / svg.getBoundingClientRect().width };
+  }
+  // Scrubbing: the bar nearest the finger stands out, the rest fade.
+  function scrubTemp(e) {
+    const g = tempGraph;
+    if (!g || !g.bins.length) return;
+    const px = (e.clientX - g.left()) * g.scale();
+    let best = g.bins[0];
+    for (const b of g.bins) if (Math.abs(g.x(b.s) + g.slot / 2 - px) < Math.abs(g.x(best.s) + g.slot / 2 - px)) best = b;
+    if (g.picked !== best) {
+      g.svg.classList.add("picking");
+      if (g.picked) g.picked.el.classList.remove("picked");
+      best.el.classList.add("picked");
+      if (g.picked) tick();
+      g.picked = best;
+    }
+    showTempReading(best);
+  }
+  function endScrub() {
+    scrubbing = false;
+    const g = tempGraph;
+    if (!g) return;
+    g.svg.classList.remove("picking");
+    if (g.picked) g.picked.el.classList.remove("picked");
+    g.picked = null;
+    showTempReading(null);
+  }
+  const chart = $("tempChart");
+  chart.addEventListener("pointerdown", e => { try { chart.setPointerCapture(e.pointerId); } catch (err) {} scrubbing = true; scrubTemp(e); });
+  chart.addEventListener("pointermove", e => { if (chart.hasPointerCapture(e.pointerId)) scrubTemp(e); });
+  for (const ev of ["pointerup", "pointercancel"]) chart.addEventListener(ev, endScrub);
+
+  $("tempTile").addEventListener("click", () => { if (!document.querySelector("main.waiting")) { tick(); setTempOpen(true); } });
+  $("tempTile").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTempOpen(true); } });
+  addTickPad($("tempTile"));
+  $("tempDone").addEventListener("click", () => setTempOpen(false));
+  $("tempShade").addEventListener("click", () => setTempOpen(false));
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && $("tempSheet").classList.contains("open")) setTempOpen(false); });
+  document.querySelectorAll("#tempRange button").forEach(b => b.addEventListener("click", () => {
+    tempHours = +b.dataset.hours;
+    try { localStorage.setItem("tempHours", tempHours); } catch (e) {}
+    tick();
+    renderTempGraph();
+  }));
+  addEventListener("resize", () => { if ($("tempSheet").classList.contains("open")) renderTempGraph(); });
+  // Pull the sheet down by its top to close it.
+  let sheetDrag = null;
+  $("tempHead").addEventListener("pointerdown", e => {
+    if (e.target.closest("button")) return;
+    sheetDrag = { y: e.clientY, t: performance.now(), dy: 0 };
+    $("tempHead").setPointerCapture(e.pointerId);
+    $("tempSheet").classList.add("dragging");
+  });
+  $("tempHead").addEventListener("pointermove", e => {
+    if (!sheetDrag) return;
+    sheetDrag.dy = Math.max(0, e.clientY - sheetDrag.y);
+    $("tempSheet").style.setProperty("--drag", sheetDrag.dy + "px");
+  });
+  for (const ev of ["pointerup", "pointercancel"]) $("tempHead").addEventListener(ev, () => {
+    if (!sheetDrag) return;
+    const fast = sheetDrag.dy / (performance.now() - sheetDrag.t) > .5;
+    $("tempSheet").classList.remove("dragging");
+    if (sheetDrag.dy > 120 || (fast && sheetDrag.dy > 30)) setTempOpen(false);
+    else $("tempSheet").style.removeProperty("--drag");
+    sheetDrag = null;
+  });
 
   // ---------- Appearance ----------
   function savedTheme() { try { return localStorage.getItem("theme") || "auto"; } catch (e) { return "auto"; } }
