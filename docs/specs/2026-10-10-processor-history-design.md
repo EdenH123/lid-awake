@@ -68,9 +68,10 @@ Response:
   intervals cover (so a partly covered newest slot isn't diluted). Slot with zero coverage = no data.
 - App names/colours are cached in memory on the Mac per key (icons don't change often).
 
-`GET /cpu-icon?key=<bundle id>` (behind the session): 64 px PNG of that app's icon, only when `key` is an
-app key from the most recent `/cpu-history` answer (kept in memory); otherwise 404. Reuses
-`PhoneApps.iconPNG(path:size:)`. Page sets `loading="lazy"` images with a grey fallback on error.
+`GET /cpu-icon?key=<bundle id>` (behind the session): 256 px PNG of that app's icon, only when `key` is an
+app key that has appeared in a `/cpu-history` answer since the app started (kept in memory); otherwise 404.
+Reuses `PhoneApps.iconPNG`. The page fetches each icon once, keeps it as a blob URL, and shows the app's
+colour as a plain square if the icon can't load.
 
 ## Code layout
 
