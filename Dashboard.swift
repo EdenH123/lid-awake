@@ -523,6 +523,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .cam-live i { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30; animation: cam-dot 1.6s ease-in-out infinite; }
   #camLeft:not(:empty)::before { content: "·"; margin: 0 5px; opacity: .7; }
   @keyframes cam-dot { 50% { opacity: .35; } }
+  .cam-buttons { display: flex; gap: 8px; }
+  /* Hold to talk: white while your voice goes to the Mac, with a soft ring like a walkie-talkie. */
+  #camTalk { pointer-events: auto; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; color: #fff;
+    background: rgba(0,0,0,.45); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: grid; place-items: center;
+    touch-action: none; -webkit-touch-callout: none; transition: background .15s ease, color .15s ease, transform .15s ease; }
+  #camTalk svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #camTalk.on { background: #fff; color: #000; transform: scale(1.15); animation: talk-ring 1.2s ease-out infinite; }
+  @keyframes talk-ring { 0% { box-shadow: 0 0 0 0 rgba(255,255,255,.55); } 100% { box-shadow: 0 0 0 12px rgba(255,255,255,0); } }
   #camMute { pointer-events: auto; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; color: #fff;
     background: rgba(0,0,0,.45); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: grid; place-items: center; }
   #camMute svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -1210,7 +1218,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
           <canvas id="camCanvas" hidden aria-label="Mac camera"></canvas>
           <div class="cam-msg" id="camMsg" hidden></div>
           <div class="cam-bar"><span class="cam-live"><i></i>Camera<span id="camLeft"></span></span>
-            <button type="button" id="camMute" aria-label="Mute"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/></svg></button></div>
+            <span class="cam-buttons"><button type="button" id="camTalk" aria-label="Hold to talk through the Mac's speakers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+            <button type="button" id="camMute" aria-label="Mute"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/></svg></button></span></div>
         </div>
       </div>
       <div class="base"></div>
@@ -1239,7 +1248,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Right-click</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span><span>Drag<small>Scroll</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10V4h6M20 14v6h-6M4 4l6 6M20 20l-6-6"/></svg></span><span>Pinch<small>Zoom in on this phone only</small></span></div>
-      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Face ID each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Hold the mic button to talk through the Mac's speakers. Face ID each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
       <div class="tips-head">Trackpad</div>
       <div class="tip"><span class="tip-icon txt">1</span><span>1 finger<small>Move · tap to click · tap twice, then hold and slide to drag</small></span></div>
       <div class="tip"><span class="tip-icon txt">2</span><span>2 fingers<small>Slide to scroll · tap to right-click</small></span></div>
@@ -2595,6 +2604,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   function closeCamera(message) {
     if (!camOn && !camOpening && $("camView").hidden) { if (message) showCamNotice(message); return; }
+    if (talking) stopTalk();
     const wasOn = camOn;
     camOn = false;
     camOpening = false;
@@ -2678,6 +2688,73 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     source.start(camNext);
     camNext += n / rate;
   }
+
+  // ----- Talk back: hold the mic button and your voice plays on the Mac's speakers -----
+  // Like a walkie-talkie: the room's sound is muted here while you talk (no echo), and the
+  // phone's microphone is only open while the button is held.
+  let talkStream = null, talkSource = null, talkNode = null, talking = false, talkPos = 0;
+  function mulawByte(x) {
+    let s = Math.round(Math.max(-1, Math.min(1, x)) * 32767);
+    const sign = s < 0 ? 0x80 : 0;
+    if (sign) s = -s;
+    s = Math.min(s, 32635) + 0x84;
+    let exp = 7;
+    for (let mask = 0x4000; exp > 0 && !(s & mask); exp--, mask >>= 1);
+    return ~(sign | (exp << 4) | ((s >> (exp + 3)) & 0x0F)) & 0xFF;
+  }
+  async function startTalk() {
+    if (talking || !camAudio || !camWS || camWS.readyState !== 1) return;
+    talking = true;
+    $("camTalk").classList.add("on");
+    if (camGain) camGain.gain.value = 0;
+    try {
+      try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch (e) {}
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (!talking || !camAudio) { stream.getTracks().forEach(t => t.stop()); return; }  // let go during the question
+      talkStream = stream;
+    } catch (e) {
+      stopTalk();
+      setCamMsg("To talk, allow the microphone for this page on your iPhone.");
+      return;
+    }
+    camAudio.resume();
+    talkSource = camAudio.createMediaStreamSource(talkStream);
+    talkNode = camAudio.createScriptProcessor(2048, 1, 1);
+    talkPos = 0;
+    // The phone records at 44.1/48 kHz; the Mac gets 16 kHz, one μ-law byte a sample.
+    talkNode.onaudioprocess = e => {
+      if (!talking || !camWS || camWS.readyState !== 1) return;
+      const input = e.inputBuffer.getChannelData(0), step = camAudio.sampleRate / 16000, bytes = [];
+      let pos = talkPos;
+      for (; pos + step <= input.length; pos += step) {
+        let sum = 0, n = 0;
+        for (let i = Math.floor(pos); i < pos + step; i++, n++) sum += input[i];
+        bytes.push(mulawByte(sum / n));
+      }
+      talkPos = pos - input.length;
+      if (bytes.length) camWS.send(JSON.stringify({ talk: btoa(String.fromCharCode(...bytes)) }));
+    };
+    talkSource.connect(talkNode);
+    talkNode.connect(camAudio.destination);  // Safari only runs the recorder when it's connected (it outputs silence)
+  }
+  function stopTalk() {
+    talking = false;
+    $("camTalk").classList.remove("on");
+    try { if (talkNode) { talkNode.onaudioprocess = null; talkNode.disconnect(); } } catch (e) {}
+    try { if (talkSource) talkSource.disconnect(); } catch (e) {}
+    if (talkStream) talkStream.getTracks().forEach(t => t.stop());
+    talkStream = talkSource = talkNode = null;
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+    if (camGain) camGain.gain.value = camMuted ? 0 : 1;
+    if (camAudio) camAudio.resume();
+  }
+  $("camTalk").addEventListener("pointerdown", e => {
+    e.preventDefault();
+    try { $("camTalk").setPointerCapture(e.pointerId); } catch (err) {}  // a finger sliding off still counts as held
+    startTalk();
+  });
+  for (const type of ["pointerup", "pointercancel", "pointerleave"]) $("camTalk").addEventListener(type, () => { if (talking) stopTalk(); });
+  $("camTalk").addEventListener("contextmenu", e => e.preventDefault());
 
   $("camNotch").addEventListener("click", () => {
     if (camOn || camOpening || !$("camView").hidden) closeCamera(); else openCamera();

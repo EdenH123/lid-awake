@@ -140,6 +140,7 @@ final class LiveServer: @unchecked Sendable {
         var watch: (() -> Void)?                    // starts the screen frames for this phone
         var camera = false                          // watching the Mac's camera instead of the screen
         var cameraSince = Date()
+        var talked = false                          // logged once per camera visit
         // Read from FrameStream's queue too (VideoSink.ready), hence the lock.
         let lock = NSLock()
         var unconfirmed = 0
@@ -242,6 +243,7 @@ final class LiveServer: @unchecked Sendable {
         }
         peer.camera = true
         peer.cameraSince = Date()
+        peer.talked = false
         // No screen for this phone meanwhile: only one video uses the link.
         FrameStream.shared.unsubscribe(peer.id)
         peer.video = false
@@ -364,6 +366,13 @@ final class LiveServer: @unchecked Sendable {
             if message["acks"] as? Bool == true { peer.flowControl = true }
             if let wants = message["camera"] as? Bool { return wants ? startCamera(peer, ticket: message["ticket"] as? String) : stopCamera(peer) }
             if message["cameraKey"] != nil { return CameraStream.shared.keyframe() }
+            // Talk back: only while this phone has the camera open (menu switch + Face ID).
+            if let voice = message["talk"] as? String {
+                guard peer.camera, checks.cameraAllowed(), let data = Data(base64Encoded: voice), data.count <= 4000 else { return }
+                if !peer.talked && !checks.allowLoopback { AccessLog.write("Talked through the Mac's speakers · \(peer.device)") }
+                peer.talked = true
+                return TalkPlayer.shared.play(data)
+            }
             // The page can play H.264 (true), or its decoder failed and it wants JPEGs again (false).
             if let wantsVideo = message["video"] as? Bool {
                 StreamStats.shared.note("phone video: \(wantsVideo ? "on" : "off")" + Self.why(message))

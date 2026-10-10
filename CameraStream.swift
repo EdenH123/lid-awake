@@ -240,3 +240,51 @@ enum CameraTickets {
         return issued.token == token && issued.expires > Date()
     }
 }
+
+// Talk back: the phone's voice on the Mac's speakers, while the camera is open there.
+// The phone sends ~40 ms of 16 kHz μ-law at a time; they play back to back.
+final class TalkPlayer: @unchecked Sendable {
+    static let shared = TalkPlayer()
+
+    private let queue = DispatchQueue(label: "local.lidawake.talk")
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+    private var ahead = 0.0          // seconds of voice waiting to play
+    private var lastVoice = Date.distantPast
+    private static let samples: [Float] = (0..<256).map { i in
+        let u = ~i & 0xFF, t = (((u & 0x0F) << 3) + 0x84) << ((u >> 4) & 7)
+        return Float((u & 0x80) != 0 ? 0x84 - t : t - 0x84) / 32768
+    }
+
+    init() {
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+    }
+
+    func play(_ mulaw: Data) {
+        queue.async {
+            // Never more than about a second behind the phone: drop rather than pile up.
+            guard !mulaw.isEmpty, self.ahead < 1 else { return }
+            if !self.engine.isRunning {
+                do { try self.engine.start() } catch { return }
+            }
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: self.format, frameCapacity: AVAudioFrameCount(mulaw.count)),
+                  let out = buffer.floatChannelData?[0] else { return }
+            buffer.frameLength = AVAudioFrameCount(mulaw.count)
+            for (i, byte) in mulaw.enumerated() { out[i] = Self.samples[Int(byte)] }
+            let seconds = Double(mulaw.count) / 16000
+            self.ahead += seconds
+            self.lastVoice = Date()
+            self.player.scheduleBuffer(buffer) { [weak self] in self?.queue.async { self?.ahead -= seconds } }
+            if !self.player.isPlaying { self.player.play() }
+            // Let go of the speakers a few seconds after the last word.
+            self.queue.asyncAfter(deadline: .now() + 4) {
+                guard Date().timeIntervalSince(self.lastVoice) >= 3.9, self.engine.isRunning else { return }
+                self.player.stop()
+                self.engine.stop()
+                self.ahead = 0
+            }
+        }
+    }
+}
