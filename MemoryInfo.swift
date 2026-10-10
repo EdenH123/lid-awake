@@ -54,10 +54,12 @@ enum MemoryInfo {
     }
 
     // The apps using the most memory, helpers included, by Activity Monitor's "Memory" figure.
+    // Programs that aren't part of an app (a `node` dev server, say) count under their own name.
     // Programs of other users (and the system's own) can't be read and are skipped.
-    static func topApps(limit: Int = 5, id: (String) -> String?) -> [[String: Any]] {
+    // `others`: everything readable that didn't make the list.
+    static func topApps(limit: Int = 5, id: (String) -> String?) -> (top: [[String: Any]], others: UInt64) {
         let n = proc_listallpids(nil, 0)
-        guard n > 0 else { return [] }
+        guard n > 0 else { return ([], 0) }
         var pids = [pid_t](repeating: 0, count: Int(n) + 64)
         let got = pids.withUnsafeMutableBufferPointer {
             proc_listallpids($0.baseAddress, Int32($0.count * MemoryLayout<pid_t>.size))
@@ -65,25 +67,29 @@ enum MemoryInfo {
         var sizes: [String: UInt64] = [:]
         var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
         for pid in pids.prefix(Int(max(got, 0))) where pid > 0 {
-            guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0,
-                  let app = appBundle(of: String(cString: buf)) else { continue }
+            guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { continue }
+            let path = String(cString: buf), app = appBundle(of: path) ?? path
             var info = rusage_info_v4()
             let ok = withUnsafeMutablePointer(to: &info) {
                 $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
             }
             if ok == 0 { sizes[app, default: 0] += info.ri_phys_footprint }
         }
-        return sizes.sorted { $0.value > $1.value }.prefix(limit).map { path, bytes in
+        let ranked = sizes.sorted { $0.value > $1.value }
+        let top: [[String: Any]] = ranked.prefix(limit).map { path, bytes in
+            guard path.hasSuffix(".app") else { return ["name": URL(fileURLWithPath: path).lastPathComponent, "bytes": bytes] }
             var item: [String: Any] = ["name": appName(path), "bytes": bytes]
             if let i = id(path) { item["id"] = i }
             return item
         }
+        return (top, ranked.dropFirst(limit).reduce(0) { $0 + $1.value })
     }
 
     // Everything the Memory window shows. `id` names an app for the phone's icon route.
     static func snapshot(id: (String) -> String? = { _ in nil }) -> [String: Any] {
+        let apps = topApps(id: id)
         var out: [String: Any] = ["total": ProcessInfo.processInfo.physicalMemory, "swapUsed": swapUsed(),
-                                  "top": topApps(id: id)]
+                                  "top": apps.top, "otherPrograms": apps.others]
         if let c = counts() {
             out["used"] = used(c); out["app"] = c.app; out["wired"] = c.wired
             out["compressed"] = c.compressed; out["cached"] = c.cached; out["free"] = c.free

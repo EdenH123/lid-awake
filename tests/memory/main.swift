@@ -26,5 +26,9 @@ let top = s["top"] as? [[String: Any]] ?? []
 let bytes = top.compactMap { $0["bytes"] as? UInt64 }
 check("top apps 1–5", (1...5).contains(top.count), "\(top.map { $0["name"] as? String ?? "?" })")
 check("top apps largest first", bytes == bytes.sorted(by: >) && bytes.allSatisfy { $0 > 0 })
-check("top apps have names and ids", top.allSatisfy { !($0["name"] as? String ?? "").isEmpty && ($0["id"] as? String ?? "").hasPrefix("id:/") })
+check("top apps have names", top.allSatisfy { !($0["name"] as? String ?? "").isEmpty })
+// Apps get an id for their icon; plain programs (no .app) don't, so the icon route never sees them.
+let others = s["otherPrograms"] as? UInt64 ?? 0
+check("other programs counted, and less than used", others > 0 && bytes.reduce(0, +) + others < used, "\(others >> 20) MB")
+check("only apps have ids", top.allSatisfy { ($0["id"] as? String).map { $0.hasPrefix("id:/") && $0.hasSuffix(".app") } ?? true })
 exit(failed ? 1 : 0)
