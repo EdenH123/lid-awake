@@ -78,9 +78,11 @@ enum Passkeys {
     }
 
     // Signing in: the signature must come from a stored key, over this challenge, for this address.
-    static func verify(credentialID: String, clientData: Data, authenticatorData: Data, signature: Data, host: String) -> Bool {
+    // `purpose` "camera": the same check, for the challenge handed out before opening the camera.
+    static func verify(credentialID: String, clientData: Data, authenticatorData: Data, signature: Data, host: String,
+                       purpose: String = "get") -> Bool {
         guard host.hasSuffix(".ts.net"),
-              checkClientData(clientData, type: "webauthn.get", purpose: "get", host: host),
+              checkClientData(clientData, type: "webauthn.get", purpose: purpose, host: host),
               let parsed = AuthData(authenticatorData),
               parsed.rpIDHash == Data(SHA256.hash(data: Data(host.utf8))),
               parsed.userVerified else { return false }

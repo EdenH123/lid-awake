@@ -223,13 +223,14 @@ final class StatusServer: @unchecked Sendable {
     private let status: () -> Data
     private let remoteAllowed: () -> Bool
     private let controlAllowed: () -> Bool
+    private let cameraAllowed: () -> Bool
     private let awake: () -> Bool
     private let turnOff: () -> Void
     private let setTimer: (Int) -> Bool
     private let setLimit: (String, Bool) -> Bool
 
     init?(status: @escaping () -> Data, remoteAllowed: @escaping () -> Bool, controlAllowed: @escaping () -> Bool,
-          awake: @escaping () -> Bool,
+          cameraAllowed: @escaping () -> Bool, awake: @escaping () -> Bool,
           turnOff: @escaping () -> Void, setLimit: @escaping (String, Bool) -> Bool,
           setTimer: @escaping (Int) -> Bool) {
         let params = NWParameters.tcp
@@ -240,6 +241,7 @@ final class StatusServer: @unchecked Sendable {
         self.status = status
         self.remoteAllowed = remoteAllowed
         self.controlAllowed = controlAllowed
+        self.cameraAllowed = cameraAllowed
         self.awake = awake
         self.turnOff = turnOff
         self.setTimer = setTimer
@@ -486,6 +488,30 @@ final class StatusServer: @unchecked Sendable {
             else { return text(c, "400 Bad Request", "Couldn't turn on Face ID. Try again.") }
             reply(c, "204 No Content", "text/plain", Data())
             announce("Face ID added to Lid Awake", "On \(device == "Browser" ? "a browser" : "an \(device)"). If this wasn't you, remove it from the Lid Awake menu on your Mac.")
+
+        // Camera: Face ID every time. A one-time challenge (only while the Mac menu allows the
+        // camera), then the phone's signature buys a one-minute ticket that the live socket redeems.
+        case ("POST", "/camera/options"):
+            guard remoteAllowed() && cameraAllowed() else {
+                return text(c, "403 Forbidden", "The camera is off. On your Mac, tick “Allow camera & microphone from phone” in the Lid Awake menu.")
+            }
+            guard Passkeys.count > 0, host.hasSuffix(".ts.net") else {
+                return text(c, "409 Conflict", "The camera needs Face ID. Turn it on first in Settings → Sign-in.")
+            }
+            let options: [String: Any] = ["challenge": Passkeys.challenge("camera"), "rpId": host, "ids": Passkeys.credentialIDs]
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: options)) ?? Data())
+
+        case ("POST", "/camera/unlock"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any]
+            guard remoteAllowed() && cameraAllowed(), let token,
+                  let id = body?["id"] as? String,
+                  let clientData = (body?["clientData"] as? String).flatMap(Passkeys.fromBase64url),
+                  let authData = (body?["authenticatorData"] as? String).flatMap(Passkeys.fromBase64url),
+                  let signature = (body?["signature"] as? String).flatMap(Passkeys.fromBase64url),
+                  Passkeys.verify(credentialID: id, clientData: clientData, authenticatorData: authData,
+                                  signature: signature, host: host, purpose: "camera")
+            else { return text(c, "401 Unauthorized", "Face ID didn't work, so the camera stays closed.") }
+            reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: ["ticket": CameraTickets.issue(for: token)])) ?? Data())
 
         // The newest lines of the activity log, for Settings.
         case ("GET", "/activity"):

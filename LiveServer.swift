@@ -15,6 +15,7 @@ final class LiveServer: @unchecked Sendable {
         var controlAllowed: () -> Bool
         var screenPermission: () -> Bool
         var controlPermission: () -> Bool
+        var cameraAllowed: () -> Bool = { false }
         var allowLoopback = false  // the selftest's private server only
     }
 
@@ -26,6 +27,9 @@ final class LiveServer: @unchecked Sendable {
         activityLock.lock(); defer { activityLock.unlock() }
         return (viewers, Date().timeIntervalSince(lastInput) < 5)
     }
+    // Phones watching the Mac's camera right now.
+    private var cameraViewers = 0
+    var cameraWatched: Bool { activityLock.lock(); defer { activityLock.unlock() }; return cameraViewers > 0 }
 
     private let listener: NWListener
     private let queue: DispatchQueue
@@ -79,6 +83,14 @@ final class LiveServer: @unchecked Sendable {
             guard let self, !self.sockets.isEmpty else { return }
             if !self.checks.awake() || !self.checks.remoteAllowed() { return self.closeAll() }
             self.closeRevoked()
+            // The camera closes by itself after 10 minutes, or as soon as the menu stops allowing it.
+            for peer in self.peers.values where peer.camera {
+                if !self.checks.cameraAllowed() {
+                    self.stopCamera(peer, telling: "The camera was turned off on the Mac.")
+                } else if Date().timeIntervalSince(peer.cameraSince) > Self.cameraMinutes * 60 {
+                    self.stopCamera(peer, telling: "The camera closed by itself after \(Int(Self.cameraMinutes)) minutes. Open it again to keep watching.")
+                }
+            }
             for peer in self.peers.values where peer.sending && Date().timeIntervalSince(peer.lastProgress) > 15 {
                 peer.connection.cancel()  // the phone stopped reading
             }
@@ -125,6 +137,9 @@ final class LiveServer: @unchecked Sendable {
         var lastProgress = Date()                   // last send that completed
         var inputs = 0, inputWindow = Date()        // input messages this second
         var usedInput = false
+        var watch: (() -> Void)?                    // starts the screen frames for this phone
+        var camera = false                          // watching the Mac's camera instead of the screen
+        var cameraSince = Date()
         // Read from FrameStream's queue too (VideoSink.ready), hence the lock.
         let lock = NSLock()
         var unconfirmed = 0
@@ -214,6 +229,70 @@ final class LiveServer: @unchecked Sendable {
         pump(peer)
     }
 
+    // ----- Camera: this phone watches the Mac's camera and microphone instead of the screen -----
+    static let cameraMinutes = 10.0
+
+    private func startCamera(_ peer: Peer, ticket: String?) {
+        guard !peer.camera else { return }
+        guard checks.cameraAllowed() else {
+            return sendText(peer.connection, ["cameraError": "The camera is off. On your Mac, tick “Allow camera & microphone from phone” in the Lid Awake menu."])
+        }
+        guard let ticket, CameraTickets.redeem(ticket, token: peer.token) else {
+            return sendText(peer.connection, ["cameraError": "Face ID is needed to open the camera. Try again."])
+        }
+        peer.camera = true
+        peer.cameraSince = Date()
+        // No screen for this phone meanwhile: only one video uses the link.
+        FrameStream.shared.unsubscribe(peer.id)
+        peer.video = false
+        peer.pending = nil
+        peer.outbox.removeAll()
+        activityLock.lock(); cameraViewers += 1; activityLock.unlock()
+        if !checks.allowLoopback { AccessLog.write("Camera and microphone opened from the phone · \(peer.device)") }
+        CameraStream.shared.start(peer.id) { [weak self] packet in self?.queue.async { self?.enqueueCamera(peer, packet) } }
+    }
+
+    private func stopCamera(_ peer: Peer, telling reason: String? = nil) {
+        guard peer.camera else { return }
+        peer.camera = false
+        CameraStream.shared.stop(peer.id)
+        peer.outbox.removeAll()
+        activityLock.lock(); cameraViewers -= 1; activityLock.unlock()
+        if !checks.allowLoopback { AccessLog.write("Camera and microphone closed · \(peer.device)") }
+        if let reason { sendText(peer.connection, ["cameraStopped": reason]) }
+    }
+
+    // Camera messages: setup as text JSON; picture as binary [3 = keyframe / 4 = other]
+    // [8-byte timestamp, µs][H.264]; sound as binary [5][4-byte sample rate][μ-law bytes].
+    private func enqueueCamera(_ peer: Peer, _ packet: CameraStream.Packet) {
+        guard peer.camera else { return }
+        switch packet {
+        case .config(let c):
+            let setup: [String: Any] = ["camera": ["codec": c.codec, "description": c.description.base64EncodedString(),
+                                                   "width": c.width, "height": c.height]]
+            guard let json = try? JSONSerialization.data(withJSONObject: setup) else { return }
+            peer.outbox.append((json, true))
+        case .video(let k):
+            var data = Data([k.key ? 3 : 4])
+            withUnsafeBytes(of: k.timestamp.bigEndian) { data.append(contentsOf: $0) }
+            data.append(k.data)
+            peer.outbox.append((data, false))
+        case .audio(let rate, let samples):
+            var data = Data([5])
+            withUnsafeBytes(of: UInt32(rate).bigEndian) { data.append(contentsOf: $0) }
+            data.append(samples)
+            peer.outbox.append((data, false))
+        case .problem(let text):
+            return sendText(peer.connection, ["cameraError": text])
+        }
+        // A phone that can't keep up: start over from a fresh keyframe rather than fall behind.
+        if peer.outbox.count > 90 {
+            peer.outbox.removeAll()
+            CameraStream.shared.keyframe()
+        }
+        pump(peer)
+    }
+
     private func open(_ connection: NWConnection) {
         let key = ObjectIdentifier(connection)
         guard sockets.count < Self.maxSockets else { return connection.cancel() }
@@ -237,14 +316,19 @@ final class LiveServer: @unchecked Sendable {
                 self.peers[key] = peer
                 self.activityLock.lock(); self.viewers = self.peers.count; self.activityLock.unlock()
                 if !self.checks.allowLoopback { AccessLog.write("Screen viewing started · \(peer.device)") }
-                FrameStream.shared.subscribe(id,
-                    frame: { jpeg in self.queue.async { sendFrame(jpeg) } },
-                    unavailable: { self.queue.async { self.sendText(connection, ["error": "Waking the Mac's screen… This usually takes a few seconds."]) } })
+                peer.watch = {
+                    FrameStream.shared.subscribe(id,
+                        frame: { jpeg in self.queue.async { sendFrame(jpeg) } },
+                        unavailable: { self.queue.async { self.sendText(connection, ["error": "Waking the Mac's screen… This usually takes a few seconds."]) } })
+                }
+                peer.watch?()
                 self.receive(connection)
             case .failed:
                 connection.cancel()
             case .cancelled:
                 self.sockets[key] = nil
+                peer.watch = nil
+                self.stopCamera(peer)
                 if self.peers.removeValue(forKey: key) != nil {
                     FrameStream.shared.unsubscribe(id)
                     self.activityLock.lock(); self.viewers = self.peers.count; self.activityLock.unlock()
@@ -278,11 +362,13 @@ final class LiveServer: @unchecked Sendable {
         let peer = peers[ObjectIdentifier(connection)]
         if let peer {
             if message["acks"] as? Bool == true { peer.flowControl = true }
+            if let wants = message["camera"] as? Bool { return wants ? startCamera(peer, ticket: message["ticket"] as? String) : stopCamera(peer) }
+            if message["cameraKey"] != nil { return CameraStream.shared.keyframe() }
             // The page can play H.264 (true), or its decoder failed and it wants JPEGs again (false).
             if let wantsVideo = message["video"] as? Bool {
                 StreamStats.shared.note("phone video: \(wantsVideo ? "on" : "off")" + Self.why(message))
             }
-            if let wantsVideo = message["video"] as? Bool, wantsVideo != peer.video {
+            if let wantsVideo = message["video"] as? Bool, wantsVideo != peer.video, !peer.camera {
                 peer.video = wantsVideo
                 FrameStream.shared.setVideo(peer.id, wantsVideo ? FrameStream.VideoSink(
                     send: { [weak self] packet in self?.queue.async { self?.enqueue(peer, packet) } },
@@ -316,7 +402,7 @@ final class LiveServer: @unchecked Sendable {
             FrameStream.shared.setPreset(preset)
             return
         }
-        if message["video"] != nil || message["acks"] != nil { return }
+        if message["video"] != nil || message["acks"] != nil || message["camera"] != nil { return }
         guard checks.awake(), checks.remoteAllowed() else {
             return sendText(connection, ["error": "Screen access is off."])
         }
