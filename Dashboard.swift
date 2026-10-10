@@ -502,6 +502,18 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .mtp .tool.on, .mtp .tool[aria-expanded="true"] { color: var(--blue); background: var(--alu-press); filter: none; }
   .mtp .trackpad { background: transparent; box-shadow: none; border-radius: 0; color: var(--alu-ink); opacity: .9; }
   .mtp .trackpad.active { background: var(--alu-press); }
+  /* Scroll wheel along the trackpad's right edge: ridges that roll under your thumb (--roll).
+     The touch area is wider than the drawn wheel, so a thumb finds it easily. */
+  .mtp .trackpad { position: relative; }
+  .scroll-strip { position: absolute; top: 10px; bottom: 10px; right: 2px; width: 40px; touch-action: none; }
+  .scroll-strip::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 22px; margin-left: -11px; border-radius: 11px;
+    background: repeating-linear-gradient(180deg, rgba(0,0,0,.28) 0 2px, rgba(255,255,255,.16) 2px 3px, transparent 3px 7px);
+    background-position: 0 var(--roll, 0px);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.2), inset 4px 0 6px rgba(0,0,0,.2), inset -4px 0 6px rgba(0,0,0,.2);
+    transition: background-color .15s ease;
+  }
+  .scroll-strip.active::before { background-color: var(--alu-press); }
 
   /* Screen: the Mac's camera, shown in place of the screen picture (Screen | Camera). */
   /* The notch is the camera button: tap it to see the Mac's camera, tap again for the screen.
@@ -1252,6 +1264,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="tips-head">Trackpad</div>
       <div class="tip"><span class="tip-icon txt">1</span><span>1 finger<small>Move · tap to click · tap twice, then hold and slide to drag</small></span></div>
       <div class="tip"><span class="tip-icon txt">2</span><span>2 fingers<small>Slide to scroll · tap to right-click</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="4"/><path d="M10 8h4M10 11h4M10 14h4"/></svg></span><span>Scroll wheel<small>The ridged strip on the trackpad's right edge: slide your thumb to scroll, flick to keep it rolling</small></span></div>
       <div class="tip"><span class="tip-icon txt">3</span><span>3 fingers<small>← → switch desktop · ↑ Mission Control · ↓ app windows</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span><span>Type and Keys<small>Type uses the iPhone keyboard · Keys has esc, arrows, ⌘ and more</small></span></div>
     </div>
@@ -1265,7 +1278,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <button type="button" class="tool icon" id="lockMacBtn" aria-label="Lock Mac"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
         <button type="button" class="tool icon" id="screenOffBtn" aria-label="Turn the Mac's screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
       </div>
-      <div class="trackpad" id="trackpad">Trackpad</div>
+      <div class="trackpad" id="trackpad">Trackpad<div class="scroll-strip" id="scrollStrip" aria-hidden="true"></div></div>
     </div>
     <div class="key-sheet" id="keySheet" aria-label="Keys" aria-hidden="true">
       <div class="sheet-head"><span>Keys</span><button type="button" id="keysDone">Done</button></div>
@@ -3068,6 +3081,46 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     }
     dragging = false; pendingDrag = false; padStart = null;
   }
+  // ----- Scroll wheel: slide a thumb along the trackpad's right edge, like a mouse wheel -----
+  // Like iPhone: thumb up moves further down the page; a flick keeps rolling and slows down.
+  // Its touches stay out of the trackpad, so the pointer doesn't move meanwhile.
+  const strip = $("scrollStrip");
+  let stripY = null, stripV = 0, stripGlide = 0, stripRoll = 0;
+  function stripScroll(dy) {
+    stripRoll += dy;
+    strip.style.setProperty("--roll", stripRoll.toFixed(1) + "px");
+    send({ type: "scroll", dx: 0, dy: dy * 3 });
+  }
+  strip.addEventListener("touchstart", e => {
+    e.preventDefault(); e.stopPropagation();
+    cancelAnimationFrame(stripGlide);
+    stripY = e.touches[0].clientY; stripV = 0;
+    strip.classList.add("active");
+  }, { passive: false });
+  strip.addEventListener("touchmove", e => {
+    e.preventDefault(); e.stopPropagation();
+    if (stripY == null) return;
+    const y = e.touches[0].clientY, dy = y - stripY;
+    stripY = y; stripV = dy;
+    stripScroll(dy);
+  }, { passive: false });
+  const stripEnd = e => {
+    e.preventDefault(); e.stopPropagation();
+    stripY = null;
+    strip.classList.remove("active");
+    const glide = () => {
+      stripV *= 0.92;
+      if (Math.abs(stripV) < 0.4) return;
+      stripScroll(stripV);
+      stripGlide = requestAnimationFrame(glide);
+    };
+    if (Math.abs(stripV) > 2) glide();
+  };
+  strip.addEventListener("touchend", stripEnd, { passive: false });
+  strip.addEventListener("touchcancel", stripEnd, { passive: false });
+  // Touching the trackpad stops a rolling wheel.
+  pad.addEventListener("touchstart", () => cancelAnimationFrame(stripGlide), { passive: true });
+
   // The bottom trackpad always uses these; the screen picture does in landscape trackpad mode.
   for (const surface of [pad, wrap]) {
     const only = f => e => { if (surface === pad || padMode()) f(e); };
