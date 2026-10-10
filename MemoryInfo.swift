@@ -54,6 +54,7 @@ enum MemoryInfo {
     }
 
     // The apps using the most memory, helpers included, by Activity Monitor's "Memory" figure.
+    // Programs that aren't part of an app (a `node` dev server, say) count under their own name.
     // Programs of other users (and the system's own) can't be read and are skipped.
     static func topApps(limit: Int = 5, id: (String) -> String?) -> [[String: Any]] {
         let n = proc_listallpids(nil, 0)
@@ -65,8 +66,8 @@ enum MemoryInfo {
         var sizes: [String: UInt64] = [:]
         var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
         for pid in pids.prefix(Int(max(got, 0))) where pid > 0 {
-            guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0,
-                  let app = appBundle(of: String(cString: buf)) else { continue }
+            guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { continue }
+            let path = String(cString: buf), app = appBundle(of: path) ?? path
             var info = rusage_info_v4()
             let ok = withUnsafeMutablePointer(to: &info) {
                 $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
@@ -74,6 +75,7 @@ enum MemoryInfo {
             if ok == 0 { sizes[app, default: 0] += info.ri_phys_footprint }
         }
         return sizes.sorted { $0.value > $1.value }.prefix(limit).map { path, bytes in
+            guard path.hasSuffix(".app") else { return ["name": URL(fileURLWithPath: path).lastPathComponent, "bytes": bytes] }
             var item: [String: Any] = ["name": appName(path), "bytes": bytes]
             if let i = id(path) { item["id"] = i }
             return item

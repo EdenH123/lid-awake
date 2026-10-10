@@ -323,18 +323,20 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   #memLine { fill: none; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
   #memArea { opacity: .28; stroke: none; }
   .mem-note { position: absolute; left: 0; right: 0; top: 50%; text-align: center; font-size: 15px; color: var(--muted); }
-  .mem-graph-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; padding-right: 40px; }
-  /* Values down the right like the history graphs; the 0% line is the time axis. */
+  .mem-graph-foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; padding-right: 46px; }
+  /* Memory used, 0 to all of the Mac's memory, down the right; the 0 GB line is the time axis. */
   .mem-plot { display: flex; gap: 8px; margin-top: 10px; }
   .mem-plot .mem-graph { flex: 1; min-width: 0; margin-top: 0; }
   .mem-graph .axis { stroke: var(--faint); stroke-width: 1; vector-effect: non-scaling-stroke; }
-  .mem-yaxis { position: relative; flex: none; width: 32px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mem-yaxis { position: relative; flex: none; width: 38px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .mem-yaxis span { position: absolute; left: 0; transform: translateY(-50%); }
   .mem-tile { min-height: 0; padding: 12px 16px 14px; }
   .mem-tile .tile-value { font-size: 28px; margin-top: 2px; }
   .mem-apps .row { gap: 12px; }
   .mem-icon { width: 32px; height: 32px; flex: none; border-radius: 8px; }
   .mem-icon.blank { background: var(--fill); }
+  .mem-apps .row.rest .title > i { display: none; }
+  .mem-apps .row.rest .mem-icon { display: grid; place-items: center; color: var(--muted); font-size: 17px; }
   .mem-apps .title > i { display: block; height: 4px; margin-top: 5px; border-radius: 99px; background: var(--blue); transition: width .5s ease; }
 
   /* Status: Claude plan usage, two meters in one card. */
@@ -1303,14 +1305,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   <div class="sheet-head" id="memHead"><span>Memory</span><button type="button" id="memDone">Done</button></div>
   <div class="hist-body">
     <div class="card mem-graph-card">
-      <div class="mem-graph-head"><span>Memory pressure · live</span><span class="mem-pill" id="memPill">—</span></div>
+      <div class="mem-graph-head"><span>Memory used · live</span><span class="mem-pill" id="memPill">—</span></div>
       <div class="mem-plot">
-        <svg class="mem-graph" viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="Memory pressure, last 2 minutes">
+        <svg class="mem-graph" viewBox="0 0 300 120" preserveAspectRatio="none" role="img" aria-label="Memory used, last 2 minutes">
           <line class="grid" x1="0" x2="300" y1="0" y2="0"/><line class="grid" x1="0" x2="300" y1="30" y2="30"/><line class="grid" x1="0" x2="300" y1="60" y2="60"/><line class="grid" x1="0" x2="300" y1="90" y2="90"/>
           <path id="memArea"/><path id="memLine"/>
           <line class="axis" x1="0" x2="300" y1="120" y2="120"/>
         </svg>
-        <div class="mem-yaxis" aria-hidden="true"><span style="top:0">100%</span><span style="top:25%">75%</span><span style="top:50%">50%</span><span style="top:75%">25%</span><span style="top:100%">0%</span></div>
+        <div class="mem-yaxis" id="memYAxis" aria-hidden="true"><span style="top:0"></span><span style="top:25%"></span><span style="top:50%"></span><span style="top:75%"></span><span style="top:100%">0 GB</span></div>
       </div>
       <div class="mem-note" id="memNote">Measuring…</div>
       <div class="mem-graph-foot"><span>2 min ago</span><span>now</span></div>
@@ -4176,7 +4178,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const m = await res.json();
       if (!memTimer) return;  // closed while asking
       const now = Date.now();
-      memPoints.push({ t: now, p: Math.max(0, Math.min(100, m.pressure ?? 0)) });
+      if (m.total && m.used != null) memPoints.push({ t: now, p: Math.max(0, Math.min(100, m.used / m.total * 100)) });
       memPoints = memPoints.filter(pt => now - pt.t <= MEM_SPAN);
       renderMemory(m);
     } catch (e) {
@@ -4217,11 +4219,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   function renderMemory(m) {
     const level = ["warn", "critical"].includes(m.level) ? m.level : "normal";
-    $("memPill").textContent = { normal: "Low", warn: "Medium", critical: "High" }[level];
+    $("memPill").textContent = { normal: "Low", warn: "Medium", critical: "High" }[level] + " pressure";
     $("memPill").className = "mem-pill " + level;
     renderMemGraph(level);
     $("memNote").textContent = "Measuring…";
     $("memNote").hidden = memPoints.length > 1;
+    // Scale: 0 to all of the Mac's memory (64 GB → 16, 32, 48, 64).
+    if (m.total) [...$("memYAxis").children].forEach((el, i) => { el.textContent = Math.round(m.total / GiB * (4 - i) / 4) + " GB"; });
     $("memUsedNum").textContent = memGB(m.used);
     $("memFreeNum").textContent = m.free == null ? "—" : memGB(m.free + (m.cached || 0));
     $("memAppNum").textContent = memGB(m.app);
@@ -4234,6 +4238,21 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       row.querySelector(".value").textContent = memGB(a.bytes);
       $("memApps").append(row);
       seen.add(a.name);
+    }
+    // Whatever the list can't name (macOS's own programs, graphics, the system core) as the last
+    // row, so the list adds up to Used.
+    const rest = (m.used || 0) - top.reduce((sum, a) => sum + a.bytes, 0);
+    if (top.length && rest > 0.05 * GiB) {
+      let row = memRows.get("\0rest");
+      if (!row) {
+        row = memAppRow({ name: "macOS & everything else" });
+        row.classList.add("rest");
+        row.querySelector(".mem-icon").textContent = "\uF8FF";
+        memRows.set("\0rest", row);
+      }
+      row.querySelector(".value").textContent = memGB(rest);
+      $("memApps").append(row);
+      seen.add("\0rest");
     }
     for (const [name, row] of memRows) if (!seen.has(name)) { row.remove(); memRows.delete(name); }
     $("memAppsSection").hidden = !top.length;
