@@ -4239,20 +4239,23 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       $("memApps").append(row);
       seen.add(a.name);
     }
-    // Whatever the list can't name (macOS's own programs, graphics, the system core) as the last
-    // row, so the list adds up to Used.
-    const rest = (m.used || 0) - top.reduce((sum, a) => sum + a.bytes, 0);
-    if (top.length && rest > 0.05 * GiB) {
-      let row = memRows.get("\0rest");
+    // Then the rest, so the list adds up to Used: the owner's smaller programs, and what Lid Awake
+    // can't name (macOS's own programs, the system core, graphics and shared memory).
+    const others = m.otherPrograms || 0;
+    const system = (m.used || 0) - top.reduce((sum, a) => sum + a.bytes, 0) - others;
+    for (const [key, name, bytes, glyph] of [["\0others", "Your other programs", others, ""],
+                                             ["\0system", "macOS & system", system, "\uF8FF"]]) {
+      if (!top.length || bytes < 0.05 * GiB) continue;
+      let row = memRows.get(key);
       if (!row) {
-        row = memAppRow({ name: "macOS & everything else" });
+        row = memAppRow({ name });
         row.classList.add("rest");
-        row.querySelector(".mem-icon").textContent = "\uF8FF";
-        memRows.set("\0rest", row);
+        row.querySelector(".mem-icon").textContent = glyph;
+        memRows.set(key, row);
       }
-      row.querySelector(".value").textContent = memGB(rest);
+      row.querySelector(".value").textContent = memGB(bytes);
       $("memApps").append(row);
-      seen.add("\0rest");
+      seen.add(key);
     }
     for (const [name, row] of memRows) if (!seen.has(name)) { row.remove(); memRows.delete(name); }
     $("memAppsSection").hidden = !top.length;
