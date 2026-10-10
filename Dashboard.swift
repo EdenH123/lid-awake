@@ -374,7 +374,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     padding: 9px 9px 12px; box-shadow: inset 0 0 0 1.5px #3a3a3e;
   }
   .macbook .lid::before {  /* the notch */
-    content: ""; position: absolute; left: 50%; top: 9px; transform: translateX(-50%); z-index: 2;
+    content: ""; position: absolute; left: 50%; top: 9px; transform: translateX(-50%); z-index: 5;  /* above the camera view too */
     width: 13%; max-width: 90px; height: 9px; background: #0d0d0f; border-radius: 0 0 6px 6px; pointer-events: none;
   }
   .macbook .base {
@@ -502,6 +502,32 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .mtp .tool.on, .mtp .tool[aria-expanded="true"] { color: var(--blue); background: var(--alu-press); filter: none; }
   .mtp .trackpad { background: transparent; box-shadow: none; border-radius: 0; color: var(--alu-ink); opacity: .9; }
   .mtp .trackpad.active { background: var(--alu-press); }
+
+  /* Screen: the Mac's camera, shown in place of the screen picture (Screen | Camera). */
+  /* The notch is the camera button: tap it to see the Mac's camera, tap again for the screen.
+     Its little lens lights green while the camera is on, like the real one. */
+  .cam-notch { position: absolute; left: 50%; top: 0; transform: translateX(-50%); z-index: 5; width: max(64px, 13%); height: 22px;
+    padding: 0; border: 0; background: none; -webkit-tap-highlight-color: transparent; }
+  .cam-notch i { position: absolute; left: 50%; top: 11px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%;
+    background: #1c2633; box-shadow: 0 0 0 1px #262a31; transition: background .3s ease, box-shadow .3s ease; }
+  .cam-notch.on i { background: #30d158; box-shadow: 0 0 6px 1px rgba(48,209,88,.8); }
+  body.landscape-full .cam-notch { display: none; }
+  .cam-view { position: absolute; inset: 9px 9px 12px; z-index: 4; background: #000; border-radius: 4px; overflow: hidden;
+    display: grid; place-items: center; touch-action: manipulation; }
+  .cam-view canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam-msg { position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%); text-align: center;
+    color: #fff; font-size: 14px; line-height: 1.35; text-wrap: balance; }
+  .cam-bar { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+  .cam-live { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 99px; font-size: 12px; font-weight: 600;
+    color: #fff; background: rgba(0,0,0,.45); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-variant-numeric: tabular-nums; }
+  .cam-live i { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30; animation: cam-dot 1.6s ease-in-out infinite; }
+  #camLeft:not(:empty)::before { content: "·"; margin: 0 5px; opacity: .7; }
+  @keyframes cam-dot { 50% { opacity: .35; } }
+  #camMute { pointer-events: auto; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; color: #fff;
+    background: rgba(0,0,0,.45); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: grid; place-items: center; }
+  #camMute svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  body.landscape-full .cam-view { inset: 0; border-radius: 0; }
+  #camNotice { margin-bottom: 12px; }
 
   /* Apps: a home-screen grid of the Mac apps chosen in the menu. */
   .app-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px 8px; padding: 8px 0 4px; }
@@ -1173,11 +1199,19 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="skel-pad bone"></div>
     </div>
     <div class="tab" id="screenControls" hidden>
+    <div class="notice" id="camNotice" hidden></div>
     <div class="macbook">
       <div class="lid">
         <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"><canvas id="screenCanvas" hidden aria-label="Mac screen"></canvas></div>
         <div class="screen-off" id="screenOffOverlay" hidden><span>Your Mac's screen is off</span><button type="button" id="wakeBtn">Wake screen</button></div>
         <div class="screen-off" id="pausedOverlay" hidden><span>Paused to save data and battery</span><button type="button" id="resumeBtn">Continue</button></div>
+        <button type="button" class="cam-notch" id="camNotch" aria-label="Mac camera" aria-pressed="false"><i></i></button>
+        <div class="cam-view" id="camView" hidden>
+          <canvas id="camCanvas" hidden aria-label="Mac camera"></canvas>
+          <div class="cam-msg" id="camMsg" hidden></div>
+          <div class="cam-bar"><span class="cam-live"><i></i>Camera<span id="camLeft"></span></span>
+            <button type="button" id="camMute" aria-label="Mute"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/></svg></button></div>
+        </div>
       </div>
       <div class="base"></div>
     </div>
@@ -1205,6 +1239,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Right-click</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span><span>Drag<small>Scroll</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10V4h6M20 14v6h-6M4 4l6 6M20 20l-6-6"/></svg></span><span>Pinch<small>Zoom in on this phone only</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Face ID each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
       <div class="tips-head">Trackpad</div>
       <div class="tip"><span class="tip-icon txt">1</span><span>1 finger<small>Move · tap to click · tap twice, then hold and slide to drag</small></span></div>
       <div class="tip"><span class="tip-icon txt">2</span><span>2 fingers<small>Slide to scroll · tap to right-click</small></span></div>
@@ -1602,6 +1637,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   function locked() {
     stopLive();
+    closeCamera();
     if (unlocked) { unlocked = false; checkAuth(); }
   }
 
@@ -1937,7 +1973,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (currentTab !== name) return;  // tapped another tab meanwhile
       render();
       if (name === "screen") { sweepAlign($("screenSkel")); startFrames(); }
-      else stopLive();
+      else { stopLive(); closeCamera(); }
     });
   }
   tabButtons.forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
@@ -2165,6 +2201,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   // ----- Live stream: one WebSocket, frames pushed by the Mac -----
   let ws = null, wsFailures = 0, wsRetryAt = 0;
+  let camOn = false;  // watching the Mac's camera: the screen's socket stays closed meanwhile
   let quality = "balanced";
   try { quality = localStorage.getItem("quality") || "balanced"; } catch (e) {}
   const QUALITY_BADGE = { max: "MAX", sharp: "HD", balanced: "SD", fast: "LOW" };
@@ -2352,7 +2389,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false, why: videoProblem }));
   }
 
-  function watching() { return unlocked && currentTab === "screen" && !document.hidden && !streamPaused; }
+  function watching() { return unlocked && currentTab === "screen" && !document.hidden && !streamPaused && !camOn; }
 
   // ----- Pause when nobody is using it -----
   // The page keeps the iPhone awake, so an untouched Screen tab would stream forever. After 3
@@ -2365,7 +2402,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (streamPaused && currentTab === "screen") resumeStream();
   }, true);
   setInterval(() => {
-    if (streamPaused || currentTab !== "screen" || !unlocked || document.hidden) return;
+    if (streamPaused || camOn || currentTab !== "screen" || !unlocked || document.hidden) return;
     if (Date.now() - lastScreenUse > PAUSE_AFTER) pauseStream();
   }, 10000);
   function pauseStream() {
@@ -2454,6 +2491,204 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     }
     framesRunning = false;
   }
+
+  // ---------- Camera: the Mac's camera and microphone, only while open here ----------
+  // Face ID every time, then a socket of its own carries picture and sound. The screen's socket
+  // closes meanwhile, so only one video uses data; closing, leaving the tab or locking the
+  // phone stops the Mac's camera (and its green light) right away.
+  let camWS = null, camDecoder = null, camConfig = null, camNeedsKey = true, camRetries = 0;
+  let camAudio = null, camGain = null, camNext = 0, camMuted = false, camOpening = false;
+  let camClock = null, camStartedAt = 0, noticeTimer = null;
+  const CAM_MINUTES = 10;
+  const camCanvas = $("camCanvas"), camCtx = camCanvas.getContext("2d", { alpha: false });
+  const SPEAKER_ON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/></svg>';
+  const SPEAKER_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM16 9.5l5 5M21 9.5l-5 5"/></svg>';
+  // μ-law byte → sample (the Mac sends sound one byte a sample).
+  const MULAW = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    const u = ~i & 255, t = (((u & 15) << 3) + 0x84) << ((u >> 4) & 7);
+    MULAW[i] = ((u & 128) ? 0x84 - t : t - 0x84) / 32768;
+  }
+
+  function setCamMsg(text) { $("camMsg").textContent = text; $("camMsg").hidden = !text; }
+  function setViewButtons(view) {
+    $("camNotch").classList.toggle("on", view === "camera");
+    $("camNotch").setAttribute("aria-pressed", view === "camera");
+  }
+  function showCamNotice(text) {
+    clearTimeout(noticeTimer);
+    $("camNotice").textContent = text;
+    $("camNotice").hidden = !text;
+    if (text) noticeTimer = setTimeout(() => { $("camNotice").hidden = true; }, 8000);
+  }
+  function showCamTime() {
+    const left = Math.max(0, CAM_MINUTES * 60 - Math.round((Date.now() - camStartedAt) / 1000));
+    $("camLeft").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+  }
+
+  async function openCamera() {
+    if (camOn || camOpening) return;
+    camOpening = true;
+    showCamNotice("");
+    setViewButtons("camera");
+    $("camView").hidden = false;
+    camCanvas.hidden = true;
+    $("camLeft").textContent = "";
+    setCamMsg("Confirm with Face ID to open the camera.");
+    // iPhone only plays sound that a tap started, so it's set up now, before Face ID; "playback"
+    // lets it play with the ring switch on silent too.
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+    try {
+      camAudio = new (window.AudioContext || window.webkitAudioContext)();
+      camGain = camAudio.createGain();
+      camGain.gain.value = camMuted ? 0 : 1;
+      camGain.connect(camAudio.destination);
+      camAudio.resume();
+    } catch (e) { camAudio = null; }
+    let ticket;
+    try {
+      const res = await fetch("camera/options", { method: "POST", headers: { "X-LidAwake": "1" }, cache: "no-store" });
+      if (!res.ok) throw new Error(await res.text());
+      const o = await res.json();
+      const cred = await navigator.credentials.get({ publicKey: {
+        challenge: fromB64u(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000,
+        allowCredentials: o.ids.map(id => ({ type: "public-key", id: fromB64u(id) })),
+      } });
+      const r = cred.response;
+      const unlock = await fetch("camera/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
+        body: JSON.stringify({ id: b64u(cred.rawId), clientData: b64u(r.clientDataJSON),
+                               authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature) }),
+      });
+      if (!unlock.ok) throw new Error(await unlock.text());
+      ticket = (await unlock.json()).ticket;
+    } catch (e) {
+      camOpening = false;
+      // Face ID cancelled: just go back. Anything else: say what's wrong.
+      if (e && e.name === "NotAllowedError") return closeCamera();
+      return closeCamera((e && e.message) || "Couldn't open the camera.");
+    }
+    camOpening = false;
+    if ($("camView").hidden || currentTab !== "screen" || document.hidden) return closeCamera();
+    camOn = true;
+    stopLive();
+    setCamMsg("Starting the Mac's camera…");
+    camStartedAt = Date.now();
+    showCamTime();
+    camClock = setInterval(showCamTime, 1000);
+    const socket = new WebSocket(liveURL());
+    socket.binaryType = "arraybuffer";
+    camWS = socket;
+    socket.onopen = () => socket.send(JSON.stringify({ camera: true, ticket }));
+    socket.onmessage = e => {
+      if (typeof e.data !== "string") return camPacket(new Uint8Array(e.data));
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (m.camera) camSetup(m.camera);
+      if (typeof m.cameraError === "string") setCamMsg(m.cameraError);
+      if (m.error) setCamMsg(m.error);
+      if (m.cameraStopped) closeCamera(m.cameraStopped);
+    };
+    socket.onclose = () => { if (camWS === socket) closeCamera("The camera closed: the connection to your Mac dropped."); };
+  }
+
+  function closeCamera(message) {
+    if (!camOn && !camOpening && $("camView").hidden) { if (message) showCamNotice(message); return; }
+    const wasOn = camOn;
+    camOn = false;
+    camOpening = false;
+    if (camWS) {
+      const socket = camWS;
+      camWS = null;
+      try { if (socket.readyState === 1) socket.send('{"camera":false}'); } catch (e) {}
+      socket.close();
+    }
+    try { if (camDecoder && camDecoder.state !== "closed") camDecoder.close(); } catch (e) {}
+    camDecoder = null; camConfig = null; camRetries = 0;
+    if (camAudio) { camAudio.close().catch(() => {}); camAudio = null; }
+    clearInterval(camClock);
+    $("camView").hidden = true;
+    camCanvas.hidden = true;
+    setCamMsg("");
+    setViewButtons("screen");
+    showCamNotice(message || "");
+    if (wasOn) startFrames();
+  }
+
+  async function camSetup(v) {
+    camConfig = v;
+    const config = {
+      codec: v.codec, codedWidth: v.width, codedHeight: v.height, optimizeForLatency: true,
+      description: Uint8Array.from(atob(v.description), c => c.charCodeAt(0)),
+    };
+    try {
+      if (!("VideoDecoder" in window) || !(await VideoDecoder.isConfigSupported(config)).supported) throw new Error();
+      if (!camDecoder || camDecoder.state === "closed") camDecoder = new VideoDecoder({ output: camDraw, error: camVideoFailed });
+      camDecoder.configure(config);
+      camNeedsKey = true;
+      // The first keyframe may have arrived while this was being set up: ask for another.
+      if (camWS && camWS.readyState === 1) camWS.send('{"cameraKey":1}');
+    } catch (e) { setCamMsg("This phone can't play the camera picture."); }
+  }
+  function camPacket(b) {
+    if (b[0] === 5) return camSound(b);
+    if ((b[0] !== 3 && b[0] !== 4) || !camDecoder || camDecoder.state !== "configured") return;
+    if (camNeedsKey) { if (b[0] !== 3) return; camNeedsKey = false; }
+    // Falling behind (slow phone): skip ahead to a fresh keyframe instead of lagging.
+    if (camDecoder.decodeQueueSize > 8) {
+      camNeedsKey = true;
+      if (camWS && camWS.readyState === 1) camWS.send('{"cameraKey":1}');
+      return;
+    }
+    try {
+      camDecoder.decode(new EncodedVideoChunk({
+        type: b[0] === 3 ? "key" : "delta",
+        timestamp: Number(new DataView(b.buffer, b.byteOffset + 1, 8).getBigInt64(0)),
+        data: b.subarray(9),
+      }));
+    } catch (e) { camVideoFailed(); }
+  }
+  function camDraw(frame) {
+    if (camCanvas.width !== frame.displayWidth || camCanvas.height !== frame.displayHeight) {
+      camCanvas.width = frame.displayWidth; camCanvas.height = frame.displayHeight;
+    }
+    camCtx.drawImage(frame, 0, 0);
+    frame.close();
+    if (camCanvas.hidden) { camCanvas.hidden = false; setCamMsg(""); }
+  }
+  function camVideoFailed() {
+    try { if (camDecoder && camDecoder.state !== "closed") camDecoder.close(); } catch (e) {}
+    camDecoder = null;
+    if (camOn && camConfig && camRetries++ < 3) return camSetup(camConfig);
+    setCamMsg("The camera picture stopped. Tap the notch twice to start it again.");
+  }
+  // Each sound message is ~0.1 s; they play back to back, a little behind to ride out hiccups,
+  // but never more than about half a second behind the room.
+  function camSound(b) {
+    if (!camAudio || b.length <= 5) return;
+    const rate = new DataView(b.buffer, b.byteOffset + 1, 4).getUint32(0), n = b.length - 5;
+    const buffer = camAudio.createBuffer(1, n, rate), out = buffer.getChannelData(0);
+    for (let i = 0; i < n; i++) out[i] = MULAW[b[5 + i]];
+    const source = camAudio.createBufferSource();
+    source.buffer = buffer;
+    source.connect(camGain);
+    const now = camAudio.currentTime;
+    if (camNext < now + 0.03 || camNext > now + 0.6) camNext = now + 0.15;
+    source.start(camNext);
+    camNext += n / rate;
+  }
+
+  $("camNotch").addEventListener("click", () => {
+    if (camOn || camOpening || !$("camView").hidden) closeCamera(); else openCamera();
+  });
+  $("camMute").addEventListener("click", () => {
+    camMuted = !camMuted;
+    if (camGain) camGain.gain.value = camMuted ? 0 : 1;
+    if (camAudio) camAudio.resume();
+    $("camMute").innerHTML = camMuted ? SPEAKER_OFF : SPEAKER_ON;
+    $("camMute").setAttribute("aria-label", camMuted ? "Unmute" : "Mute");
+  });
 
   // ---------- Remote input ----------
   // Commands go to the Mac one at a time, in order (so a click lands after the
@@ -4336,7 +4571,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   setInterval(poll, 3000);
   setInterval(() => { if (unlocked) render(); }, 1000);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { stopLive(); return; }
+    if (document.hidden) { stopLive(); closeCamera(); return; }
     checkAuth();
   });
   try { const saved = localStorage.getItem("tab"); if (["screen", "apps", "settings"].includes(saved)) currentTab = saved; } catch (e) {}

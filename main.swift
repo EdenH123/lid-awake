@@ -161,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let infoLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     let remoteItem = NSMenuItem(title: "Allow screen from phone", action: nil, keyEquivalent: "")
     let controlItem = NSMenuItem(title: "Allow control from phone", action: nil, keyEquivalent: "")
+    let cameraItem = NSMenuItem(title: "Allow camera & microphone from phone", action: nil, keyEquivalent: "")
     let devicesMenu = NSMenu()
     let passwordItem = NSMenuItem(title: "Set phone password…", action: nil, keyEquivalent: "")
     let appsMenu = NSMenu()
@@ -198,6 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var remoteControl: Bool {
         get { defaults.object(forKey: "remoteControl") as? Bool ?? defaults.bool(forKey: "remoteScreen") }
         set { defaults.set(newValue, forKey: "remoteControl") }
+    }
+    // Off by default: the Screen page's Camera button (with Face ID each time) only works when ticked.
+    var cameraFromPhone: Bool {
+        get { defaults.bool(forKey: "cameraFromPhone") }
+        set { defaults.set(newValue, forKey: "cameraFromPhone") }
     }
     var heatGuard: Bool {
         get { defaults.object(forKey: "heatGuard") as? Bool ?? true }
@@ -259,6 +265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controlItem.action = #selector(toggleControl)
         controlItem.indentationLevel = 1
         menu.addItem(controlItem)
+        cameraItem.target = self
+        cameraItem.action = #selector(toggleCamera)
+        cameraItem.indentationLevel = 1
+        menu.addItem(cameraItem)
         passwordItem.target = self
         passwordItem.action = #selector(setPhonePassword)
         menu.addItem(passwordItem)
@@ -276,6 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             status: { DispatchQueue.main.sync { self.statusJSON() } },
             remoteAllowed: { UserDefaults.standard.bool(forKey: "remoteScreen") },
             controlAllowed: { DispatchQueue.main.sync { self.remoteScreen && self.remoteControl } },
+            cameraAllowed: { DispatchQueue.main.sync { self.remoteScreen && self.cameraFromPhone } },
             awake: { DispatchQueue.main.sync { self.isOn } },
             turnOff: { [weak self] in
                 guard let self, self.isOn, !self.busy else { return }
@@ -307,7 +318,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             remoteAllowed: { UserDefaults.standard.bool(forKey: "remoteScreen") },
             controlAllowed: { DispatchQueue.main.sync { self.remoteScreen && self.remoteControl } },
             screenPermission: { screenPermission() },
-            controlPermission: { controlPermission() }))
+            controlPermission: { controlPermission() },
+            cameraAllowed: { DispatchQueue.main.sync { self.remoteScreen && self.cameraFromPhone } }))
         // In case an earlier run left a modifier key marked as held (see RemoteInput.releaseModifiers).
         if controlPermission() { RemoteInput.releaseModifiers() }
         // "Claude finished / needs you" alerts for the iPhone.
@@ -572,7 +584,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         toggle.isOn = isOn
 
         let activity = liveServer?.activity ?? (viewers: 0, controlling: false)
-        let symbol = activity.controlling ? "hand.point.up.left.fill" : activity.viewers > 0 ? "eye.fill"
+        let symbol = liveServer?.cameraWatched == true ? "video.fill"
+            : activity.controlling ? "hand.point.up.left.fill" : activity.viewers > 0 ? "eye.fill"
             : isOn ? "cup.and.saucer.fill" : "moon.zzz"
         let label = activity.controlling ? "Lid Awake: your Mac is being controlled from your phone"
             : activity.viewers > 0 ? "Lid Awake: your screen is being viewed from your phone" : isOn ? "Lid Awake on" : "Lid Awake off"
@@ -590,6 +603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         statusItem.button?.toolTip = activity.viewers > 0 ? label : isOn ? "Lid Awake: ON" : "Lid Awake: OFF"
         if activity.viewers > 0 { statusLine.title = activity.controlling ? "Being controlled from your phone" : "Screen being viewed from your phone" }
+        if liveServer?.cameraWatched == true { statusLine.title = "Camera being watched from your phone" }
 
         for item in timerMenu.items {
             item.state = timerChoices[item.tag].minutes == timerMinutes ? .on : .off
@@ -599,6 +613,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         remoteItem.state = remoteScreen ? .on : .off
         controlItem.state = remoteScreen && remoteControl ? .on : .off
         controlItem.isEnabled = remoteScreen
+        cameraItem.state = remoteScreen && cameraFromPhone ? .on : .off
+        cameraItem.isEnabled = remoteScreen
         passwordItem.title = Auth.hasPassword ? "Change phone password…" : "Set phone password…"
 
         var info: [String] = []
@@ -703,6 +719,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
     }
 
+    @objc func toggleCamera() {
+        cameraFromPhone = !(remoteScreen && cameraFromPhone)
+        // Ask macOS for camera and microphone access now, while someone is at the Mac to click Allow.
+        if cameraFromPhone { CameraStream.requestPermissions() }
+        AccessLog.write(cameraFromPhone ? "Camera & microphone from phone allowed on the Mac" : "Camera & microphone from phone turned off")
+        refresh()
+    }
+
     // The page lives at the Mac's Tailscale address (signing in on 127.0.0.1 isn't offered).
     @objc func openLivePage() {
         guard let host = Tailnet.host, let url = URL(string: "https://\(host)/") else {
@@ -728,6 +752,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "thermalState": thermalNames[min(ProcessInfo.processInfo.thermalState.rawValue, 3)],
             "remoteScreen": remoteScreen,
             "remoteControl": remoteScreen && remoteControl,
+            "cameraAllowed": remoteScreen && cameraFromPhone,
             "screenPermission": screenPermission(),
             "controlPermission": controlPermission(),
             "screenWidth": CGDisplayBounds(CGMainDisplayID()).width,

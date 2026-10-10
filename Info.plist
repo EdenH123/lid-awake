@@ -9,6 +9,10 @@
   <key>CFBundleVersion</key><string>1.1</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Lid Awake shows your Mac's camera on your iPhone, only while you watch it there (with Face ID each time).</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Lid Awake lets you hear your Mac's microphone on your iPhone, only while you watch the camera there.</string>
   <key>NSLocationUsageDescription</key>
   <string>Lid Awake reads the name of the Wi-Fi network your Mac is on, to show it on your phone. It doesn't use or share your location.</string>
   <key>NSLocationWhenInUseUsageDescription</key>
