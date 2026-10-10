@@ -71,8 +71,11 @@ final class CameraStream: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         default:
             return broadcast(.problem("Lid Awake isn't allowed to use the camera. On your Mac: System Settings → Privacy & Security → Camera → turn on Lid Awake."))
         }
+        // Never the iPhone itself (Continuity Camera): macOS offers it when the Mac's own camera is
+        // off, and the phone would end up filming itself instead of showing the room.
         let cameras = AVCaptureDevice.DiscoverySession(deviceTypes: [.external, .builtInWideAngleCamera],
                                                        mediaType: .video, position: .unspecified).devices
+            .filter { !Self.isPhone($0) }
         // A plugged-in camera first: unlike the built-in one, it keeps working with the lid closed.
         guard let camera = cameras.first(where: { $0.deviceType == .external && !$0.isSuspended })
                 ?? cameras.first(where: { !$0.isSuspended }),
@@ -93,7 +96,7 @@ final class CameraStream: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         // Sound only if allowed; the picture works without it. (With the lid closed the built-in
         // microphone is cut off by the hardware, so a closed Mac is silent unless one is plugged in.)
         if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-           let mic = AVCaptureDevice.default(for: .audio),
+           let mic = Self.microphone(),
            let micInput = try? AVCaptureDeviceInput(device: mic), s.canAddInput(micInput) {
             s.addInput(micInput)
             let audio = AVCaptureAudioDataOutput()
@@ -186,6 +189,19 @@ final class CameraStream: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             broadcast(.audio(rate: soundRate, samples: sound))
             sound.removeAll(keepingCapacity: true)
         }
+    }
+
+    // An iPhone or iPad lent to the Mac as a camera or microphone (Continuity).
+    private static func isPhone(_ device: AVCaptureDevice) -> Bool {
+        device.isContinuityCamera || device.deviceType == .continuityCamera
+            || ["iPhone", "iPad"].contains { device.localizedName.localizedCaseInsensitiveContains($0) }
+    }
+
+    // The Mac's usual microphone, unless that's the phone; then any other one.
+    private static func microphone() -> AVCaptureDevice? {
+        if let mic = AVCaptureDevice.default(for: .audio), !isPhone(mic) { return mic }
+        return AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external], mediaType: .audio,
+                                                position: .unspecified).devices.first { !isPhone($0) }
     }
 
     // G.711 μ-law: 16-bit sample → 1 byte.
