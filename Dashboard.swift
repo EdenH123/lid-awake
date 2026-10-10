@@ -3082,14 +3082,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     dragging = false; pendingDrag = false; padStart = null;
   }
   // ----- Scroll wheel: slide a thumb along the trackpad's right edge, like a mouse wheel -----
-  // Thumb down scrolls the page down; a flick keeps rolling and slows down, like iPhone scrolling.
+  // Like iPhone: thumb up moves further down the page; a flick keeps rolling and slows down.
   // Its touches stay out of the trackpad, so the pointer doesn't move meanwhile.
   const strip = $("scrollStrip");
   let stripY = null, stripV = 0, stripGlide = 0, stripRoll = 0;
   function stripScroll(dy) {
     stripRoll += dy;
     strip.style.setProperty("--roll", stripRoll.toFixed(1) + "px");
-    send({ type: "scroll", dx: 0, dy: -dy * 3 });
+    send({ type: "scroll", dx: 0, dy: dy * 3 });
   }
   strip.addEventListener("touchstart", e => {
     e.preventDefault(); e.stopPropagation();
