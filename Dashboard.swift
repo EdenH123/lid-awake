@@ -662,6 +662,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   #tab-apps:has(#macDock:not([hidden])) { padding-bottom: 72px; }
   #tab-apps:has(#macDock:not([hidden])) .opened { bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 144px); }
   body.apps-full #macDock { display: none !important; }
+  body.apps-full #tab-apps:has(#macDock:not([hidden])) { padding-bottom: env(safe-area-inset-bottom); }  /* no dock sideways */
 
   /* Apps, phone turned sideways: only the icons, centred on black, in balanced rows. */
   body.apps-full { padding: 0; overflow: hidden; background: #000; color: #fff; }
@@ -683,6 +684,27 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   body.apps-full .app .run { background: rgba(255,255,255,.6); margin-top: 9px; }
   body.apps-full .app.opening { opacity: 1; }
   body.apps-full .apps-empty p { color: rgba(255,255,255,.6); }
+  /* Sideways: a 24-hour flip clock under the apps. Each digit is a split-flap tile; when it
+     changes, the top half drops down over the new number. */
+  .flip-clock { display: none; }
+  body.apps-full #tab-apps { align-content: center; row-gap: calc(var(--icon) * .32); }
+  body.apps-full .flip-clock { display: flex; align-items: center; gap: 5px; }
+  body.apps-full #tab-apps:has(.app-grid.editing) .flip-clock { visibility: hidden; }
+  .flip-clock .sep { color: #555; font: 600 30px/1 -apple-system, system-ui; margin: 0 1px; }
+  .flip-card { position: relative; width: 34px; height: 52px; perspective: 220px; border-radius: 7px; box-shadow: 0 3px 6px rgba(0,0,0,.6); }
+  .flip-card .half {
+    position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; backface-visibility: hidden;
+    color: #f2f2f2; font: 600 36px/1 -apple-system, system-ui; font-variant-numeric: tabular-nums; text-align: center;
+  }
+  .flip-card .half span { position: absolute; left: 0; right: 0; height: 52px; line-height: 52px; }
+  .flip-card .top { top: 0; border-radius: 7px 7px 0 0; background: linear-gradient(#2e2e31, #252528); }
+  .flip-card .bot { bottom: 0; border-radius: 0 0 7px 7px; background: linear-gradient(#222225, #1b1b1e); }
+  .flip-card .bot span { top: -26px; }
+  .flip-card::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1.5px; margin-top: -.75px; background: #000; z-index: 5; }
+  .flip-card .flap-top { transform-origin: 50% 100%; z-index: 3; animation: flap-top .26s ease-in forwards; }
+  .flip-card .flap-bot { transform-origin: 50% 0; z-index: 4; transform: rotateX(90deg); animation: flap-bot .26s ease-out .26s forwards; }
+  @keyframes flap-top { to { transform: rotateX(-90deg); } }
+  @keyframes flap-bot { to { transform: rotateX(0); } }
   /* Slide up on an icon: it follows the finger, then zooms to fill the screen and the Screen tab appears. */
   .app.lifting img { transition: transform .12s ease; }
   /* The finger's movement on an icon belongs to the icon (slide up to open, hold to rearrange),
@@ -1121,6 +1143,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   <div class="tab" id="tab-apps" hidden>
     <button type="button" class="done-btn" id="appsDone" hidden>Done</button>
     <div class="app-grid" id="appGrid"></div>
+    <div class="flip-clock" id="flipClock" aria-hidden="true"></div>
     <div class="apps-empty" id="appsEmpty" hidden>
       <h2>No apps yet</h2>
       <p>On your Mac, click the Lid Awake icon in the menu bar, then choose Apps on phone → Add apps…</p>
@@ -3611,12 +3634,59 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!document.body.classList.contains("apps-full") || !count) { box.style.removeProperty("--icon"); return; }
     const cs = getComputedStyle(box);
     const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 16;
-    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 24;
+    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 24 - 52;  // 52: the clock
     const cols = Math.ceil(count / rows);
-    const icon = Math.min(130, w / (cols + (cols - 1) * 0.36), h / (rows + (rows - 1) * 0.3 + 0.15 * rows));
+    const icon = Math.min(130, w / (cols + (cols - 1) * 0.36), h / (rows + (rows - 1) * 0.3 + 0.15 * rows + 0.32));
     box.style.setProperty("--icon", Math.floor(icon) + "px");
   }
   addEventListener("resize", () => { if (data) renderApps(); });
+
+  // ---------- Apps, sideways: flip clock (24-hour, with seconds) ----------
+  const flipCards = [];
+  for (let i = 0; i < 8; i++) {
+    if (i === 2 || i === 5) {
+      const sep = document.createElement("span");
+      sep.className = "sep";
+      sep.textContent = ":";
+      $("flipClock").append(sep);
+      continue;
+    }
+    const card = document.createElement("div");
+    card.className = "flip-card";
+    card.innerHTML = '<div class="half top"><span></span></div><div class="half bot"><span></span></div>';
+    card.value = "";
+    $("flipClock").append(card);
+    flipCards.push(card);
+  }
+  function flipTo(card, digit, animate) {
+    if (card.value === digit) return;
+    const old = card.value;
+    card.value = digit;
+    const top = card.querySelector(".top span"), bottom = card.querySelector(".bot span");
+    top.textContent = digit;
+    if (!animate || !old || matchMedia("(prefers-reduced-motion: reduce)").matches) { bottom.textContent = digit; return; }
+    // The old top half falls; the new bottom half swings down after it.
+    const falling = document.createElement("div");
+    falling.className = "half top flap-top";
+    falling.innerHTML = "<span>" + old + "</span>";
+    const landing = document.createElement("div");
+    landing.className = "half bot flap-bot";
+    landing.innerHTML = "<span>" + digit + "</span>";
+    card.append(falling, landing);
+    setTimeout(() => { bottom.textContent = digit; falling.remove(); landing.remove(); }, 540);
+  }
+  let clockTimer = null, clockShown = false;
+  function tickClock() {
+    clearTimeout(clockTimer);
+    if (!document.body.classList.contains("apps-full") || document.hidden) { clockShown = false; return; }
+    const now = new Date(), two = n => String(n).padStart(2, "0");
+    const digits = two(now.getHours()) + two(now.getMinutes()) + two(now.getSeconds());
+    [...digits].forEach((d, i) => flipTo(flipCards[i], d, clockShown));
+    clockShown = true;
+    clockTimer = setTimeout(tickClock, 1000 - now.getMilliseconds() + 5);  // on the second
+  }
+  new MutationObserver(tickClock).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  document.addEventListener("visibilitychange", tickClock);
 
   // ---------- Apps: hold an icon to rearrange ----------
   let editingApps = false, appHoldTimer = null, drag = null;
