@@ -1957,7 +1957,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!unlocked) return;
     try {
       const sentAt = performance.now();
-      const res = await fetchWithin(8000, "status", { cache: "no-store" });
+      const where = currentTab + (document.body.classList.contains("apps-full") || document.body.classList.contains("landscape-full") ? " sideways" : "");
+      const res = await fetchWithin(8000, "status?wl=" + encodeURIComponent(wakeState + " on " + where), { cache: "no-store" });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) throw new Error(res.status);
       const rtt = performance.now() - sentAt;
@@ -4752,19 +4753,28 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // ---------- Keep the iPhone screen on ----------
   // While this page is open and unlocked, ask the phone not to dim or lock (Screen Wake Lock).
   // iOS drops the lock whenever the page is hidden, so take it again on return.
-  let wakeLock = null;
+  // wakeState goes to the Mac with each status check, so its log shows whether the iPhone
+  // really holds the "stay awake" lock (held / released / refused: reason).
+  let wakeLock = null, wakeState = "not asked yet";
   async function keepPhoneAwake() {
-    if (!unlocked && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; return; }
-    if (!("wakeLock" in navigator) || document.hidden || !unlocked || wakeLock) return;
+    if (!unlocked && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; wakeState = "let go (locked)"; return; }
+    if (!("wakeLock" in navigator)) { wakeState = "not supported"; return; }
+    if (document.hidden || !unlocked || wakeLock) return;
     if (streamPaused && currentTab === "screen") return;  // paused: let the phone dim
     try {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
-    } catch (e) { wakeLock = null; }
+      const lock = await navigator.wakeLock.request("screen");
+      wakeLock = lock;
+      wakeState = "held";
+      lock.addEventListener("release", () => { if (wakeLock === lock) wakeLock = null; wakeState = "released by iPhone"; });
+    } catch (e) { wakeLock = null; wakeState = "refused: " + (e && e.name || "error"); }
   }
   document.addEventListener("visibilitychange", keepPhoneAwake);
-  // Safari only grants it after the person has touched the page, so also try on each tap.
+  // Safari only grants it after the person has touched the page, so also try on each touch,
+  // and when the phone turns (sideways pages are often watched without touching).
+  document.addEventListener("pointerdown", keepPhoneAwake);
   document.addEventListener("pointerup", keepPhoneAwake);
+  addEventListener("resize", keepPhoneAwake);
+  if (screen.orientation) screen.orientation.addEventListener("change", keepPhoneAwake);
   setInterval(keepPhoneAwake, 5000);
 
   // ---------- Start ----------
