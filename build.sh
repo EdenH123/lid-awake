@@ -10,7 +10,7 @@ CERT="Lid Awake Local Signing"
 TMP="$(mktemp -d)"
 
 if ! security find-identity -p codesigning | grep -q "\"$CERT\""; then
-  echo "No \"$CERT\" certificate on this Mac yet. Run ./install.sh first."; exit 1
+  echo "No \"$CERT\" certificate on this Mac yet. Open \"Install Lid Awake\" first."; exit 1
 fi
 swiftc -O -o "$TMP/LidAwake" "$SRC"/*.swift
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

@@ -107,7 +107,7 @@ struct SetupView: View {
                 if model.signedIn && !model.httpsOn { Button("Open Tailscale settings") { open("https://login.tailscale.com/admin/dns") } }
             }
             Row(done: model.sleepRule, title: "Permission to keep the Mac awake",
-                detail: model.sleepRule ? "Allowed." : "Run ./install.sh from the Lid Awake folder; it asks for your Mac password once.") { EmptyView() }
+                detail: model.sleepRule ? "Allowed." : "Open "Install Lid Awake" in the Lid Awake folder; it asks for your Mac password once.") { EmptyView() }
             Row(done: model.hasPassword, title: "Phone password",
                 detail: model.hasPassword ? "Set. Change it from the Lid Awake menu."
                     : "Your iPhone asks for it before showing anything. At least \(Auth.minPasswordLength) characters.") {

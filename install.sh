@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs Lid Awake on this Mac. Run it from this folder:  ./install.sh
+# Installs Lid Awake on this Mac. Open "Install Lid Awake" in this folder (or run ./install.sh).
 # Safe to run again (e.g. to update): finished steps are skipped.
 set -e
 cd "$(dirname "$0")"
@@ -20,25 +20,25 @@ v=$(sw_vers -productVersion)
 [ "${v%%.*}" -ge 14 ] || stop "Lid Awake needs macOS 14 or newer (this Mac has $v)."
 if ! xcode-select -p >/dev/null 2>&1; then
   xcode-select --install 2>/dev/null || true
-  stop "Apple's developer tools are needed to build the app. Finish the window that opened, then run ./install.sh again."
+  stop "Apple's developer tools are needed to build the app. Finish the window that opened, then open the installer again."
 fi
 ok "macOS $v, developer tools ready"
 
 step "2/6  Tailscale (the private connection between your iPhone and this Mac)"
 if [ ! -x "$TS" ]; then
   open "https://tailscale.com/download/mac"
-  stop "Install Tailscale from the page that opened and sign in, then run ./install.sh again."
+  stop "Install Tailscale from the page that opened and sign in, then open the installer again."
 fi
 status=$(TAILSCALE_BE_CLI=1 "$TS" status --json 2>/dev/null || true)
 if ! printf '%s' "$status" | grep -q '"BackendState": *"Running"'; then
   open -a Tailscale || true
-  stop "Sign in to Tailscale (its icon is in the menu bar), then run ./install.sh again."
+  stop "Sign in to Tailscale (its icon is in the menu bar), then open the installer again."
 fi
 # The phone page uses a private https address, which needs MagicDNS and HTTPS certificates
 # turned on once for the whole Tailscale account.
 if printf '%s' "$status" | grep -q '"CertDomains": *null' || ! printf '%s' "$status" | grep -q '"CertDomains"'; then
   open "https://login.tailscale.com/admin/dns"
-  stop "On the Tailscale page that opened, turn on MagicDNS and HTTPS Certificates, then run ./install.sh again."
+  stop "On the Tailscale page that opened, turn on MagicDNS and HTTPS Certificates, then open the installer again."
 fi
 host=$(printf '%s' "$status" | grep -o '"DNSName": *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)\.".*/\1/')
 ok "Signed in · this Mac will be https://$host"
@@ -118,7 +118,7 @@ else
 fi
 i=0
 while ! pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" >/dev/null && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
-pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" >/dev/null || stop "Lid Awake didn't start. Run ./install.sh again."
+pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" >/dev/null || stop "Lid Awake didn't start. Open the installer again."
 ok "Running · look for the cup in the menu bar"
 
 printf '\n\033[1mAlmost done.\033[0m The "Set up Lid Awake" window opens on this Mac: choose a phone\n'
