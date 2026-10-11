@@ -17,7 +17,7 @@ probe() { printf "$1" | nc -w 3 127.0.0.1 8787 | head -1 | tr -d '\r'; }
 expect "negative length" "400" "$(probe 'POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: -1\r\n\r\n')"
 expect "chunked body"    "400" "$(probe 'POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\n\r\n')"
 expect "huge body"       "400" "$(probe 'POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 99999999\r\n\r\n')"
-expect "funnel request"  "403" "$(probe 'GET /auth HTTP/1.1\r\nHost: s-macbook-pro.tail039789.ts.net\r\nTailscale-Funnel-Request: ?1\r\n\r\n')"
+expect "funnel request"  "403" "$(probe 'GET /auth HTTP/1.1\r\nHost: your-mac.your-tailnet.ts.net\r\nTailscale-Funnel-Request: ?1\r\n\r\n')"
 expect "still running"   "$pid" "$(pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" | head -1)"
 
 LOG="$HOME/Library/Logs/LidAwake-selftest.log"; rm -f "$LOG"

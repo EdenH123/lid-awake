@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 // Plays a phone's part with a software key: register, sign in, and the attacks that must fail.
 UserDefaults.standard.removeObject(forKey: "passkeys")
-let host = "s-macbook-pro.tail039789.ts.net"
+let host = "your-mac.your-tailnet.ts.net"
 let key = P256.Signing.PrivateKey()
 let credID = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
 func clientData(_ type: String, _ challenge: String, origin: String = "https://\(host)") -> Data {

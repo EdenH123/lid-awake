@@ -619,14 +619,14 @@ git add main.swift && git commit -m "Start LiveServer; selftest checks live fram
 Run: `./build.sh && sleep 8 && TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve status`
 Expected:
 ```
-https://s-macbook-pro.tail039789.ts.net (tailnet only)
+https://your-mac.your-tailnet.ts.net (tailnet only)
 |-- /     proxy http://127.0.0.1:8787
 |-- /live proxy http://127.0.0.1:8788
 ```
 
 - [ ] **Step 3: Verify through Tailscale that the handshake is refused without a session**
 
-Run: `node -e 'const t=require("tls");const s=t.connect(443,"s-macbook-pro.tail039789.ts.net",{servername:"s-macbook-pro.tail039789.ts.net"},()=>s.write("GET /live HTTP/1.1\r\nHost: s-macbook-pro.tail039789.ts.net\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: https://s-macbook-pro.tail039789.ts.net\r\n\r\n"));let b="";s.on("data",d=>b+=d);setTimeout(()=>{console.log(b.split("\r\n")[0]);s.destroy()},2500)'`
+Run: `node -e 'const t=require("tls");const s=t.connect(443,"your-mac.your-tailnet.ts.net",{servername:"your-mac.your-tailnet.ts.net"},()=>s.write("GET /live HTTP/1.1\r\nHost: your-mac.your-tailnet.ts.net\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: https://your-mac.your-tailnet.ts.net\r\n\r\n"));let b="";s.on("data",d=>b+=d);setTimeout(()=>{console.log(b.split("\r\n")[0]);s.destroy()},2500)'`
 Expected: a non-101 status (e.g. `HTTP/1.1 400 Bad Request` or `502`) — proves `/live` reaches the app and refuses without a cookie. A `404` means the path mapping is wrong.
 
 - [ ] **Step 4: Commit**
