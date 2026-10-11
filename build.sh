@@ -9,7 +9,11 @@ APP="$HOME/Applications/Lid Awake.app"
 CERT="Lid Awake Local Signing"
 TMP="$(mktemp -d)"
 
+if ! security find-identity -p codesigning | grep -q "\"$CERT\""; then
+  echo "No \"$CERT\" certificate on this Mac yet. Run ./install.sh first."; exit 1
+fi
 swiftc -O -o "$TMP/LidAwake" "$SRC"/*.swift
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$TMP/LidAwake" "$APP/Contents/MacOS/LidAwake"
 [ -f "$SRC/Info.plist" ] && cp "$SRC/Info.plist" "$APP/Contents/Info.plist"
 # The sources live in this folder only (older builds kept a copy inside the app).

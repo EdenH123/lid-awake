@@ -272,6 +272,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         passwordItem.target = self
         passwordItem.action = #selector(setPhonePassword)
         menu.addItem(passwordItem)
+        let setupItem = NSMenuItem(title: "Set up iPhone…", action: #selector(showSetup), keyEquivalent: "")
+        setupItem.target = self
+        menu.addItem(setupItem)
         let devicesItem = NSMenuItem(title: "Signed-in devices", action: nil, keyEquivalent: "")
         devicesItem.submenu = devicesMenu
         menu.addItem(devicesItem)
@@ -324,6 +327,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if controlPermission() { RemoteInput.releaseModifiers() }
         // "Claude finished / needs you" alerts for the iPhone.
         ClaudeAlerts.start()
+        // A new Mac: open the setup checklist until a phone password exists.
+        if !Auth.hasPassword { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.showSetup() } }
         // The Wi-Fi name shown on the phone needs Location permission (asked once).
         SystemInfo.shared.requestWiFiNameAccess()
 
@@ -669,6 +674,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         heatGuard.toggle()
         tick()
     }
+
+    let setupWindow = SetupWindow()
+    lazy var setupModel = SetupModel(
+        isAwake: { [unowned self] in self.isOn },
+        turnOn: { [unowned self] in
+            guard !self.isOn else { return }
+            self.toggle.isOn = true
+            self.switched()  // same as flipping the menu switch (safety limits, timer)
+        },
+        allowScreen: { [unowned self] in if !self.remoteScreen { self.toggleRemote() } })
+
+    @objc func showSetup() { setupWindow.show(model: setupModel) }
 
     @objc func setPhonePassword() {
         NSApp.activate()
