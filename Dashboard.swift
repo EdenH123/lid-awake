@@ -671,7 +671,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   body.apps-full #appsFoot, body.apps-full #appsHelp, body.apps-full #openedBar { display: none !important; }
   body.apps-full #tab-apps {
     position: fixed; inset: 0; z-index: 5; background: #000; display: grid; place-items: center;
-    padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) var(--clock-room) max(24px, env(safe-area-inset-left));
+    /* The same room above as the clock takes below, so the middle between the rows is the middle of the screen. */
+    padding: max(env(safe-area-inset-top), var(--clock-room)) max(24px, env(safe-area-inset-right)) var(--clock-room) max(24px, env(safe-area-inset-left));
     --clock-room: 50px;  /* the clock, 2 points above the bottom edge */
     --icon: min(110px, 28vh); --col-gap: calc(var(--icon) * .26); --row-gap: calc(var(--icon) * .3);
   }
@@ -680,6 +681,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     width: calc(var(--cols, 5) * var(--icon) + (var(--cols, 5) - 1) * var(--col-gap)); max-width: 100%;
   }
   body.apps-full .app { width: var(--icon); gap: 0; }
+  /* Each row ends with the open-app dot (9 + 4 px): nudge down by half of it so the middle between
+     the two rows of icons is the middle of the screen. */
+  body.apps-full .app-grid { position: relative; top: 6.5px; }
   body.apps-full .app img { width: var(--icon); height: var(--icon); }
   body.apps-full .app .name { display: none; }
   body.apps-full .app .run { background: rgba(255,255,255,.6); margin-top: 9px; }
