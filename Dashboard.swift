@@ -662,7 +662,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   #tab-apps:has(#macDock:not([hidden])) { padding-bottom: 72px; }
   #tab-apps:has(#macDock:not([hidden])) .opened { bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 144px); }
   body.apps-full #macDock { display: none !important; }
-  body.apps-full #tab-apps:has(#macDock:not([hidden])) { padding-bottom: env(safe-area-inset-bottom); }  /* no dock sideways */
+  body.apps-full #tab-apps:has(#macDock:not([hidden])) { padding-bottom: var(--clock-room); }  /* no dock sideways */
 
   /* Apps, phone turned sideways: only the icons, centred on black, in balanced rows. */
   body.apps-full { padding: 0; overflow: hidden; background: #000; color: #fff; }
@@ -671,8 +671,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   body.apps-full #appsFoot, body.apps-full #appsHelp, body.apps-full #openedBar { display: none !important; }
   body.apps-full #tab-apps {
     position: fixed; inset: 0; z-index: 5; background: #000; display: grid; place-items: center;
-    padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left));
-    --icon: min(110px, 28vh); --col-gap: calc(var(--icon) * .36); --row-gap: calc(var(--icon) * .3);
+    padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) var(--clock-room) max(24px, env(safe-area-inset-left));
+    --clock-room: 50px;  /* the clock, 2 points above the bottom edge */
+    --icon: min(110px, 28vh); --col-gap: calc(var(--icon) * .26); --row-gap: calc(var(--icon) * .3);
   }
   body.apps-full .app-grid {
     display: flex; flex-wrap: wrap; justify-content: center; gap: var(--row-gap) var(--col-gap); padding: 0;
@@ -687,19 +688,21 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   /* Sideways: a 24-hour flip clock under the apps. Each digit is a split-flap tile; when it
      changes, the top half drops down over the new number. */
   .flip-clock { display: none; }
-  body.apps-full #tab-apps { align-content: center; row-gap: calc(var(--icon) * .32); }
-  body.apps-full .flip-clock { display: flex; align-items: center; gap: 5px; }
+  body.apps-full .flip-clock {
+    display: flex; align-items: center; gap: 4px;
+    position: fixed; left: 50%; bottom: 2px; transform: translateX(-50%);
+  }
   body.apps-full #tab-apps:has(.app-grid.editing) .flip-clock { visibility: hidden; }
-  .flip-clock .sep { color: #555; font: 600 30px/1 -apple-system, system-ui; margin: 0 1px; }
-  .flip-card { position: relative; width: 34px; height: 52px; perspective: 220px; border-radius: 7px; box-shadow: 0 3px 6px rgba(0,0,0,.6); }
+  .flip-clock .sep { color: #555; font: 600 22px/1 -apple-system, system-ui; margin: 0 1px; }
+  .flip-card { position: relative; width: 25px; height: 38px; perspective: 180px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,.6); }
   .flip-card .half {
     position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; backface-visibility: hidden;
-    color: #f2f2f2; font: 600 36px/1 -apple-system, system-ui; font-variant-numeric: tabular-nums; text-align: center;
+    color: #f2f2f2; font: 600 26px/1 -apple-system, system-ui; font-variant-numeric: tabular-nums; text-align: center;
   }
-  .flip-card .half span { position: absolute; left: 0; right: 0; height: 52px; line-height: 52px; }
-  .flip-card .top { top: 0; border-radius: 7px 7px 0 0; background: linear-gradient(#2e2e31, #252528); }
-  .flip-card .bot { bottom: 0; border-radius: 0 0 7px 7px; background: linear-gradient(#222225, #1b1b1e); }
-  .flip-card .bot span { top: -26px; }
+  .flip-card .half span { position: absolute; left: 0; right: 0; height: 38px; line-height: 38px; }
+  .flip-card .top { top: 0; border-radius: 5px 5px 0 0; background: linear-gradient(#2e2e31, #252528); }
+  .flip-card .bot { bottom: 0; border-radius: 0 0 5px 5px; background: linear-gradient(#222225, #1b1b1e); }
+  .flip-card .bot span { top: -19px; }
   .flip-card::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1.5px; margin-top: -.75px; background: #000; z-index: 5; }
   .flip-card .flap-top { transform-origin: 50% 100%; z-index: 3; animation: flap-top .26s ease-in forwards; }
   .flip-card .flap-bot { transform-origin: 50% 0; z-index: 4; transform: rotateX(90deg); animation: flap-bot .26s ease-out .26s forwards; }
@@ -1957,7 +1960,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!unlocked) return;
     try {
       const sentAt = performance.now();
-      const res = await fetchWithin(8000, "status", { cache: "no-store" });
+      const where = currentTab + (document.body.classList.contains("apps-full") || document.body.classList.contains("landscape-full") ? " sideways" : "");
+      const res = await fetchWithin(8000, "status?wl=" + encodeURIComponent(wakeState + " on " + where), { cache: "no-store" });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) throw new Error(res.status);
       const rtt = performance.now() - sentAt;
@@ -3627,16 +3631,16 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     poll();
   }
 
-  // Sideways: make the icons as big as the black screen allows (up to 130 px) with every app showing.
-  // Gaps scale with the icon: 0.36× between columns, 0.3× between rows, plus room for the open dot.
+  // Sideways: make the icons as big as the black screen allows (up to 150 px) with every app showing.
+  // Gaps scale with the icon: 0.26× between columns, 0.3× between rows, plus room for the open dot.
   function sizeSidewaysIcons(count, rows) {
     const box = $("tab-apps");
     if (!document.body.classList.contains("apps-full") || !count) { box.style.removeProperty("--icon"); return; }
     const cs = getComputedStyle(box);
     const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 16;
-    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 24 - 52;  // 52: the clock
+    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 12;  // the clock's room is in the padding
     const cols = Math.ceil(count / rows);
-    const icon = Math.min(130, w / (cols + (cols - 1) * 0.36), h / (rows + (rows - 1) * 0.3 + 0.15 * rows + 0.32));
+    const icon = Math.min(150, w / (cols + (cols - 1) * 0.26), h / (rows + (rows - 1) * 0.3 + 0.15 * rows));
     box.style.setProperty("--icon", Math.floor(icon) + "px");
   }
   addEventListener("resize", () => { if (data) renderApps(); });
@@ -4752,19 +4756,28 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // ---------- Keep the iPhone screen on ----------
   // While this page is open and unlocked, ask the phone not to dim or lock (Screen Wake Lock).
   // iOS drops the lock whenever the page is hidden, so take it again on return.
-  let wakeLock = null;
+  // wakeState goes to the Mac with each status check, so its log shows whether the iPhone
+  // really holds the "stay awake" lock (held / released / refused: reason).
+  let wakeLock = null, wakeState = "not asked yet";
   async function keepPhoneAwake() {
-    if (!unlocked && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; return; }
-    if (!("wakeLock" in navigator) || document.hidden || !unlocked || wakeLock) return;
+    if (!unlocked && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; wakeState = "let go (locked)"; return; }
+    if (!("wakeLock" in navigator)) { wakeState = "not supported"; return; }
+    if (document.hidden || !unlocked || wakeLock) return;
     if (streamPaused && currentTab === "screen") return;  // paused: let the phone dim
     try {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
-    } catch (e) { wakeLock = null; }
+      const lock = await navigator.wakeLock.request("screen");
+      wakeLock = lock;
+      wakeState = "held";
+      lock.addEventListener("release", () => { if (wakeLock === lock) wakeLock = null; wakeState = "released by iPhone"; });
+    } catch (e) { wakeLock = null; wakeState = "refused: " + (e && e.name || "error"); }
   }
   document.addEventListener("visibilitychange", keepPhoneAwake);
-  // Safari only grants it after the person has touched the page, so also try on each tap.
+  // Safari only grants it after the person has touched the page, so also try on each touch,
+  // and when the phone turns (sideways pages are often watched without touching).
+  document.addEventListener("pointerdown", keepPhoneAwake);
   document.addEventListener("pointerup", keepPhoneAwake);
+  addEventListener("resize", keepPhoneAwake);
+  if (screen.orientation) screen.orientation.addEventListener("change", keepPhoneAwake);
   setInterval(keepPhoneAwake, 5000);
 
   // ---------- Start ----------

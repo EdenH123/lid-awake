@@ -218,6 +218,7 @@ struct HTTPRequest {
 // on the network can reach it directly; Tailscale Serve proxies it over HTTPS to
 // the owner's own devices.
 final class StatusServer: @unchecked Sendable {
+    private static var lastWake: [String: String] = [:]  // per device; only touched on the server queue
     private let listener: NWListener
     private let queue = DispatchQueue(label: "lidawake.status-server")
     private let status: () -> Data
@@ -645,6 +646,15 @@ final class StatusServer: @unchecked Sendable {
             reply(c, "204 No Content", "text/plain", Data())
 
         case ("GET", "/status"):
+            // The phone's "stay awake" state, logged when it changes (to see why a phone went to sleep).
+            if let raw = req.query["wl"]?.replacingOccurrences(of: "+", with: " ").removingPercentEncoding {
+                let state = String(raw.filter { $0.isLetter || $0.isNumber || " :()-".contains($0) }.prefix(60))
+                let who = req.headers["x-forwarded-for"] ?? "local"
+                if Self.lastWake[who] != state {
+                    Self.lastWake[who] = state
+                    StreamStats.shared.note("phone stay-awake: \(state)")
+                }
+            }
             // Plus how this very device reaches the Mac (Serve says which device asked).
             var data = status()
             if let link = Tailnet.path(to: req.headers["x-forwarded-for"]),
