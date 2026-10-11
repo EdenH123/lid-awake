@@ -662,7 +662,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   #tab-apps:has(#macDock:not([hidden])) { padding-bottom: 72px; }
   #tab-apps:has(#macDock:not([hidden])) .opened { bottom: calc(max(4px, env(safe-area-inset-bottom) - 22px) + 144px); }
   body.apps-full #macDock { display: none !important; }
-  body.apps-full #tab-apps:has(#macDock:not([hidden])) { padding-bottom: env(safe-area-inset-bottom); }  /* no dock sideways */
+  body.apps-full #tab-apps:has(#macDock:not([hidden])) { padding-bottom: var(--clock-room); }  /* no dock sideways */
 
   /* Apps, phone turned sideways: only the icons, centred on black, in balanced rows. */
   body.apps-full { padding: 0; overflow: hidden; background: #000; color: #fff; }
@@ -671,8 +671,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   body.apps-full #appsFoot, body.apps-full #appsHelp, body.apps-full #openedBar { display: none !important; }
   body.apps-full #tab-apps {
     position: fixed; inset: 0; z-index: 5; background: #000; display: grid; place-items: center;
-    padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left));
-    --icon: min(110px, 28vh); --col-gap: calc(var(--icon) * .36); --row-gap: calc(var(--icon) * .3);
+    padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) var(--clock-room) max(24px, env(safe-area-inset-left));
+    --clock-room: calc(max(8px, env(safe-area-inset-bottom)) + 48px);  /* the clock at the bottom */
+    --icon: min(110px, 28vh); --col-gap: calc(var(--icon) * .26); --row-gap: calc(var(--icon) * .3);
   }
   body.apps-full .app-grid {
     display: flex; flex-wrap: wrap; justify-content: center; gap: var(--row-gap) var(--col-gap); padding: 0;
@@ -687,8 +688,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   /* Sideways: a 24-hour flip clock under the apps. Each digit is a split-flap tile; when it
      changes, the top half drops down over the new number. */
   .flip-clock { display: none; }
-  body.apps-full #tab-apps { align-content: center; row-gap: calc(var(--icon) * .32); }
-  body.apps-full .flip-clock { display: flex; align-items: center; gap: 4px; }
+  body.apps-full .flip-clock {
+    display: flex; align-items: center; gap: 4px;
+    position: fixed; left: 50%; bottom: max(8px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+  }
   body.apps-full #tab-apps:has(.app-grid.editing) .flip-clock { visibility: hidden; }
   .flip-clock .sep { color: #555; font: 600 22px/1 -apple-system, system-ui; margin: 0 1px; }
   .flip-card { position: relative; width: 25px; height: 38px; perspective: 180px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,.6); }
@@ -3628,16 +3631,16 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     poll();
   }
 
-  // Sideways: make the icons as big as the black screen allows (up to 130 px) with every app showing.
-  // Gaps scale with the icon: 0.36× between columns, 0.3× between rows, plus room for the open dot.
+  // Sideways: make the icons as big as the black screen allows (up to 150 px) with every app showing.
+  // Gaps scale with the icon: 0.26× between columns, 0.3× between rows, plus room for the open dot.
   function sizeSidewaysIcons(count, rows) {
     const box = $("tab-apps");
     if (!document.body.classList.contains("apps-full") || !count) { box.style.removeProperty("--icon"); return; }
     const cs = getComputedStyle(box);
     const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 16;
-    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 24 - 38;  // 38: the clock
+    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 12;  // the clock's room is in the padding
     const cols = Math.ceil(count / rows);
-    const icon = Math.min(130, w / (cols + (cols - 1) * 0.36), h / (rows + (rows - 1) * 0.3 + 0.15 * rows + 0.32));
+    const icon = Math.min(150, w / (cols + (cols - 1) * 0.26), h / (rows + (rows - 1) * 0.3 + 0.15 * rows));
     box.style.setProperty("--icon", Math.floor(icon) + "px");
   }
   addEventListener("resize", () => { if (data) renderApps(); });
