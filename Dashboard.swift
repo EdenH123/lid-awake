@@ -673,7 +673,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     position: fixed; inset: 0; z-index: 5; background: #000; display: grid; place-items: center;
     /* The same room above as the clock takes below, so the middle between the rows is the middle of the screen. */
     padding: max(env(safe-area-inset-top), var(--clock-room)) max(24px, env(safe-area-inset-right)) var(--clock-room) max(24px, env(safe-area-inset-left));
-    --clock-room: 50px;  /* the clock, 2 points above the bottom edge */
+    --clock-room: 48px;  /* the clock, right on the bottom edge */
     --icon: min(110px, 28vh); --col-gap: calc(var(--icon) * .26); --row-gap: calc(var(--icon) * .3);
   }
   body.apps-full .app-grid {
@@ -694,7 +694,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .flip-clock { display: none; }
   body.apps-full .flip-clock {
     display: flex; align-items: center; gap: 4px;
-    position: fixed; left: 50%; bottom: 2px; transform: translateX(-50%);
+    position: fixed; left: 50%; bottom: 0; transform: translateX(-50%);
   }
   body.apps-full #tab-apps:has(.app-grid.editing) .flip-clock { visibility: hidden; }
   .flip-clock .sep { color: #555; font: 600 22px/1 -apple-system, system-ui; margin: 0 1px; }
