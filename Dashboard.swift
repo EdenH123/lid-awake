@@ -688,18 +688,18 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
      changes, the top half drops down over the new number. */
   .flip-clock { display: none; }
   body.apps-full #tab-apps { align-content: center; row-gap: calc(var(--icon) * .32); }
-  body.apps-full .flip-clock { display: flex; align-items: center; gap: 5px; }
+  body.apps-full .flip-clock { display: flex; align-items: center; gap: 4px; }
   body.apps-full #tab-apps:has(.app-grid.editing) .flip-clock { visibility: hidden; }
-  .flip-clock .sep { color: #555; font: 600 30px/1 -apple-system, system-ui; margin: 0 1px; }
-  .flip-card { position: relative; width: 34px; height: 52px; perspective: 220px; border-radius: 7px; box-shadow: 0 3px 6px rgba(0,0,0,.6); }
+  .flip-clock .sep { color: #555; font: 600 22px/1 -apple-system, system-ui; margin: 0 1px; }
+  .flip-card { position: relative; width: 25px; height: 38px; perspective: 180px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,.6); }
   .flip-card .half {
     position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; backface-visibility: hidden;
-    color: #f2f2f2; font: 600 36px/1 -apple-system, system-ui; font-variant-numeric: tabular-nums; text-align: center;
+    color: #f2f2f2; font: 600 26px/1 -apple-system, system-ui; font-variant-numeric: tabular-nums; text-align: center;
   }
-  .flip-card .half span { position: absolute; left: 0; right: 0; height: 52px; line-height: 52px; }
-  .flip-card .top { top: 0; border-radius: 7px 7px 0 0; background: linear-gradient(#2e2e31, #252528); }
-  .flip-card .bot { bottom: 0; border-radius: 0 0 7px 7px; background: linear-gradient(#222225, #1b1b1e); }
-  .flip-card .bot span { top: -26px; }
+  .flip-card .half span { position: absolute; left: 0; right: 0; height: 38px; line-height: 38px; }
+  .flip-card .top { top: 0; border-radius: 5px 5px 0 0; background: linear-gradient(#2e2e31, #252528); }
+  .flip-card .bot { bottom: 0; border-radius: 0 0 5px 5px; background: linear-gradient(#222225, #1b1b1e); }
+  .flip-card .bot span { top: -19px; }
   .flip-card::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1.5px; margin-top: -.75px; background: #000; z-index: 5; }
   .flip-card .flap-top { transform-origin: 50% 100%; z-index: 3; animation: flap-top .26s ease-in forwards; }
   .flip-card .flap-bot { transform-origin: 50% 0; z-index: 4; transform: rotateX(90deg); animation: flap-bot .26s ease-out .26s forwards; }
@@ -3635,7 +3635,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!document.body.classList.contains("apps-full") || !count) { box.style.removeProperty("--icon"); return; }
     const cs = getComputedStyle(box);
     const w = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 16;
-    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 24 - 52;  // 52: the clock
+    const h = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 24 - 38;  // 38: the clock
     const cols = Math.ceil(count / rows);
     const icon = Math.min(130, w / (cols + (cols - 1) * 0.36), h / (rows + (rows - 1) * 0.3 + 0.15 * rows + 0.32));
     box.style.setProperty("--icon", Math.floor(icon) + "px");
