@@ -259,7 +259,7 @@ If the binary refuses to run outside launchd, skip to Task 6's install check.
 ### Task 3: Mock server for page previews
 
 **Files:**
-- Create: `$SCRATCH/mock/serve.py` (copy of the old session's mock: `/private/tmp/claude-501/-Users-edenheiser-Desktop/41593699-87e4-47ad-8f7c-4c6a45eb5be6/scratchpad/mock/`), `SRC` = this worktree's `Dashboard.swift`
+- Create: `$SCRATCH/mock/serve.py` (copy of the old session's mock: `<scratchpad>/mock/`), `SRC` = this worktree's `Dashboard.swift`
 - Modify: `~/Desktop/.claude/launch.json` (add `lidawake-cpu-mock` on port 8898)
 
 - [ ] **Step 1:** Copy the mock folder to this session's scratchpad. Add to `do_GET`, before the final 404:
@@ -316,7 +316,7 @@ def cpu_history(hours=24):
     {
       "name": "lidawake-cpu-mock",
       "runtimeExecutable": "env",
-      "runtimeArgs": ["SRC=/Users/edenheiser/Developer/LidAwake-cpugraph/Dashboard.swift", "python3", "<scratchpad>/mock/serve.py", "8898"],
+      "runtimeArgs": ["SRC=~/Developer/LidAwake-cpugraph/Dashboard.swift", "python3", "<scratchpad>/mock/serve.py", "8898"],
       "port": 8898
     }
 ```
@@ -603,4 +603,4 @@ In `renderHistory`: at the very top add `histCpu = null; $("histAppsBox").hidden
 - [ ] **Step 1:** Ask the user before running `build.sh` (the `apps-tips` branch is currently installed and not merged; installing `cpu-graph` replaces it on the phone until both are merged).
 - [ ] **Step 2:** `./build.sh`, wait ~5 s, then `tests/live_checks.sh; echo EXIT $?` (do not chain anything after it). Expected: all PASS incl. `PASS cpu history`, `PASS cpu icon`; `EXIT 0`. Re-run once if socket checks fail with ECONNREFUSED right after the build.
 - [ ] **Step 3:** Ask the user to try it on the iPhone (Status → Processor).
-- [ ] **Step 4:** When the user says merge: rebase on master, push with the EdenH123 credential helper, `gh pr create` + `gh pr merge` (see memory `lid-awake-merge-via-pr`), pull master, update the missions memory.
+- [ ] **Step 4:** When the user says merge: rebase on master, push with your GitHub account, `gh pr create` + `gh pr merge` (see memory `lid-awake-merge-via-pr`), pull master, update the missions memory.
