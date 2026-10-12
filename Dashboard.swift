@@ -3272,6 +3272,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     power("lock");
   });
   $("screenOffBtn").addEventListener("click", async () => {
+    if (data && data.lidClosed) {
+      // A screen turned off behind a closed lid can only come back by opening the lid.
+      await ask({ icon: "screenOff", title: "The lid is closed", ok: "OK", cancel: null, tint: "--blue",
+        text: "Turning the screen off now couldn't be undone from your phone until you open the lid. While the lid is closed, your Mac keeps the screen at the lowest brightness instead." });
+      return;
+    }
     if (!await ask({ icon: "screenOff", title: "Turn off the screen?", ok: "Turn off",
       text: "Your Mac may lock too. Tap “Wake screen” to turn it back on." })) return;
     screenOffAt = Date.now(); wakeAt = 0;
@@ -3363,7 +3369,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("askTitle").textContent = title;
     $("askText").textContent = text;
     $("askOk").firstChild.nodeValue = ok;
-    $("askCancel").firstChild.nodeValue = cancel;
+    $("askCancel").hidden = cancel === null;  // null: just an OK button (a message, not a question)
+    if (cancel !== null) $("askCancel").firstChild.nodeValue = cancel;
     const shade = $("askShade");
     shade.hidden = false;
     requestAnimationFrame(() => requestAnimationFrame(() => shade.classList.add("show")));

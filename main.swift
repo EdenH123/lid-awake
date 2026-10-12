@@ -350,6 +350,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         RunLoop.main.add(check, forMode: .common)
         RunLoop.main.add(countdown, forMode: .common)
+        // Lid closed while on: keep the screen available to the phone, dimmed (LidScreen).
+        let lid = Timer(timeInterval: 2, repeats: true) { [weak self] _ in LidScreen.update(awake: self?.isOn ?? false) }
+        RunLoop.main.add(lid, forMode: .common)
         tick()
     }
 
