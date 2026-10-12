@@ -735,6 +735,10 @@ final class StatusServer: @unchecked Sendable {
                 // Control-⌘-Q, the macOS "Lock Screen" shortcut.
                 DispatchQueue.main.async { RemoteInput.perform(["type": "key", "char": "q", "mods": ["ctrl", "cmd"]]) }
             case "displayoff":
+                // With the lid closed, a screen that's off stays off until the lid opens.
+                guard !FrameStream.lidClosed() else {
+                    return text(c, "409 Conflict", "The lid is closed: the screen couldn't be turned back on from your phone until you open the lid, so it stays on (at the lowest brightness).")
+                }
                 AccessLog.write("Display turned off from the phone · \(device)")
                 FrameStream.shared.displayOff()
             case "wake":
