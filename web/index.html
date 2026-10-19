@@ -1038,7 +1038,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <h2 id="gateTitle">Connecting…</h2>
     <p id="gateText">Reaching your Mac.</p>
     <form id="loginForm" hidden>
-      <button type="button" class="faceid-btn" id="faceIdBtn" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg>Sign in with <span data-w="unlock">Face ID</span></button>
+      <button type="button" class="faceid-btn" id="faceIdBtn" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg><span>Sign in with <span data-w="unlock">Face ID</span></span></button>
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
       <button id="unlockBtn">Unlock</button>
       <div class="error" id="loginError"></div>
@@ -1183,7 +1183,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section">
       <div class="section-head">Sign-in</div>
       <div class="list icon-list">
-        <div class="row" id="faceIdRow" hidden><span class="set-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></span><span class="title"><span data-w="unlock">Face ID</span></span>
+        <div class="row" id="faceIdRow" hidden><span class="set-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></span><span class="title"><span data-w="Unlock">Face ID</span></span>
           <span class="value" id="faceIdState" hidden>On</span><button type="button" class="row-link" id="faceIdRowBtn">Set up</button></div>
         <form class="row pw-row" id="faceIdPwRow" hidden><input type="password" id="faceIdPassword" data-w-placeholder="Password, to add {unlock}" autocomplete="current-password" aria-label="Your Lid Awake password"><button class="row-link" id="faceIdPwGo">Continue</button></form>
         <div class="row"><span class="set-icon gray"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><button type="button" class="row-link start danger" id="lockNowBtn">Lock this page now</button></div>
@@ -1289,7 +1289,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Right-click</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span><span>Drag<small>Scroll</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10V4h6M20 14v6h-6M4 4l6 6M20 20l-6-6"/></svg></span><span>Pinch<small>Zoom in on this phone only</small></span></div>
-      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Hold the mic button to talk through the Mac's speakers. <span data-w="unlock">Face ID</span> each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Hold the mic button to talk through the Mac's speakers. <span data-w="Unlock">Face ID</span> each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
       <div class="tips-head">Trackpad</div>
       <div class="tip"><span class="tip-icon txt">1</span><span>1 finger<small>Move · tap to click · tap twice, then hold and slide to drag</small></span></div>
       <div class="tip"><span class="tip-icon txt">2</span><span>2 fingers<small>Slide to scroll · tap to right-click</small></span></div>
@@ -1425,21 +1425,21 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     : "other";
   const PHONE_WORDS = {
     ios: {
-      phone: "iPhone", unlock: "Face ID",
+      phone: "iPhone", unlock: "Face ID", Unlock: "Face ID",
       unlockPrivacy: "Skip the password next time. Your face never leaves this iPhone.",
       hapticsHelp: "Only on this iPhone. If you don't feel them, turn on System Haptics in iPhone Settings → Sounds & Haptics.",
       installHelp: "To use alerts, open Lid Awake from its Home Screen icon (in Safari: Share → Add to Home Screen).",
       alertsBlocked: "Notifications are blocked. Allow them in iPhone Settings → Notifications → Lid Awake.",
     },
     android: {
-      phone: "phone", unlock: "fingerprint",
+      phone: "phone", unlock: "fingerprint", Unlock: "Fingerprint",
       unlockPrivacy: "Skip the password next time. Your fingerprint never leaves this phone.",
       hapticsHelp: "Only on this phone. If you don't feel them, turn on touch vibration in Settings → Sounds and vibration.",
       installHelp: "To use alerts, add Lid Awake to your Home screen (in Chrome: ⋮ → Add to Home screen).",
       alertsBlocked: "Notifications are blocked. Allow them in Chrome: ⋮ → Settings → Site settings → Notifications.",
     },
     other: {
-      phone: "phone", unlock: "passkey",
+      phone: "phone", unlock: "passkey", Unlock: "Passkey",
       unlockPrivacy: "Skip the password next time. Your passkey never leaves this device.",
       hapticsHelp: "Only on this phone.",
       installHelp: "To use alerts, add Lid Awake to your Home screen.",
@@ -1801,7 +1801,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (res.ok) return checkAuth();
       $("loginError").textContent = await res.text();
     } catch (e) {
-      if (e.name !== "NotAllowedError") $("loginError").textContent = `${word("unlock")} didn't work. Use your password.`;
+      if (e.name !== "NotAllowedError") $("loginError").textContent = `${word("Unlock")} didn't work. Use your password.`;
     }
   }
   $("faceIdBtn").addEventListener("click", faceIDLogin);
