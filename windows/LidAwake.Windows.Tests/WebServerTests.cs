@@ -64,8 +64,13 @@ public class WebServerTests : IDisposable
     static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "web", "index.html"))) dir = dir.Parent;
-        return dir?.FullName ?? throw new InvalidOperationException("The repository (web\\index.html) was not found above the test folder.");
+        // Both markers: the test's own bin folder also holds a copy of web\index.html, but only the
+        // repository root has the app project folder.
+        while (dir != null
+               && !(File.Exists(Path.Combine(dir.FullName, "web", "index.html"))
+                    && File.Exists(Path.Combine(dir.FullName, "windows", "LidAwake.Windows", "LidAwake.Windows.csproj"))))
+            dir = dir.Parent;
+        return dir?.FullName ?? throw new InvalidOperationException("The repository root (web\\index.html and windows\\LidAwake.Windows) was not found above the test folder.");
     }
 
     // The folder layout the app has next to its exe, built from the repository's own files.
