@@ -98,7 +98,7 @@ public sealed class WebServer : IDisposable
         {
             await Route(c);
         }
-        catch (BadHttpRequestException)
+        catch (Microsoft.AspNetCore.Http.BadHttpRequestException)
         {
             // A body that is too big, or a broken one, while it was being read.
             await Fail(c, 400, "Bad request");
