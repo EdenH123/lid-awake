@@ -164,7 +164,8 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - **Turn it on for a while only:** tray icon → **Turn off after** (for example 2 hours). When the time is up, Lid Awake turns itself off.
 - **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed.
 - **See what happened:** tray icon → **Show activity log**.
-- **Keep it plugged in.** On Windows, Lid Awake does **not** turn itself off when the battery is low or the laptop gets hot yet.
+- **Keep it plugged in, and don't leave it closed in a bag or a tight space;** on Windows Lid Awake doesn't watch the temperature yet. It doesn't turn itself off when the battery is low either.
+- **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
 
 ### What works on Windows so far
 
@@ -228,7 +229,8 @@ Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks w
 | **Windows:** the Lid Awake icon is missing from the tray | Look under the **^** arrow by the clock. If it isn't there, open **Install Lid Awake (Windows)** again. |
 | **Windows:** a message says **"Phone page not available"** | Another program is using the port Lid Awake needs (8787). Restart the PC, then turn **Lid Awake on** again. |
 | **Windows:** the phone **can't reach the PC** | Make sure Tailscale is on, on both the PC and the phone, with the same account. |
-| **Windows:** the laptop still **sleeps with the lid closed** | First make sure **Lid Awake on** is ticked in the tray menu. If it still sleeps, that laptop's own power app or a company policy is overriding the lid setting, and Lid Awake can't change it there. Open Control Panel → **Power Options** → **Choose what closing the lid does** and set it to **Do nothing** for both **On battery** and **Plugged in**. Or look in the laptop maker's power app. |
+| **Windows:** a message says **"The phone page isn't published yet"** | Tailscale needs your OK first. Tray icon → **Show activity log**: the line **Phone page not published by Tailscale** has a link from Tailscale. Open it and allow what it asks. Lid Awake tries again within a minute. |
+| **Windows:** the laptop still **sleeps with the lid closed**, or a message says **"Couldn't change what closing the lid does"** | Keep the lid open until it's fixed. 1) Make sure **Lid Awake on** is ticked in the tray menu. 2) Some laptops have their own power app from the maker that switches power plans or overrides the lid setting: check it there. 3) If you ever change **Choose what closing the lid does** in Control Panel by hand, do it only while Lid Awake is on, so turning it off puts your setting back. |
 
 ---
 

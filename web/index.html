@@ -1205,7 +1205,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section" id="activitySection" hidden>
       <div class="section-head">Recent activity</div>
       <div class="list activity-list" id="activityList"></div>
-      <div class="section-foot">The full log is on your <span data-w="computer">Mac</span>: Lid Awake menu → Signed-in devices → Show activity log.</div>
+      <div class="section-foot">The full log is on your <span data-w="computer">Mac</span>: <span data-w="logPath">Lid Awake menu → Signed-in devices → Show activity log</span>.</div>
     </div>
 
     <div class="section" data-feature="limits">
@@ -1452,8 +1452,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   };
   const PHONE_WORDS = ALL_PHONE_WORDS[PHONE];
   const COMPUTER_WORDS = {
-    mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option", menuBar: "the menu bar" },
-    windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt", menuBar: "the tray by the clock (it may be under the ^ arrow)" },
+    mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option", menuBar: "the menu bar",
+               logPath: "Lid Awake menu → Signed-in devices → Show activity log" },
+    windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt", menuBar: "the tray by the clock (it may be under the ^ arrow)",
+               logPath: "the Lid Awake icon by the clock → Show activity log" },
   };
   let COMPUTER = "mac", FEATURES = null;  // FEATURES null = not known yet: show everything
   try { COMPUTER = localStorage.getItem("computer") === "windows" ? "windows" : "mac"; } catch (e) {}
