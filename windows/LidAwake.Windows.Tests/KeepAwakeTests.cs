@@ -5,6 +5,7 @@ using Xunit.Abstractions;
 // KeepAwake keeps its state in statics (the powercfg runner, the idle-sleep holder), so every
 // test that touches it is in this one class: xUnit runs the tests of a class one at a time.
 // Most tests use a fake powercfg; only RealMachineIsLeftAsItWas runs the real one.
+[Collection("KeepAwake")]
 public class KeepAwakeTests : IDisposable
 {
     const string SchemeLine = "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)\n";
@@ -33,6 +34,8 @@ public class KeepAwakeTests : IDisposable
     {
         public int Ac, Dc;
         public bool HasLid = true;
+        public bool FailWrites;    // value-set commands fail, like a powercfg that exits non-zero
+        public bool IgnoreWrites;  // value-set commands succeed but change nothing
         public readonly List<string> Writes = new();       // /setacvalueindex and /setdcvalueindex
         public readonly List<string> Activations = new();  // /setactive
 
@@ -49,7 +52,9 @@ public class KeepAwakeTests : IDisposable
             }
             if ((command == "/setacvalueindex" || command == "/setdcvalueindex") && int.TryParse(parts[^1], out var value))
             {
+                if (FailWrites) throw new InvalidOperationException("powercfg failed (fake)");
                 Writes.Add(args);
+                if (IgnoreWrites) return "";
                 if (command == "/setacvalueindex") Ac = value; else Dc = value;
             }
             else if (command == "/setactive")
@@ -69,10 +74,11 @@ public class KeepAwakeTests : IDisposable
     public KeepAwakeTests(ITestOutputHelper output)
     {
         this.output = output;
-        KeepAwake.Powercfg = fake.Run;
         var folder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         folders.Add(folder);
         settings = new Settings(folder);
+        // Last, so a constructor that throws cannot leave the fake installed.
+        KeepAwake.Powercfg = fake.Run;
     }
 
     public void Dispose()
@@ -119,12 +125,14 @@ public class KeepAwakeTests : IDisposable
     {
         KeepAwake.On(settings);
 
+        Assert.True(KeepAwake.IsHolding);
         Assert.Equal((0, 0), (fake.Ac, fake.Dc));
         Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
         Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
 
         KeepAwake.Off(settings);
 
+        Assert.False(KeepAwake.IsHolding);
         Assert.Equal((1, 2), (fake.Ac, fake.Dc));
         Assert.Null(settings.Get<int?>("savedLidAc"));
         Assert.Null(settings.Get<int?>("savedLidDc"));
@@ -161,6 +169,7 @@ public class KeepAwakeTests : IDisposable
 
         KeepAwake.On(settings);
 
+        Assert.True(KeepAwake.IsHolding);
         Assert.Empty(fake.Writes);
         Assert.Empty(fake.Activations);
         Assert.Null(settings.Get<int?>("savedLidAc"));
@@ -168,15 +177,106 @@ public class KeepAwakeTests : IDisposable
 
         KeepAwake.Off(settings);
 
+        Assert.False(KeepAwake.IsHolding);
         Assert.Empty(fake.Writes);
         Assert.Empty(fake.Activations);
     }
 
     [Fact]
+    public void ParsesOutputWithHebrewLabels()
+    {
+        var hebrew = RealLaptopOutput
+            .Replace("Current AC Power Setting Index", "אינדקס הגדרת צריכת חשמל נוכחית של AC")
+            .Replace("Current DC Power Setting Index", "אינדקס הגדרת צריכת חשמל נוכחית של DC");
+
+        Assert.Equal((1, 2), KeepAwake.ParseLidAction(hebrew)!.Value);
+    }
+
+    [Fact]
+    public void OnReadsFreshWhenOnlyOneSavedValueExists()
+    {
+        settings.Set("savedLidAc", 9);
+
+        KeepAwake.On(settings);
+
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
+        Assert.Equal((0, 0), (fake.Ac, fake.Dc));
+    }
+
+    [Fact]
+    public void OnWhenWritesFailDoesNotThrowAndStillHolds()
+    {
+        fake.FailWrites = true;
+
+        KeepAwake.On(settings);
+
+        Assert.True(KeepAwake.IsHolding);
+        // The saved values stay, so a later Off can still restore.
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
+    }
+
+    [Fact]
+    public void OffWhenRestoreFailsKeepsSavedValuesAndReleasesTheHold()
+    {
+        KeepAwake.On(settings);
+        fake.FailWrites = true;
+
+        KeepAwake.Off(settings);
+
+        Assert.False(KeepAwake.IsHolding);
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
+        Assert.Equal((0, 0), (fake.Ac, fake.Dc));
+
+        // Once powercfg works again, the next Off finishes the job.
+        fake.FailWrites = false;
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<int?>("savedLidDc"));
+    }
+
+    [Fact]
+    public void OffKeepsSavedValuesWhenTheReadBackDoesNotMatch()
+    {
+        KeepAwake.On(settings);
+        fake.IgnoreWrites = true;
+
+        KeepAwake.Off(settings);
+
+        Assert.False(KeepAwake.IsHolding);
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
+
+        fake.IgnoreWrites = false;
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+    }
+
+    [Fact]
     public void RealMachineIsLeftAsItWas()
     {
+        // This changes the real power plan of whoever runs it, so only the CI machine does.
+        if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
+        {
+            output.WriteLine("Skipped: runs only on GitHub Actions (GITHUB_ACTIONS is not \"true\").");
+            return;
+        }
+
         KeepAwake.Powercfg = KeepAwake.RunPowercfg;
-        output.WriteLine(KeepAwake.RunPowercfg("/query SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936"));
+        try
+        {
+            output.WriteLine(KeepAwake.RunPowercfg("/query SCHEME_CURRENT 4f971e89-eebd-4455-a8de-9e59040e7347 5ca83367-6e45-459f-a27b-476b1d01c936"));
+        }
+        catch (Exception e)
+        {
+            output.WriteLine($"powercfg /query failed: {e.Message}");
+        }
         var before = KeepAwake.ReadLidAction();
         output.WriteLine($"Lid action before: {(before is null ? "not available" : before.Value.ToString())}");
 
