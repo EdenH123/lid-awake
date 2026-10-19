@@ -785,6 +785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let t = batteryTemperature() { s["batteryTemp"] = (t * 10).rounded() / 10 }
         s.merge(powerInfo()) { $1 }
         s.merge(SystemInfo.shared.snapshot()) { $1 }
+        s.merge(Platform.info) { $1 }
         return (try? JSONSerialization.data(withJSONObject: s)) ?? Data("{}".utf8)
     }
 
