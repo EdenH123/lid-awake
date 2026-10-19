@@ -428,7 +428,7 @@ Session needed. Body (base64url): `{"clientData": "...", "attestation": "<attest
 
 Checks: Host ends in `.ts.net`; `clientData` has `type == "webauthn.create"`, the right origin, and a `create` challenge; `attestation` is CBOR with an `authData` byte string; `authData` rp hash equals SHA-256 of the host, flags user-present and user-verified set, attested-credential-data flag (0x40) set; the credential id is not already stored (an existing id is never replaced); fewer than 20 stored; the COSE key is EC2, ES256 (`alg -7`), P-256, with 32-byte x and y. The agent stores: credential id, the public key (`04 || x || y`), the counter, time added, device name.
 
-On success the Mac announces it like a sign-in: title `Face ID added to Lid Awake`, body `On an iPhone. If this wasn't you, remove it from the Lid Awake menu on your Mac.` (`On a browser.` if the device name is `Browser`).
+On success the Mac announces it like a sign-in: title `Face ID or fingerprint added to Lid Awake`, body `On an iPhone. If this wasn't you, remove it from the Lid Awake menu on your Mac.` (`On a browser.` if the device name is `Browser`).
 
 The owner removes a passkey in the computer's own app (no HTTP route).
 

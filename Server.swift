@@ -487,7 +487,7 @@ final class StatusServer: @unchecked Sendable {
                   Passkeys.register(clientData: clientData, attestation: attestation, host: host, device: device)
             else { return text(c, "400 Bad Request", "Couldn't turn on Face ID. Try again.") }
             reply(c, "204 No Content", "text/plain", Data())
-            announce("Face ID added to Lid Awake", "On \(device == "Browser" ? "a browser" : "an \(device)"). If this wasn't you, remove it from the Lid Awake menu on your Mac.")
+            announce("Face ID or fingerprint added to Lid Awake", "On \(device == "Browser" ? "a browser" : "an \(device)"). If this wasn't you, remove it from the Lid Awake menu on your Mac.")
 
         // Camera: Face ID every time. A one-time challenge (only while the Mac menu allows the
         // camera), then the phone's signature buys a one-minute ticket that the live socket redeems.
