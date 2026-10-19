@@ -236,6 +236,7 @@ public class WebServerTests : IDisposable
         var json = Json(authReply);
         Assert.True(json.GetProperty("loopback").GetBoolean());
         Assert.Equal("https://pc.example.ts.net/", json.GetProperty("url").GetString());
+        Assert.Equal("windows", json.GetProperty("os").GetString());
 
         Assert.Equal(200, (await Send("GET", "/sw.js", host: "localhost", owner: null)).Code);
 
@@ -356,7 +357,7 @@ public class WebServerTests : IDisposable
         on = false;
         var authReply = await Send("GET", "/auth", cookie: cookie);
         Assert.Equal(200, authReply.Code);
-        Assert.Equal("{\"off\":true}", authReply.Body);
+        Assert.Equal("{\"off\":true,\"os\":\"windows\"}", authReply.Body);
 
         // Even a signed-in phone gets 423, not 401, and a made-up route does too.
         var status = await Send("GET", "/status", cookie: cookie);
@@ -381,6 +382,7 @@ public class WebServerTests : IDisposable
         Assert.False(json.GetProperty("hasPassword").GetBoolean());
         Assert.False(json.GetProperty("loggedIn").GetBoolean());
         Assert.False(json.GetProperty("faceID").GetBoolean());
+        Assert.Equal("windows", json.GetProperty("os").GetString());
 
         var login = await Send("POST", "/login", lid: true, json: $"{{\"password\":\"{Good}\"}}");
         Assert.Equal(409, login.Code);
@@ -407,6 +409,7 @@ public class WebServerTests : IDisposable
         var state = Json(await Send("GET", "/auth", cookie: setCookie.Split(';')[0]));
         Assert.True(state.GetProperty("hasPassword").GetBoolean());
         Assert.True(state.GetProperty("loggedIn").GetBoolean());
+        Assert.Equal("windows", state.GetProperty("os").GetString());
 
         // Announced once, for a browser that is none of the known phones.
         var note = Assert.Single(announced);

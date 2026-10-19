@@ -68,7 +68,7 @@ Every request goes through these steps in this order. The first that fails answe
 | 3 | Any other Host: must be this computer's Tailscale name, and `Tailscale-User-Login` must be the Tailscale account that owns this computer (case-insensitive) | `403` `This device isn't signed in to the Tailscale account this Mac uses.` |
 | 4 | Not a static file and not `/`, and `Sec-Fetch-Site` is present and is neither `same-origin` nor `none` | `403` `Forbidden` |
 | 5 | Static file | answered, see section 3 |
-| 6 | Lid Awake is off: see 2.4 | `/` page, `/auth` `{"off":true}`, else `423` |
+| 6 | Lid Awake is off: see 2.4 | `/` page, `/auth` `{"off":true,"os":"..."}`, else `423` |
 | 7 | Not a public route and no valid session cookie | `401` `Locked` |
 | 8 | POST without header `X-LidAwake: 1` | `403` `Forbidden` |
 | 9 | Route not found for this method and path | `404` `Not found` |
@@ -86,7 +86,7 @@ Signing in on `127.0.0.1` would hand the session to every other local web server
 | Request | Answer |
 |---|---|
 | `GET /` | the page (200) |
-| `GET /auth` | `200` `{"loopback":true,"url":"https://<tailscale host>/"}`. `url` is `""` if the Tailscale name is not known yet |
+| `GET /auth` | `200` `{"loopback":true,"url":"https://<tailscale host>/","os":"mac"}`. `url` is `""` if the Tailscale name is not known yet |
 | static files | answered |
 | anything else | `403` `Open Lid Awake at its Tailscale address.` |
 
@@ -96,7 +96,7 @@ The agent still answers, but only:
 
 - `GET /` (the page),
 - static files,
-- `GET /auth` -> `200` `{"off":true}`.
+- `GET /auth` -> `200` `{"off":true,"os":"mac"}` (`os` as in section 6.6).
 
 Every other path answers `423 Locked`, body `Lid Awake is off on your Mac.` This happens before the session check, so even a signed-in phone gets `423`, not `401`.
 
@@ -282,7 +282,7 @@ Every route passes the checks in 2.2 first. "Needs session" means step 7 there.
 Public. Answers `200` JSON:
 
 ```json
-{"hasPassword": true, "loggedIn": false, "faceID": true}
+{"hasPassword": true, "loggedIn": false, "faceID": true, "os": "mac"}
 ```
 
 | Field | Meaning |
@@ -290,8 +290,9 @@ Public. Answers `200` JSON:
 | `hasPassword` | a phone password has been set on the computer |
 | `loggedIn` | the request carries a valid session |
 | `faceID` | at least one passkey is registered (the name is historical; it means "any passkey") |
+| `os` | `"mac"` or `"windows"`, as in `/status` (6.6). It is in every `/auth` answer, so the sign-in, off and loopback screens already use the right word (Mac or PC) before any session exists. `features` still come only from `/status` |
 
-Special answers: `{"loopback":true,"url":"..."}` (2.3) and `{"off":true}` (2.4).
+Special answers: `{"loopback":true,"url":"...","os":"..."}` (2.3) and `{"off":true,"os":"..."}` (2.4).
 
 The page calls this on load and again every 3 seconds while it shows the "off" or "set a password" screen. With no password set the page tells the person to set one on the computer. **Setting the password has no HTTP route**: it is done in the computer's own app (minimum 10 characters, enforced there).
 

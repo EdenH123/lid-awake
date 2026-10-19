@@ -188,7 +188,7 @@ public sealed class WebServer : IDisposable
             if (isPage) { await Page(c, host); return; }
             if (method == "GET" && path == "/auth")
             {
-                await SendJson(c, new { loopback = true, url = tailnet.Host is { } h ? $"https://{h}/" : "" });
+                await SendJson(c, new { loopback = true, url = tailnet.Host is { } h ? $"https://{h}/" : "", os = "windows" });
                 return;
             }
             if (isStatic) { await Static(c, path); return; }
@@ -215,7 +215,7 @@ public sealed class WebServer : IDisposable
         // 6: while off, only the lock state answers (2.4).
         if (!isOn())
         {
-            if (method == "GET" && path == "/auth") { await SendJson(c, new { off = true }); return; }
+            if (method == "GET" && path == "/auth") { await SendJson(c, new { off = true, os = "windows" }); return; }
             await SendText(c, 423, "Lid Awake is off on your PC.");
             return;
         }
@@ -234,7 +234,7 @@ public sealed class WebServer : IDisposable
         switch (method, path)
         {
             case ("GET", "/auth"):
-                await SendJson(c, new { hasPassword = auth.HasPassword, loggedIn = signedIn, faceID = false });
+                await SendJson(c, new { hasPassword = auth.HasPassword, loggedIn = signedIn, faceID = false, os = "windows" });
                 return;
             case ("POST", "/login"):
                 await Login(c);

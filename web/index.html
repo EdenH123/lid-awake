@@ -1453,7 +1453,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const PHONE_WORDS = ALL_PHONE_WORDS[PHONE];
   const COMPUTER_WORDS = {
     mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option", menuBar: "the menu bar" },
-    windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt", menuBar: "the taskbar, near the clock (it may be under the ^ arrow)" },
+    windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt", menuBar: "the tray by the clock (it may be under the ^ arrow)" },
   };
   let COMPUTER = "mac", FEATURES = null;  // FEATURES null = not known yet: show everything
   try { COMPUTER = localStorage.getItem("computer") === "windows" ? "windows" : "mac"; } catch (e) {}
@@ -1483,14 +1483,18 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   // From each status: switch computer if it changed, and keep its feature list.
   function learnDevice(status) {
-    const os = status.os === "windows" ? "windows" : "mac";
+    learnComputer(status.os);
     FEATURES = Array.isArray(status.features) ? status.features : null;
-    if (os !== COMPUTER) {
-      COMPUTER = os;
-      try { localStorage.setItem("computer", os); } catch (e) {}
-      applyDevice();
-    }
     applyFeatures();
+  }
+  // Which computer this is, from /status or (before any sign-in) from /auth: remembered, and the
+  // words follow. Features come only from /status.
+  function learnComputer(value) {
+    const os = value === "windows" ? "windows" : "mac";
+    if (os === COMPUTER) return;
+    COMPUTER = os;
+    try { localStorage.setItem("computer", os); } catch (e) {}
+    applyDevice();
   }
   // Parts of the page this computer can't do (yet) are hidden, and never call their requests (each
   // request's function also checks can() first). Safe to call again on every status.
@@ -1510,8 +1514,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     for (const [id, feature] of [["batteryTile", "history"], ["tempTile", "history"], ["cpuRow", "history"], ["memRow", "memory"]]) {
       const el = $(id), on = can(feature);
       el.classList.toggle("no-tap", !on);
-      if (on) { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); }
-      else { el.removeAttribute("role"); el.removeAttribute("tabindex"); }
+      // The label says what a tap does ("show the last hours"); with no tap it is dropped so the plain text is read.
+      if (el.dataset.tapLabel === undefined) el.dataset.tapLabel = el.getAttribute("aria-label") || "";
+      if (on) { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.setAttribute("aria-label", el.dataset.tapLabel); }
+      else { el.removeAttribute("role"); el.removeAttribute("tabindex"); el.removeAttribute("aria-label"); }
     }
     if (currentTab !== "status" && currentTab !== "settings" && !can(currentTab)) showTab("status");
     else if (tabsChanged) movePill(false);  // the pill's place moves when a tab goes
@@ -1724,6 +1730,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       // Over Tailscale the link disappears while lid-awake is off, so this is the usual "off" view.
       auth = { unreachable: true };
     }
+    // So even the sign-in and "off" screens use the computer's own word.
+    if (auth.os) learnComputer(auth.os);
     // "On" is remembered on this phone; if the Mac has no Face ID sign-ins any more (removed from
     // the Mac menu, or a new password), forget it so Settings offers "Set up" again.
     if (auth.faceID === false && faceIDState() === "on") { setFaceIDState(""); renderFaceIDRow(); }
@@ -2022,6 +2030,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   async function syncFaceID() {
     try {
       const auth = await (await fetch("auth", { cache: "no-store" })).json();
+      if (auth.os) learnComputer(auth.os);
       if (auth.faceID === false && faceIDState() === "on") setFaceIDState("");
     } catch (e) {}
     renderFaceIDRow();
@@ -2081,7 +2090,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const rtt = performance.now() - sentAt;
       pingMs = pingMs == null ? rtt : pingMs * 0.7 + rtt * 0.3;
       data = await res.json();
-      learnDevice(data);
+      // A mistake in showing the features is not a network blip: log it and carry on.
+      try { learnDevice(data); } catch (e) { console.error("learnDevice failed", e); }
       fetchedAt = Date.now();
       lastOk = fetchedAt;
     } catch (e) {
@@ -2367,7 +2377,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   // ----- Live stream: one WebSocket, frames pushed by the Mac -----
   let ws = null, wsFailures = 0, wsRetryAt = 0;
-  let camOn = false;  // watching the Mac's camera: the screen's socket stays closed meanwhile
+  // Watching the Mac's camera: the screen's socket stays closed meanwhile.
+  let camOn = false;
   let quality = "balanced";
   try { quality = localStorage.getItem("quality") || "balanced"; } catch (e) {}
   const QUALITY_BADGE = { max: "MAX", sharp: "HD", balanced: "SD", fast: "LOW" };
