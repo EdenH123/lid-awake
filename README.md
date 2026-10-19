@@ -135,7 +135,7 @@ You don't need to install any programming tools.
 
 ### Install it
 
-1. On this page (the GitHub page for Lid Awake), open **Actions** → **Windows** → **Run workflow**.
+1. On this page (the GitHub page for Lid Awake), open **Actions** → **Windows** → **Run workflow**. (Until this version is on the main branch, ask whoever maintains your copy for the ZIP.)
 2. When the run has finished, open it and download **LidAwake-Windows** from **Artifacts** at the bottom. It's kept for 3 days.
 3. Unpack the **whole** ZIP (right-click it → **Extract All**). Inside, **README-FIRST.txt** repeats these steps.
 4. Double-click **Install Lid Awake (Windows)**.
@@ -149,7 +149,7 @@ You don't need to install any programming tools.
 
 1. Right-click the **Lid Awake** icon in the tray by the clock (it may be under the **^** arrow).
 2. Choose **Set phone password…** and pick a password.
-3. Turn on **Lid Awake on**. The phone page only opens while Lid Awake is on.
+3. Click **Lid Awake on** so it shows a tick. The phone page only opens while Lid Awake is on.
 4. On your phone, make sure Tailscale is on, then open `https://<pc-name>.<tailnet>.ts.net/` in the browser. You'll find your laptop's exact name in the Tailscale app on the phone (the list of your machines), or at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
 5. Add it to your Home screen:
    - **iPhone:** in Safari tap **Share** → **Add to Home Screen** → **Add**.
@@ -171,7 +171,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - See how the laptop is doing on your phone: battery, memory, processor, network and uptime.
 - Keep it running with the lid closed.
 - Turn it off from your phone.
-- **Turn off after** timer.
+- A **Turn off after** timer.
 - Sign in with your phone password, with an alert at the tray for each new sign-in.
 - See your signed-in devices and sign one out.
 - The activity log.
@@ -228,7 +228,7 @@ Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks w
 | **Windows:** the Lid Awake icon is missing from the tray | Look under the **^** arrow by the clock. If it isn't there, open **Install Lid Awake (Windows)** again. |
 | **Windows:** a message says **"Phone page not available"** | Another program is using the port Lid Awake needs (8787). Restart the PC, then turn **Lid Awake on** again. |
 | **Windows:** the phone **can't reach the PC** | Make sure Tailscale is on, on both the PC and the phone, with the same account. |
-| **Windows:** the laptop still **sleeps with the lid closed** | Right-click the tray icon and make sure **Lid Awake on** is ticked. On some laptops the maker's own power software overrides Windows; if so, keep the laptop plugged in. |
+| **Windows:** the laptop still **sleeps with the lid closed** | First make sure **Lid Awake on** is ticked in the tray menu. If it still sleeps, that laptop's own power app or a company policy is overriding the lid setting, and Lid Awake can't change it there. Open Control Panel → **Power Options** → **Choose what closing the lid does** and set it to **Do nothing** for both **On battery** and **Plugged in**. Or look in the laptop maker's power app. |
 
 ---
 
@@ -239,4 +239,4 @@ Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks w
 - The camera and microphone need their own switch, Face ID or fingerprint every time, and turn off by themselves after 10 minutes.
 - The installer gives Lid Awake one admin permission only: turning sleep off and on (`pmset -a disablesleep 0/1`).
 - Every sign-in, screen view, control and camera use is written to the activity log (cup in the menu bar → **Show activity log**).
-- On Windows, as on the Mac, programs already running on the laptop itself are trusted not to pretend to be your phone. They would still need your phone password.
+- Other programs already running on the laptop could try to reach Lid Awake, but they still need your phone password to see or change anything.
