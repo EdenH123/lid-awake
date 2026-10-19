@@ -12,6 +12,7 @@ namespace LidAwake;
 // (docs/API.md). Every request goes through the checks of section 2.2 in that order.
 public sealed class WebServer : IDisposable
 {
+    public const int DefaultPort = 8787;
     const int MaxBody = 64 * 1024;
     const string Forbidden = "Forbidden";
 
@@ -27,12 +28,12 @@ public sealed class WebServer : IDisposable
     readonly string rawHtml;
     readonly string html;
     readonly string scriptHashes;
-    WebApplication? app;
+    volatile WebApplication? app;
 
     // `status` is what GET /status answers. `announce(title, body)` tells the owner about a
     // new sign-in. `baseDir` is where web\, sky\ and the icons are (next to the exe).
     public WebServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<object> status, Action turnOff,
-                     Action<string, string> announce, int port = 8787, string? baseDir = null)
+                     Action<string, string> announce, int port = DefaultPort, string? baseDir = null)
     {
         (this.auth, this.tailnet, this.isOn, this.status, this.turnOff, this.announce) = (auth, tailnet, isOn, status, turnOff, announce);
         this.port = port;
@@ -43,6 +44,12 @@ public sealed class WebServer : IDisposable
         scriptHashes = PageHeaders.ScriptHashes(rawHtml);
         html = rawHtml.Replace("<!--SPLASH-->", "");
     }
+
+    public int Port => port;
+
+    // True after Start succeeded, until Stop or Dispose. Tailscale Serve may only point at the
+    // port while this is true (PhoneAccess).
+    public bool IsRunning => app != null;
 
     public void Start()
     {

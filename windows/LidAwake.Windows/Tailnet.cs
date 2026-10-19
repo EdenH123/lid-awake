@@ -13,7 +13,7 @@ public sealed class Tailnet
     readonly Settings settings;
     readonly Func<string, string?> run;
     readonly object applyGate = new();
-    volatile bool wanted;
+    volatile int wantedPort;  // 0: not served
 
     // `run` takes the arguments and returns the output, or null when the command could not be
     // run or failed. Tests pass a fake one.
@@ -26,6 +26,8 @@ public sealed class Tailnet
     public string? Host => settings.Get<string>("tailnetHost");
     public string? Owner => settings.Get<string>("tailnetOwner");
 
+    // Saves the name and the owner together or not at all, like Tailnet.update on the Mac, so
+    // a status without the owner never pairs a new name with an old owner.
     public void Refresh()
     {
         try
@@ -38,7 +40,6 @@ public sealed class Tailnet
                 || !root.TryGetProperty("Self", out var self) || self.ValueKind != JsonValueKind.Object) return;
             var dns = self.TryGetProperty("DNSName", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() ?? "" : "";
             if (!dns.EndsWith(".ts.net.", StringComparison.OrdinalIgnoreCase)) return;
-            settings.Set("tailnetHost", dns.TrimEnd('.').ToLowerInvariant());
             string? userId = null;
             if (self.TryGetProperty("UserID", out var uid))
                 userId = uid.ValueKind == JsonValueKind.Number ? uid.GetRawText() : uid.ValueKind == JsonValueKind.String ? uid.GetString() : null;
@@ -47,20 +48,24 @@ public sealed class Tailnet
                 && users.TryGetProperty(userId, out var me) && me.ValueKind == JsonValueKind.Object
                 && me.TryGetProperty("LoginName", out var login) && login.ValueKind == JsonValueKind.String
                 && login.GetString() is { Length: > 0 } name)
+            {
+                settings.Set("tailnetHost", dns.TrimEnd('.').ToLowerInvariant());
                 settings.Set("tailnetOwner", name.ToLowerInvariant());
+            }
         }
         catch (Exception) { }
     }
 
-    // Make https://<pc>.ts.net/ reach the page (section 9, the HTTP part). Only adds what is
-    // missing, and never leaves Funnel (the public internet) on. The /live socket comes later.
-    public void Serve()
+    // Make https://<pc>.ts.net/ reach the page on `port` (section 9, the HTTP part). Only adds
+    // what is missing, and never leaves Funnel (the public internet) on. The /live socket comes
+    // later. Callers must make sure our own web server holds `port` (see PhoneAccess).
+    public void Serve(int port)
     {
         try
         {
             var status = run("serve status --json") ?? "";
             if (HasFunnel(status)) run("funnel --https=443 off");
-            if (!status.Contains("127.0.0.1:8787", StringComparison.Ordinal)) run("serve --bg 8787");
+            if (!status.Contains($"127.0.0.1:{port}", StringComparison.Ordinal)) run($"serve --bg {port}");
         }
         catch (Exception) { }
     }
@@ -72,23 +77,26 @@ public sealed class Tailnet
         catch (Exception) { }
     }
 
-    // Serve or unserve in the background, so the tray never waits for Tailscale. Calls are
-    // applied one at a time and each applies the latest wish, so a quick on/off/on ends as "on".
-    public void SetServed(bool on)
+    // Serve (on `port`) or unserve in the background, so the tray never waits for Tailscale.
+    // Calls are applied one at a time and each applies the latest wish, so a quick on/off/on
+    // ends as "on". The task ends when this call's turn has been applied; it never fails.
+    public Task SetServed(bool on, int port)
     {
-        wanted = on;
-        try
+        wantedPort = on ? port : 0;
+        try { return Task.Run(Apply); }
+        catch (Exception) { return Task.CompletedTask; }
+    }
+
+    void Apply()
+    {
+        lock (applyGate)
         {
-            Task.Run(() =>
-            {
-                lock (applyGate)
-                {
-                    if (wanted) { Refresh(); Serve(); }
-                    else Unserve();
-                }
-            });
+            if (wantedPort == 0) { Unserve(); return; }
+            Refresh();
+            // Turned off while Tailscale was being asked: do not add Serve after all.
+            var port = wantedPort;
+            if (port == 0) Unserve(); else Serve(port);
         }
-        catch (Exception) { }
     }
 
     static bool HasFunnel(string statusJson)

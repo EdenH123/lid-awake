@@ -51,12 +51,33 @@ public class TailnetTests : IDisposable
         Assert.Null(t.Host);
     }
 
+    // Like Tailnet.update on the Mac: the name and the owner are saved together or not at all.
+    [Fact]
+    public void RefreshSavesNothingWithoutTheOwner()
+    {
+        var t = NewTailnet(_ => "{\"Self\":{\"DNSName\":\"desk-pc.tail1234.ts.net.\",\"UserID\":4242},\"User\":{}}");
+        t.Refresh();
+        Assert.Null(t.Host);
+        Assert.Null(t.Owner);
+    }
+
+    [Fact]
+    public void RefreshWithoutTheOwnerKeepsTheOldPairWhole()
+    {
+        var settings = NewSettings();
+        NewTailnet(_ => StatusJson, settings).Refresh();
+        var t = NewTailnet(_ => "{\"Self\":{\"DNSName\":\"other-pc.tail9999.ts.net.\",\"UserID\":7}}", settings);
+        t.Refresh();
+        Assert.Equal("desk-pc.tail1234.ts.net", t.Host);
+        Assert.Equal("owner@example.com", t.Owner);
+    }
+
     [Fact]
     public void NothingThrowsWhenTailscaleFails()
     {
         var t = NewTailnet(_ => throw new InvalidOperationException("boom"));
         t.Refresh();
-        t.Serve();
+        t.Serve(8787);
         t.Unserve();
         Assert.Null(t.Host);
     }
@@ -66,7 +87,7 @@ public class TailnetTests : IDisposable
     {
         var t = NewTailnet(_ => "not json");
         t.Refresh();
-        t.Serve();
+        t.Serve(8787);
         Assert.Null(t.Host);
     }
 
@@ -74,15 +95,45 @@ public class TailnetTests : IDisposable
     public void ServeAddsTheMappingWhenMissing()
     {
         var t = NewTailnet(_ => "{}");
-        t.Serve();
+        t.Serve(8787);
         Assert.Equal(new[] { "serve status --json", "serve --bg 8787" }, commands);
+    }
+
+    [Fact]
+    public void ServeUsesTheGivenPort()
+    {
+        // Mapped to another port is not mapped to ours.
+        var t = NewTailnet(_ => "{\"Web\":{\"pc.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:8787\"}}}}}");
+        t.Serve(9123);
+        Assert.Equal(new[] { "serve status --json", "serve --bg 9123" }, commands);
+    }
+
+    [Fact]
+    public async Task SetServedAppliesInTheBackgroundAndCanBeWaitedFor()
+    {
+        var t = NewTailnet(args => args == "status --json" ? StatusJson : "{}");
+        await t.SetServed(true, 8787);
+        Assert.Equal(new[] { "status --json", "serve status --json", "serve --bg 8787" }, commands);
+        commands.Clear();
+        await t.SetServed(false, 8787);
+        Assert.Equal(new[] { "serve --https=443 off" }, commands);
+    }
+
+    [Fact]
+    public async Task TheLatestWishWins()
+    {
+        var t = NewTailnet(args => args == "status --json" ? StatusJson : "{}");
+        var on = t.SetServed(true, 8787);
+        var off = t.SetServed(false, 8787);
+        await Task.WhenAll(on, off);
+        Assert.Equal("serve --https=443 off", commands.Last());
     }
 
     [Fact]
     public void ServeDoesNothingWhenAlreadyMapped()
     {
         var t = NewTailnet(_ => "{\"Web\":{\"pc.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:8787\"}}}}}");
-        t.Serve();
+        t.Serve(8787);
         Assert.Equal(new[] { "serve status --json" }, commands);
     }
 
@@ -90,7 +141,7 @@ public class TailnetTests : IDisposable
     public void ServeTurnsFunnelOff()
     {
         var t = NewTailnet(_ => "{\"AllowFunnel\":{\"pc.ts.net:443\":true}}");
-        t.Serve();
+        t.Serve(8787);
         Assert.Contains("funnel --https=443 off", commands);
     }
 
