@@ -94,14 +94,16 @@ public sealed class StatusInfo
 
     public StatusInfo(ISystemReadings readings) => this.readings = readings;
 
-    public Dictionary<string, object?> Build(bool lidAwake)
+    // `timer` is the "Turn off after" setting: timerMinutes is its length and timerRemaining the
+    // time left (6.1). Without one (tests, before the tray exists) the length is 0, never.
+    public Dictionary<string, object?> Build(bool lidAwake, AutoOff? timer = null)
     {
         var s = new Dictionary<string, object?>
         {
             // 6.1: the switches and limits Windows does not have get the documented safe defaults.
             ["host"] = readings.HostName(),
             ["lidAwake"] = lidAwake,
-            ["timerMinutes"] = 0,
+            ["timerMinutes"] = timer?.Minutes ?? 0,
             // false, not the documented default true: there are no battery or heat guards on
             // Windows yet (no /limits route), and the page shows a true switch as protection.
             ["batteryGuard"] = false,
@@ -127,6 +129,9 @@ public sealed class StatusInfo
             ["os"] = "windows",
             ["features"] = Features,
         };
+
+        // timerRemaining: omitted unless on, with a timer, and in the future.
+        if (lidAwake && timer?.Remaining() is { } left) s["timerRemaining"] = left;
 
         // 6.4: a PC with no battery sends none of these.
         if (readings.Power() is { } p && HasBattery(p))

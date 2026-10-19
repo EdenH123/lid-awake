@@ -23,6 +23,8 @@ public sealed class WebServer : IDisposable
     readonly Func<object> status;
     readonly Action turnOff;
     readonly Action<string, string> announce;
+    readonly AccessLog? log;
+    readonly Action<int>? setTimer;
     readonly int port;
     readonly string baseDir;
     readonly string web;
@@ -32,11 +34,16 @@ public sealed class WebServer : IDisposable
     volatile WebApplication? app;
 
     // `status` is what GET /status answers. `announce(title, body)` tells the owner about a
-    // new sign-in. `baseDir` is where web\, sky\ and the icons are (next to the exe).
+    // new sign-in. `baseDir` is where web\, sky\ and the icons are (next to the exe). `log` is the
+    // activity log that GET /activity reads and sign-ins and turn-offs are written to (none: nothing
+    // is written and the list is empty). `setTimer(minutes)` applies a length already checked against
+    // AutoOff.Choices to the "Turn off after" timer (none: the length is accepted and dropped).
     public WebServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<object> status, Action turnOff,
-                     Action<string, string> announce, int port = DefaultPort, string? baseDir = null)
+                     Action<string, string> announce, int port = DefaultPort, string? baseDir = null,
+                     AccessLog? log = null, Action<int>? setTimer = null)
     {
         (this.auth, this.tailnet, this.isOn, this.status, this.turnOff, this.announce) = (auth, tailnet, isOn, status, turnOff, announce);
+        (this.log, this.setTimer) = (log, setTimer);
         this.port = port;
         this.baseDir = baseDir ?? AppContext.BaseDirectory;
         web = Path.Combine(this.baseDir, "web");
@@ -252,7 +259,29 @@ public sealed class WebServer : IDisposable
                 var body = await ReadJson(c.Request);
                 if (!body.TryGetValue("on", out var on) || on.ValueKind != JsonValueKind.False)
                 { await SendText(c, 400, "Lid-awake can only be turned on from this PC."); return; }
+                LogQuietly("Lid Awake turned off from the phone");
                 turnOff();
+                Empty(c);
+                return;
+            }
+            case ("GET", "/sessions"):
+            {
+                var list = auth.Sessions(tokens).Select(x => new { id = x.Id, device = x.Device, created = x.Created, faceID = false, current = x.Current }).ToList();
+                await SendJson(c, new { sessions = list });
+                return;
+            }
+            case ("POST", "/sessions/signout"):
+                await SignOut(c, tokens);
+                return;
+            case ("GET", "/activity"):
+                await SendJson(c, new { lines = log?.Recent(8) ?? new List<string>() });
+                return;
+            case ("POST", "/timer"):
+            {
+                var body = await ReadJson(c.Request);
+                if (!body.TryGetValue("minutes", out var m) || !TryWhole(m, out var minutes) || !AutoOff.IsChoice(minutes))
+                { await SendText(c, 400, "Unknown timer length."); return; }
+                setTimer?.Invoke(minutes);
                 Empty(c);
                 return;
             }
@@ -260,6 +289,45 @@ public sealed class WebServer : IDisposable
                 await SendText(c, 404, "Not found");
                 return;
         }
+    }
+
+    // POST /sessions/signout: `others: true` signs out every session but the caller's, `id` one
+    // session (never the caller's own). Neither: 400. An id that matches nothing is still 204.
+    async Task SignOut(HttpContext c, List<string> tokens)
+    {
+        var body = await ReadJson(c.Request);
+        var device = Auth.DeviceName(c.Request.Headers.UserAgent.ToString());
+        if (body.TryGetValue("others", out var o) && o.ValueKind == JsonValueKind.True)
+        {
+            if (auth.SignOutOthers(tokens) > 0) LogQuietly($"Signed out the other devices from the phone · {device}");
+        }
+        else if (body.TryGetValue("id", out var i) && i.ValueKind == JsonValueKind.String)
+        {
+            if (auth.SignOut(i.GetString(), tokens) > 0) LogQuietly($"Signed out a device from the phone · {device}");
+        }
+        else
+        {
+            await SendText(c, 400, "Which device?");
+            return;
+        }
+        Empty(c);
+    }
+
+    // A whole number in a JSON body: 15 and 15.0 both count, 15.5 and "15" do not.
+    static bool TryWhole(JsonElement e, out int value)
+    {
+        value = 0;
+        if (e.ValueKind != JsonValueKind.Number) return false;
+        if (e.TryGetInt32(out var whole)) { value = whole; return true; }
+        if (!e.TryGetDouble(out var d) || d != Math.Floor(d) || Math.Abs(d) >= int.MaxValue) return false;
+        value = (int)d;
+        return true;
+    }
+
+    void LogQuietly(string text)
+    {
+        try { log?.Write(text); }
+        catch (Exception) { }
     }
 
     async Task Login(HttpContext c)
@@ -275,11 +343,9 @@ public sealed class WebServer : IDisposable
             case LoginResult.Kind.Ok:
                 c.Response.Headers.Append("Set-Cookie",
                     $"{Auth.CookieName}={r.Token}; Path=/; Max-Age={(int)(Auth.SessionDays * 86400)}; HttpOnly; SameSite=Strict; Secure");
-                try
-                {
-                    announce("New sign-in to Lid Awake",
-                        device == "Browser" ? "With the password, on a browser." : $"With the password, on an {device}.");
-                }
+                var announcement = device == "Browser" ? "With the password, on a browser." : $"With the password, on an {device}.";
+                LogQuietly("New sign-in to Lid Awake · " + announcement);
+                try { announce("New sign-in to Lid Awake", announcement); }
                 catch (Exception) { }  // a notification that fails must not undo the sign-in
                 Empty(c);
                 return;

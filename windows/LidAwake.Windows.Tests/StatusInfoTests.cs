@@ -118,6 +118,80 @@ public class StatusInfoTests
         Assert.False(s.TryGetProperty("link", out _));
     }
 
+    // The "Turn off after" setting, on a settings folder of its own and a clock the test moves.
+    sealed class TimerFixture : IDisposable
+    {
+        readonly string folder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        public DateTimeOffset Clock = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
+        public AutoOff Timer;
+
+        public TimerFixture() => Timer = new AutoOff(new Settings(folder), () => Clock);
+
+        public void Dispose()
+        {
+            try { Directory.Delete(folder, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
+    public void TimerMinutesIsTheChosenLengthAndTimerRemainingIsOmittedWithoutACountdown()
+    {
+        using var f = new TimerFixture();
+        f.Timer.Set(60);
+        var info = new StatusInfo(new FakeReadings());
+        // Chosen but not started: the length is there, the time left is not.
+        var s = Run(info.Build(true, f.Timer));
+        Assert.Equal(60, s.GetProperty("timerMinutes").GetInt32());
+        Assert.False(s.TryGetProperty("timerRemaining", out _));
+        // No timer at all: 0, and no time left.
+        f.Timer.Set(0);
+        f.Timer.Start();
+        s = Run(info.Build(true, f.Timer));
+        Assert.Equal(0, s.GetProperty("timerMinutes").GetInt32());
+        Assert.False(s.TryGetProperty("timerRemaining", out _));
+        AssertEveryKeyWithItsKind(s);
+    }
+
+    [Fact]
+    public void TimerRemainingIsTheSecondsLeftWhileOnWithATimer()
+    {
+        using var f = new TimerFixture();
+        f.Timer.Set(15);
+        f.Timer.Start();
+        var info = new StatusInfo(new FakeReadings());
+        var s = Run(info.Build(true, f.Timer));
+        Assert.Equal(15, s.GetProperty("timerMinutes").GetInt32());
+        Assert.Equal(JsonValueKind.Number, s.GetProperty("timerRemaining").ValueKind);
+        Assert.Equal(900.0, s.GetProperty("timerRemaining").GetDouble(), 3);
+        AssertEveryKeyWithItsKind(s);
+
+        f.Clock += TimeSpan.FromSeconds(90.5);
+        Assert.Equal(809.5, Run(info.Build(true, f.Timer)).GetProperty("timerRemaining").GetDouble(), 3);
+    }
+
+    [Fact]
+    public void TimerRemainingIsOmittedWhenOffOrWhenTheTimeHasPassed()
+    {
+        using var f = new TimerFixture();
+        f.Timer.Set(15);
+        f.Timer.Start();
+        var info = new StatusInfo(new FakeReadings());
+        // The caller says off (the tray's switch is the authority on lidAwake): no countdown shown.
+        var off = Run(info.Build(false, f.Timer));
+        Assert.False(off.GetProperty("lidAwake").GetBoolean());
+        Assert.False(off.TryGetProperty("timerRemaining", out _));
+        Assert.Equal(15, off.GetProperty("timerMinutes").GetInt32());
+
+        f.Clock += TimeSpan.FromMinutes(16);
+        Assert.False(Run(info.Build(true, f.Timer)).TryGetProperty("timerRemaining", out _));
+
+        f.Timer.Stop();
+        f.Clock -= TimeSpan.FromMinutes(16);
+        Assert.False(Run(info.Build(true, f.Timer)).TryGetProperty("timerRemaining", out _));
+    }
+
     [Fact]
     public void OsIsWindowsAndFeaturesAreOnlyWhatIsImplemented()
     {

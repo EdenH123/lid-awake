@@ -34,6 +34,9 @@ public class WebServerTests : IDisposable
     int turnOffCalls;
     Func<object> statusAnswer = () => new { os = "windows", lidAwake = true };
     readonly List<(string Title, string Body)> announced = new();
+    readonly AccessLog accessLog;
+    readonly List<int> timerSets = new();
+    AutoOff? realTimer;  // set by a test that wants /timer to change a real timer
 
     public WebServerTests()
     {
@@ -44,8 +47,10 @@ public class WebServerTests : IDisposable
         settings.Set("tailnetOwner", Owner);
         auth = new Auth(settings, iterations: 1000);
         port = FreePort();
+        accessLog = new AccessLog(Path.Combine(folder, "logs"));
         server = new WebServer(auth, new Tailnet(settings, _ => null), () => on, () => statusAnswer(),
-            () => turnOffCalls++, (title, body) => announced.Add((title, body)), port, site);
+            () => turnOffCalls++, (title, body) => announced.Add((title, body)), port, site,
+            accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); });
         server.Start();
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
         {
@@ -684,9 +689,15 @@ public class WebServerTests : IDisposable
         var unknown = await Send("GET", "/nope", cookie: cookie);
         Assert.Equal(404, unknown.Code);
         Assert.Equal("Not found", unknown.Body);
-        // Not built yet: 404 after the session check, like any route that does not exist.
-        Assert.Equal(404, (await Send("GET", "/sessions", cookie: cookie)).Code);
+        // A route that is not built yet: 404 after the session check, like any route that does not exist.
+        Assert.Equal(404, (await Send("GET", "/memory", cookie: cookie)).Code);
+        Assert.Equal(401, (await Send("GET", "/memory")).Code);
         Assert.Equal(401, (await Send("GET", "/sessions")).Code);
+        // The routes that exist answer only their own method.
+        Assert.Equal(404, (await Send("POST", "/sessions", lid: true, cookie: cookie)).Code);
+        Assert.Equal(404, (await Send("GET", "/sessions/signout", cookie: cookie)).Code);
+        Assert.Equal(404, (await Send("POST", "/activity", lid: true, cookie: cookie)).Code);
+        Assert.Equal(404, (await Send("GET", "/timer", cookie: cookie)).Code);
         Assert.Equal(404, (await Send("GET", "/passkey/login-options", cookie: cookie)).Code);
         Assert.Equal(401, (await Send("GET", "/passkey/login-options")).Code);
         Assert.False(unknown.Has("Server"));
@@ -781,5 +792,397 @@ public class WebServerTests : IDisposable
             Environment.SetEnvironmentVariable("ASPNETCORE_URLS", null);
             Environment.SetEnvironmentVariable("ASPNETCORE_PREFERHOSTINGURLS", null);
         }
+    }
+
+    // ---- Task 13b: /sessions, /sessions/signout, /activity, /timer (docs/API.md 5.2) ----
+
+    Task<Reply> Post(string path, string cookie, string? json = null, string? ua = null) =>
+        Send("POST", path, lid: true, cookie: cookie == "" ? null : cookie, json: json, ua: ua);
+
+    static string[] Lines(Reply r) => Json(r).GetProperty("lines").EnumerateArray().Select(l => l.GetString()!).ToArray();
+
+    static JsonElement[] SessionList(Reply r) => Json(r).GetProperty("sessions").EnumerateArray().ToArray();
+
+    // Every session but the caller's own, by its handle.
+    static string[] OtherIds(Reply r) => SessionList(r).Where(x => !x.GetProperty("current").GetBoolean()).Select(x => x.GetProperty("id").GetString()!).ToArray();
+
+    [Fact]
+    public async Task SessionsListsEachSignedInDeviceNewestFirst()
+    {
+        var phone = await SignIn(IPhone);
+        await Task.Delay(1100);  // sessions are told apart by the second they were made
+        var pc = await SignIn("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+
+        var r = await Send("GET", "/sessions", cookie: phone);
+        Assert.Equal(200, r.Code);
+        Assert.Equal("application/json", r.Header("Content-Type"));
+        var list = SessionList(r);
+        Assert.Equal(2, list.Length);
+        Assert.Equal(new[] { "Windows PC", "iPhone" }, list.Select(x => x.GetProperty("device").GetString()));
+        Assert.Equal(new[] { false, true }, list.Select(x => x.GetProperty("current").GetBoolean()));
+        foreach (var x in list)
+        {
+            Assert.Equal(new[] { "id", "device", "created", "faceID", "current" }, x.EnumerateObject().Select(p => p.Name));
+            Assert.Matches("^[0-9a-f]{12}$", x.GetProperty("id").GetString()!);
+            Assert.Equal(JsonValueKind.Number, x.GetProperty("created").ValueKind);
+            Assert.False(x.GetProperty("faceID").GetBoolean());
+        }
+        Assert.True(list[0].GetProperty("created").GetInt64() > list[1].GetProperty("created").GetInt64());
+        Assert.InRange(list[0].GetProperty("created").GetInt64(), DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60, DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 1);
+
+        // The same list from the other device has the flag the other way round.
+        Assert.Equal(new[] { true, false }, SessionList(await Send("GET", "/sessions", cookie: pc)).Select(x => x.GetProperty("current").GetBoolean()));
+    }
+
+    [Fact]
+    public async Task SessionsNeverShowsTheTokenOrItsHash()
+    {
+        var cookie = await SignIn();
+        var token = cookie[(cookie.IndexOf('=') + 1)..];
+        var stored = settings.Get<List<Auth.Session>>("sessions")!.Single().Hash;
+        var r = await Send("GET", "/sessions", cookie: cookie);
+        Assert.DoesNotContain(token, r.Body);
+        Assert.DoesNotContain(stored, r.Body);
+        Assert.Contains(stored[..12], r.Body);
+    }
+
+    [Fact]
+    public async Task SessionsAndSignOutNeedASessionAndTheRightHeaderAndAreClosedWhileOff()
+    {
+        var cookie = await SignIn();
+        var anonymous = await Send("GET", "/sessions");
+        Assert.Equal(401, anonymous.Code);
+        Assert.Equal("Locked", anonymous.Body);
+        Assert.Equal(401, (await Post("/sessions/signout", "", "{\"others\":true}")).Code);
+        // Signed in, but a POST without X-LidAwake: 403.
+        var noHeader = await Send("POST", "/sessions/signout", cookie: cookie, json: "{\"others\":true}");
+        Assert.Equal(403, noHeader.Code);
+        Assert.Equal("Forbidden", noHeader.Body);
+        Assert.Equal(403, (await Send("GET", "/sessions", cookie: cookie, fetchSite: "cross-site")).Code);
+
+        on = false;
+        var off = await Send("GET", "/sessions", cookie: cookie);
+        Assert.Equal(423, off.Code);
+        Assert.Equal(OffText, off.Body);
+        Assert.Equal(423, (await Post("/sessions/signout", cookie, "{\"others\":true}")).Code);
+    }
+
+    [Fact]
+    public async Task SignOutOthersKeepsTheCallersOwnSession()
+    {
+        var mine = await SignIn(IPhone);
+        var second = await SignIn();
+        var third = await SignIn("Mozilla/5.0 (Windows NT 10.0)");
+
+        var r = await Post("/sessions/signout", mine, "{\"others\":true}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal("", r.Body);
+        Assert.Equal(200, (await Send("GET", "/status", cookie: mine)).Code);
+        Assert.Equal(401, (await Send("GET", "/status", cookie: second)).Code);
+        Assert.Equal(401, (await Send("GET", "/status", cookie: third)).Code);
+        var list = SessionList(await Send("GET", "/sessions", cookie: mine));
+        Assert.Single(list);
+        Assert.True(list[0].GetProperty("current").GetBoolean());
+        // Nothing left to sign out: still 204.
+        Assert.Equal(204, (await Post("/sessions/signout", mine, "{\"others\":true}")).Code);
+    }
+
+    [Fact]
+    public async Task SignOutByIdEndsThatDeviceOnly()
+    {
+        var mine = await SignIn(IPhone);
+        var other = await SignIn();
+        var third = await SignIn();
+        var ids = OtherIds(await Send("GET", "/sessions", cookie: mine));
+        Assert.Equal(2, ids.Length);
+
+        var stored = settings.Get<List<Auth.Session>>("sessions")!;
+        var otherHash = stored[1].Hash;  // the second one signed in
+        var otherId = otherHash[..12];
+        Assert.Contains(otherId, ids);
+
+        var r = await Post("/sessions/signout", mine, $"{{\"id\":\"{otherId}\"}}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal(401, (await Send("GET", "/status", cookie: other)).Code);
+        Assert.Equal(200, (await Send("GET", "/status", cookie: third)).Code);
+        Assert.Equal(200, (await Send("GET", "/status", cookie: mine)).Code);
+        Assert.Equal(2, SessionList(await Send("GET", "/sessions", cookie: mine)).Length);
+    }
+
+    [Fact]
+    public async Task SignOutByIdNeverEndsTheCallersOwnSession()
+    {
+        var mine = await SignIn();
+        var ownId = SessionList(await Send("GET", "/sessions", cookie: mine)).Single().GetProperty("id").GetString();
+        var r = await Post("/sessions/signout", mine, $"{{\"id\":\"{ownId}\"}}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal(200, (await Send("GET", "/status", cookie: mine)).Code);
+        Assert.Single(SessionList(await Send("GET", "/sessions", cookie: mine)));
+    }
+
+    [Theory]
+    [InlineData("{\"id\":\"\"}")]
+    [InlineData("{\"id\":\"abc\"}")]
+    [InlineData("{\"id\":\"0123456789abcdef\"}")]
+    [InlineData("{\"id\":\"000000000000\"}")]
+    [InlineData("{\"others\":false,\"id\":\"000000000000\"}")]
+    public async Task AnIdOfTheWrongLengthOrMatchingNothingAnswers204AndChangesNothing(string json)
+    {
+        var mine = await SignIn();
+        var other = await SignIn();
+        var r = await Post("/sessions/signout", mine, json);
+        Assert.Equal(204, r.Code);
+        Assert.Equal(200, (await Send("GET", "/status", cookie: other)).Code);
+        Assert.Equal(2, SessionList(await Send("GET", "/sessions", cookie: mine)).Length);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("{}")]
+    [InlineData("not json")]
+    [InlineData("[]")]
+    [InlineData("{\"others\":false}")]
+    [InlineData("{\"others\":\"true\"}")]
+    [InlineData("{\"others\":1}")]
+    [InlineData("{\"id\":5}")]
+    [InlineData("{\"id\":null}")]
+    public async Task SignOutWithNeitherOthersNorAnIdIs400WhichDevice(string? json)
+    {
+        var mine = await SignIn();
+        var other = await SignIn();
+        var r = await Post("/sessions/signout", mine, json);
+        Assert.Equal(400, r.Code);
+        Assert.Equal("Which device?", r.Body);
+        Assert.Equal("text/plain; charset=utf-8", r.Header("Content-Type"));
+        Assert.Equal(200, (await Send("GET", "/status", cookie: other)).Code);
+    }
+
+    [Fact]
+    public async Task OthersWinsOverAnIdInTheSameBody()
+    {
+        var mine = await SignIn();
+        var other = await SignIn();
+        var r = await Post("/sessions/signout", mine, "{\"others\":true,\"id\":\"000000000000\"}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal(401, (await Send("GET", "/status", cookie: other)).Code);
+    }
+
+    [Fact]
+    public async Task SignOutCountsEveryCookieOfTheRequestAsTheCallers()
+    {
+        var first = await SignIn();
+        var second = await SignIn();
+        var third = await SignIn();
+        var r = await Post("/sessions/signout", first + "; " + second, "{\"others\":true}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal(200, (await Send("GET", "/status", cookie: first)).Code);
+        Assert.Equal(200, (await Send("GET", "/status", cookie: second)).Code);
+        Assert.Equal(401, (await Send("GET", "/status", cookie: third)).Code);
+    }
+
+    [Fact]
+    public async Task ActivityIsAnEmptyListWhenThereIsNoLog()
+    {
+        var cookie = await SignIn();
+        File.Delete(accessLog.FilePath);
+        var r = await Send("GET", "/activity", cookie: cookie);
+        Assert.Equal(200, r.Code);
+        Assert.Equal("application/json", r.Header("Content-Type"));
+        Assert.Equal("{\"lines\":[]}", r.Body);
+    }
+
+    [Fact]
+    public async Task ActivityHasTheNewestLinesFirstAsTimeTwoSpacesText()
+    {
+        accessLog.Write("older event");
+        var cookie = await SignIn(IPhone);
+        var lines = Lines(await Send("GET", "/activity", cookie: cookie));
+        Assert.Equal(2, lines.Length);
+        Assert.EndsWith("  New sign-in to Lid Awake · With the password, on an iPhone.", lines[0]);
+        Assert.EndsWith("  older event", lines[1]);
+        foreach (var line in lines)
+        {
+            var space = line.IndexOf("  ", StringComparison.Ordinal);
+            Assert.True(DateTimeOffset.TryParse(line[..space], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _), line);
+            Assert.Matches(@"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d  ", line);
+        }
+    }
+
+    [Fact]
+    public async Task ActivityAnswersTheNewestEightOnly()
+    {
+        var cookie = await SignIn();
+        for (int i = 1; i <= 12; i++) accessLog.Write("event " + i);
+        var lines = Lines(await Send("GET", "/activity", cookie: cookie));
+        Assert.Equal(8, lines.Length);
+        Assert.EndsWith("  event 12", lines[0]);
+        Assert.EndsWith("  event 5", lines[7]);
+    }
+
+    [Fact]
+    public async Task ActivityNeedsASessionAndIsClosedWhileOff()
+    {
+        var cookie = await SignIn();
+        var anonymous = await Send("GET", "/activity");
+        Assert.Equal(401, anonymous.Code);
+        Assert.Equal("Locked", anonymous.Body);
+        Assert.Equal(403, (await Send("GET", "/activity", cookie: cookie, fetchSite: "cross-site")).Code);
+        on = false;
+        var off = await Send("GET", "/activity", cookie: cookie);
+        Assert.Equal(423, off.Code);
+        Assert.Equal(OffText, off.Body);
+    }
+
+    [Fact]
+    public async Task SignInsSignOutsAndTurningOffFromThePhoneAreLogged()
+    {
+        var mine = await SignIn(IPhone);
+        await SignIn();
+        var id = OtherIds(await Send("GET", "/sessions", cookie: mine)).Single();
+        Assert.Equal(204, (await Post("/sessions/signout", mine, $"{{\"id\":\"{id}\"}}", ua: IPhone)).Code);
+        await SignIn();
+        Assert.Equal(204, (await Post("/sessions/signout", mine, "{\"others\":true}", ua: IPhone)).Code);
+        Assert.Equal(204, (await Post("/awake", mine, "{\"on\":false}")).Code);
+
+        var lines = Lines(await Send("GET", "/activity", cookie: mine));
+        string Text(string line) => line[(line.IndexOf("  ", StringComparison.Ordinal) + 2)..];
+        Assert.Equal(new[]
+        {
+            "Lid Awake turned off from the phone",
+            "Signed out the other devices from the phone · iPhone",
+            "New sign-in to Lid Awake · With the password, on a browser.",
+            "Signed out a device from the phone · iPhone",
+            "New sign-in to Lid Awake · With the password, on a browser.",
+            "New sign-in to Lid Awake · With the password, on an iPhone.",
+        }, lines.Select(Text));
+    }
+
+    [Fact]
+    public async Task RefusedRequestsAreNotLogged()
+    {
+        var cookie = await SignIn();
+        var before = Lines(await Send("GET", "/activity", cookie: cookie)).Length;
+        Assert.Equal(401, (await Send("POST", "/login", lid: true, json: "{\"password\":\"wrong password!\"}")).Code);
+        Assert.Equal(400, (await Post("/awake", cookie, "{\"on\":true}")).Code);
+        Assert.Equal(400, (await Post("/sessions/signout", cookie, "{}")).Code);
+        Assert.Equal(204, (await Post("/sessions/signout", cookie, "{\"others\":true}")).Code);  // nobody else was signed in
+        Assert.Equal(before, Lines(await Send("GET", "/activity", cookie: cookie)).Length);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(15)]
+    [InlineData(30)]
+    [InlineData(60)]
+    [InlineData(120)]
+    [InlineData(240)]
+    [InlineData(480)]
+    public async Task EachTimerChoiceIsSetWith204(int minutes)
+    {
+        var cookie = await SignIn();
+        var r = await Post("/timer", cookie, $"{{\"minutes\":{minutes}}}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal("", r.Body);
+        Assert.Equal(new[] { minutes }, timerSets);
+    }
+
+    [Theory]
+    [InlineData("{\"minutes\":1}")]
+    [InlineData("{\"minutes\":10}")]
+    [InlineData("{\"minutes\":45}")]
+    [InlineData("{\"minutes\":-15}")]
+    [InlineData("{\"minutes\":481}")]
+    [InlineData("{\"minutes\":1440}")]
+    [InlineData("{\"minutes\":15.5}")]
+    [InlineData("{\"minutes\":1e20}")]
+    [InlineData("{\"minutes\":\"15\"}")]
+    [InlineData("{\"minutes\":true}")]
+    [InlineData("{\"minutes\":false}")]
+    [InlineData("{\"minutes\":null}")]
+    [InlineData("{\"minutes\":[15]}")]
+    [InlineData("{\"minute\":15}")]
+    [InlineData("{}")]
+    [InlineData("not json")]
+    [InlineData("[15]")]
+    [InlineData("15")]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task AnyOtherTimerValueIs400UnknownTimerLength(string? json)
+    {
+        var cookie = await SignIn();
+        var r = await Post("/timer", cookie, json);
+        Assert.Equal(400, r.Code);
+        Assert.Equal("Unknown timer length.", r.Body);
+        Assert.Equal("text/plain; charset=utf-8", r.Header("Content-Type"));
+        Assert.Empty(timerSets);
+    }
+
+    [Fact]
+    public async Task AWholeNumberWrittenWithADecimalPointIsAccepted()
+    {
+        var cookie = await SignIn();
+        Assert.Equal(204, (await Post("/timer", cookie, "{\"minutes\":60.0}")).Code);
+        Assert.Equal(new[] { 60 }, timerSets);
+    }
+
+    [Fact]
+    public async Task TimerNeedsASessionTheHeaderAndIsClosedWhileOff()
+    {
+        var cookie = await SignIn();
+        var anonymous = await Post("/timer", "", "{\"minutes\":15}");
+        Assert.Equal(401, anonymous.Code);
+        Assert.Equal("Locked", anonymous.Body);
+        var noHeader = await Send("POST", "/timer", cookie: cookie, json: "{\"minutes\":15}");
+        Assert.Equal(403, noHeader.Code);
+        Assert.Equal("Forbidden", noHeader.Body);
+        // The header check comes before the body is looked at.
+        Assert.Equal(403, (await Send("POST", "/timer", cookie: cookie, json: "{\"minutes\":7}")).Code);
+        Assert.Equal(403, (await Send("POST", "/timer", cookie: cookie, lid: true, fetchSite: "cross-site", json: "{\"minutes\":15}")).Code);
+        on = false;
+        var off = await Post("/timer", cookie, "{\"minutes\":15}");
+        Assert.Equal(423, off.Code);
+        Assert.Equal(OffText, off.Body);
+        Assert.Empty(timerSets);
+    }
+
+    // The page posts a length, then asks /status: the answer must already show it.
+    [Fact]
+    public async Task TheTimerChosenOverHttpShowsInTheNextStatus()
+    {
+        var timer = new AutoOff(settings);
+        realTimer = timer;
+        var info = new StatusInfo(new FakeReadings());
+        statusAnswer = () => info.Build(true, timer);
+        timer.Start();
+        var cookie = await SignIn();
+
+        var before = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(0, before.GetProperty("timerMinutes").GetInt32());
+        Assert.False(before.TryGetProperty("timerRemaining", out _));
+
+        Assert.Equal(204, (await Post("/timer", cookie, "{\"minutes\":30}")).Code);
+        var after = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(30, after.GetProperty("timerMinutes").GetInt32());
+        var left = after.GetProperty("timerRemaining").GetDouble();
+        Assert.InRange(left, 1700, 1800);
+        StatusInfoTests.AssertEveryKeyWithItsKind(after);
+
+        Assert.Equal(204, (await Post("/timer", cookie, "{\"minutes\":0}")).Code);
+        var never = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(0, never.GetProperty("timerMinutes").GetInt32());
+        Assert.False(never.TryGetProperty("timerRemaining", out _));
+        Assert.Equal(0, settings.Get<int?>("timerMinutes"));
+    }
+
+    [Fact]
+    public async Task ARefusedTimerLeavesTheTimerAlone()
+    {
+        var timer = new AutoOff(settings);
+        timer.Set(60);
+        realTimer = timer;
+        var cookie = await SignIn();
+        Assert.Equal(400, (await Post("/timer", cookie, "{\"minutes\":61}")).Code);
+        Assert.Equal(60, timer.Minutes);
     }
 }
