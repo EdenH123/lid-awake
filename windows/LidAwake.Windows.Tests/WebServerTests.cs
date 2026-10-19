@@ -86,7 +86,7 @@ public class WebServerTests : IDisposable
     {
         var l = new TcpListener(IPAddress.Loopback, 0);
         l.Start();
-        var p = ((IPEndPoint)l.LocalEndPoint!).Port;
+        var p = ((IPEndPoint)l.LocalEndpoint).Port;
         l.Stop();
         return p;
     }
