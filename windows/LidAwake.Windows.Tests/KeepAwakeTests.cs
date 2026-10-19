@@ -28,25 +28,34 @@ public class KeepAwakeTests : IDisposable
         "    Current DC Power Setting Index: 0x00000002\n";
 
     // A powercfg that remembers a lid action, answers queries like the real one and records
-    // every call that is not a query.
+    // the commands that change something. Commands are matched by their exact first word.
     sealed class FakePowercfg
     {
         public int Ac, Dc;
         public bool HasLid = true;
-        public readonly List<string> Writes = new();
+        public readonly List<string> Writes = new();       // /setacvalueindex and /setdcvalueindex
+        public readonly List<string> Activations = new();  // /setactive
 
         public string Run(string args)
         {
-            if (args.StartsWith("/query"))
+            var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var command = parts.Length > 0 ? parts[0] : "";
+            if (command == "/query")
             {
                 if (!HasLid) return SchemeLine;
                 return RealLaptopOutput.Substring(0, RealLaptopOutput.IndexOf("    Current AC", StringComparison.Ordinal)) +
                     $"    Current AC Power Setting Index: 0x{Ac:x8}\n" +
                     $"    Current DC Power Setting Index: 0x{Dc:x8}\n";
             }
-            Writes.Add(args);
-            var last = int.Parse(args.Split(' ')[^1]);
-            if (args.StartsWith("/setacvalueindex")) Ac = last;
+            if ((command == "/setacvalueindex" || command == "/setdcvalueindex") && int.TryParse(parts[^1], out var value))
+            {
+                Writes.Add(args);
+                if (command == "/setacvalueindex") Ac = value; else Dc = value;
+            }
+            else if (command == "/setactive")
+            {
+                Activations.Add(args);
+            }
             return "";
         }
     }
@@ -141,6 +150,7 @@ public class KeepAwakeTests : IDisposable
         KeepAwake.Off(settings);
 
         Assert.Empty(fake.Writes);
+        Assert.Empty(fake.Activations);
         Assert.Equal((1, 2), (fake.Ac, fake.Dc));
     }
 
@@ -152,12 +162,14 @@ public class KeepAwakeTests : IDisposable
         KeepAwake.On(settings);
 
         Assert.Empty(fake.Writes);
+        Assert.Empty(fake.Activations);
         Assert.Null(settings.Get<int?>("savedLidAc"));
         Assert.Null(settings.Get<int?>("savedLidDc"));
 
         KeepAwake.Off(settings);
 
         Assert.Empty(fake.Writes);
+        Assert.Empty(fake.Activations);
     }
 
     [Fact]
