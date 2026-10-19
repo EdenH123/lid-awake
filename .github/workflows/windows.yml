@@ -1,0 +1,30 @@
+# Builds and tests the Windows version of Lid Awake on a Windows machine at GitHub.
+# Only for the Windows branch; turned off (gh workflow disable windows.yml) when not needed.
+name: Windows
+on:
+  push:
+    branches: [claude/windows-phase-2]
+    paths: ["windows/**", "web/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build
+        run: dotnet build windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release
+      - name: Test
+        if: hashFiles('windows/LidAwake.Windows.Tests/*.csproj') != ''
+        run: dotnet test windows/LidAwake.Windows.Tests/LidAwake.Windows.Tests.csproj -c Release --logger "console;verbosity=normal"
