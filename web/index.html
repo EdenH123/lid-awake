@@ -1417,6 +1417,62 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
        autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="go">
 <script>
   const $ = id => document.getElementById(id);
+  // ---------- Which phone, which computer ----------
+  // The phone is known at once from the browser; the computer from its status (remembered, so the
+  // next opening is right from the start). Words, keys and features follow both.
+  const PHONE = /Android/i.test(navigator.userAgent) ? "android"
+    : /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1) ? "ios"
+    : "other";
+  const PHONE_WORDS = {
+    ios: {
+      phone: "iPhone", unlock: "Face ID",
+      unlockPrivacy: "Skip the password next time. Your face never leaves this iPhone.",
+      hapticsHelp: "Only on this iPhone. If you don't feel them, turn on System Haptics in iPhone Settings → Sounds & Haptics.",
+      installHelp: "To use alerts, open Lid Awake from its Home Screen icon (in Safari: Share → Add to Home Screen).",
+      alertsBlocked: "Notifications are blocked. Allow them in iPhone Settings → Notifications → Lid Awake.",
+    },
+    android: {
+      phone: "phone", unlock: "fingerprint",
+      unlockPrivacy: "Skip the password next time. Your fingerprint never leaves this phone.",
+      hapticsHelp: "Only on this phone. If you don't feel them, turn on touch vibration in Settings → Sounds and vibration.",
+      installHelp: "To use alerts, add Lid Awake to your Home screen (in Chrome: ⋮ → Add to Home screen).",
+      alertsBlocked: "Notifications are blocked. Allow them in Chrome: ⋮ → Settings → Site settings → Notifications.",
+    },
+    other: {
+      phone: "phone", unlock: "passkey",
+      unlockPrivacy: "Skip the password next time. Your passkey never leaves this device.",
+      hapticsHelp: "Only on this phone.",
+      installHelp: "To use alerts, add Lid Awake to your Home screen.",
+      alertsBlocked: "Notifications are blocked. Allow them in your browser's settings.",
+    },
+  }[PHONE];
+  const COMPUTER_WORDS = {
+    mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option" },
+    windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt" },
+  };
+  let COMPUTER = "mac", FEATURES = null;  // FEATURES null = not known yet: show everything
+  try { COMPUTER = localStorage.getItem("computer") === "windows" ? "windows" : "mac"; } catch (e) {}
+  const word = key => key in PHONE_WORDS ? PHONE_WORDS[key] : COMPUTER_WORDS[COMPUTER][key];
+  const can = feature => !FEATURES || FEATURES.includes(feature);
+  // Fills every <span data-w="key"> and relabels the modifier keys. Safe to call again.
+  function applyDevice() {
+    document.documentElement.dataset.phone = PHONE;
+    document.documentElement.dataset.computer = COMPUTER;
+    document.querySelectorAll("[data-w]").forEach(el => { el.textContent = word(el.dataset.w); });
+    document.querySelectorAll('[data-mod="cmd"]').forEach(b => { b.textContent = word("cmdKey"); b.setAttribute("aria-label", word("cmdName")); });
+    document.querySelectorAll('[data-mod="alt"]').forEach(b => { b.textContent = word("altKey"); b.setAttribute("aria-label", word("altName")); });
+  }
+  // From each status: switch computer if it changed, and keep its feature list.
+  function learnDevice(status) {
+    const os = status.os === "windows" ? "windows" : "mac";
+    FEATURES = Array.isArray(status.features) ? status.features : null;
+    if (os !== COMPUTER) {
+      COMPUTER = os;
+      try { localStorage.setItem("computer", os); } catch (e) {}
+      applyDevice();
+    }
+  }
+  applyDevice();
   let data = null, fetchedAt = 0, lastOk = 0;
   const TAB_TITLES = { screen: "Screen", apps: "Apps", settings: "Settings" };
   // The Status page greets you by the time of day (the Mac's name stays underneath).
@@ -1970,6 +2026,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const rtt = performance.now() - sentAt;
       pingMs = pingMs == null ? rtt : pingMs * 0.7 + rtt * 0.3;
       data = await res.json();
+      learnDevice(data);
       fetchedAt = Date.now();
       lastOk = fetchedAt;
     } catch (e) {
@@ -3990,10 +4047,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const off = alertsOff();
     document.querySelectorAll("[data-alert]").forEach(b =>
       b.setAttribute("aria-checked", alertsReady && !off.includes(b.dataset.alert)));
-    const possible = pushPossible() && standalone();
+    const possible = pushPossible() && (PHONE !== "ios" || standalone());
     $("alertsSection").classList.toggle("unavailable", !possible);
-    const note = !possible ? "To use alerts, open Lid Awake from its Home Screen icon (in Safari: Share → Add to Home Screen)."
-      : Notification.permission === "denied" ? "Notifications are blocked. Allow them in iPhone Settings → Notifications → Lid Awake."
+    const note = !possible ? word("installHelp")
+      : Notification.permission === "denied" ? word("alertsBlocked")
       : "";
     $("alertsFoot").textContent = note;
     $("alertsFoot").hidden = !note;
