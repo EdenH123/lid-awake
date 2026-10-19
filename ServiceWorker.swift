@@ -3,4 +3,5 @@
 // opens (and says "Lid Awake is off") while the Mac is off or out of reach, instead of a blank
 // screen. Only the page at "/" is kept; nothing the page fetches is ever cached.
 // Served at /sw.js; the file is web/sw.js.
-let serviceWorkerJS: String = webFile("sw.js").flatMap { String(data: $0, encoding: .utf8) } ?? ""
+// nil when the file is missing: /sw.js then answers 404 rather than an empty script that would replace a working one.
+let serviceWorkerJS: String? = webFile("sw.js").flatMap { String(data: $0, encoding: .utf8) }

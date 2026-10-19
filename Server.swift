@@ -397,7 +397,8 @@ final class StatusServer: @unchecked Sendable {
             return reply(c, "200 OK", "image/png", png)
         case "/sw.js":
             // Shows the Mac's alerts on the phone (also while the page is closed).
-            return reply(c, "200 OK", "text/javascript; charset=utf-8", Data(serviceWorkerJS.utf8))
+            guard let js = serviceWorkerJS else { return text(c, "404 Not Found", "Not found") }
+            return reply(c, "200 OK", "text/javascript; charset=utf-8", Data(js.utf8))
         case "/manifest.webmanifest":
             return reply(c, "200 OK", "application/manifest+json", webFile("manifest.webmanifest") ?? Data("{}".utf8))
         default:
