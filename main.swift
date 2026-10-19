@@ -272,7 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         passwordItem.target = self
         passwordItem.action = #selector(setPhonePassword)
         menu.addItem(passwordItem)
-        let setupItem = NSMenuItem(title: "Set up iPhone…", action: #selector(showSetup), keyEquivalent: "")
+        let setupItem = NSMenuItem(title: "Set up phone…", action: #selector(showSetup), keyEquivalent: "")
         setupItem.target = self
         menu.addItem(setupItem)
         let devicesItem = NSMenuItem(title: "Signed-in devices", action: nil, keyEquivalent: "")
