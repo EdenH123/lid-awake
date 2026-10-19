@@ -14,6 +14,10 @@ static class Program
         var auth = new Auth(settings);
         var tailnet = new Tailnet(settings);
         var log = new AccessLog();
+        // Put back what a crash or a forced stop left behind, before anything else (and before
+        // any message could wait for a click): the lid action, and Serve if Lid Awake added it.
+        KeepAwake.Off(settings);
+        _ = tailnet.SetServed(false, WebServer.DefaultPort);
         // Learn this PC's Tailscale name in the background; the page is refused until it is known.
         Task.Run(tailnet.Refresh);
         // The server starts before the tray exists, so the tray knows whether it may serve the
@@ -27,13 +31,13 @@ static class Program
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body),
             log: log, setTimer: minutes => tray?.SetTimer(minutes));
+        string? startError = null;
         try { server.Start(); }
-        catch (Exception e)
-        {
-            MessageBox.Show($"Lid Awake could not open its phone page on 127.0.0.1:{server.Port}. Another program may be using that port.\n\n" + e.Message,
-                "Lid Awake");
-        }
+        catch (Exception e) { startError = e.Message; }
+        tailnet.NotPublished = said => tray?.NotPublished(said);
         tray = new TrayApp(settings, auth, new PhoneAccess(tailnet, server), log);
+        // Told at the tray (not in a window that waits for a click), once the tray icon exists.
+        if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
     }
 }
@@ -50,6 +54,10 @@ sealed class TrayApp : ApplicationContext
     readonly ToolStripMenuItem timerMenu = new("Turn off after");
     // Checked every couple of seconds on the UI thread: when the time is up, Lid Awake turns off.
     readonly System.Windows.Forms.Timer timerCheck = new() { Interval = 2000 };
+    // While on, Tailscale Serve is checked again every minute, as on the Mac (docs/API.md 9).
+    readonly System.Windows.Forms.Timer serveCheck = new() { Interval = 60_000 };
+    // "The phone page isn't published yet" is shown once each time Lid Awake is turned on.
+    bool warnedNotPublished;
 
     // Written on the UI thread, read by the web server's threads.
     volatile bool isOn;
@@ -76,6 +84,9 @@ sealed class TrayApp : ApplicationContext
         ShowTimerChoice();
         timerCheck.Tick += (_, _) => CheckTimer();
         timerCheck.Start();
+        // In the background: the UI thread never waits for Tailscale.
+        serveCheck.Tick += (_, _) => { if (isOn) phone.Recheck(); };
+        serveCheck.Start();
         var menu = new ContextMenuStrip();
         menu.Items.Add(toggle);
         menu.Items.Add(timerMenu);
@@ -94,16 +105,67 @@ sealed class TrayApp : ApplicationContext
             ExitThread();
         });
         icon = new NotifyIcon { Icon = LoadTrayIcon(), Text = "Lid Awake", ContextMenuStrip = menu, Visible = true };
-        // Put back a lid action left over from a crash.
-        KeepAwake.Off(settings);
+        // A lid action or Serve left over from a crash was put back in Main, before the tray.
         // Nothing is reachable from the phone until Lid Awake is turned on.
-        phone.Set(false);
         // The tray may only be changed on its own thread, and the web server runs on others.
         // WinForms installs its context once the first control exists; make sure it is there.
         if (SynchronizationContext.Current is null)
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         ui = SynchronizationContext.Current!;
+        // Signing out or shutting down while on. Subscribed here, after the context above, so the
+        // handler runs on this (the UI) thread. SystemEvents' handlers are static: removed again
+        // in ExitThreadCore.
+        try { Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding; }
+        catch (Exception) { }
+        // A new PC: say how to set the phone password (the page refuses every sign-in without one).
+        if (!auth.HasPassword)
+            OnUi(() => icon.ShowBalloonTip(10000, "Welcome to Lid Awake",
+                "Set a phone password: right-click the Lid Awake icon by the clock → Set phone password…", ToolTipIcon.Info));
     }
+
+    protected override void ExitThreadCore()
+    {
+        try { Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding; }
+        catch (Exception) { }
+        timerCheck.Stop();
+        serveCheck.Stop();
+        base.ExitThreadCore();
+    }
+
+    // Windows is signing out or shutting down: turn off now, so the lid action is put back and the
+    // page is not left on Tailscale, waiting at most a few seconds (SessionEnd).
+    void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs e)
+    {
+        if (!isOn) return;
+        isOn = false;
+        Countdown.Stop();
+        try
+        {
+            toggle.Checked = false;
+            icon.Text = "Lid Awake: off";
+        }
+        catch (Exception) { }
+        SessionEnd.TurnOff(settings, () => phone.Set(false), log);
+    }
+
+    // The phone page's port was taken when Lid Awake started (Main).
+    public void PortInUse(string error)
+    {
+        log.Write($"Phone page couldn't start on 127.0.0.1:{phone.Port}: {error}");
+        OnUi(() => icon.ShowBalloonTip(10000, "Phone page not available",
+            $"Lid Awake couldn't open its phone page: port {phone.Port} is in use by another program.", ToolTipIcon.Warning));
+    }
+
+    // Tailscale did not publish the page (Tailnet.NotPublished, from a background thread). What it
+    // printed (a link to allow Serve or HTTPS, usually) goes to the activity log, once per turn-on.
+    public void NotPublished(string said) => OnUi(() =>
+    {
+        if (!isOn || warnedNotPublished) return;
+        warnedNotPublished = true;
+        log.Write("Phone page not published by Tailscale: " + said);
+        icon.ShowBalloonTip(10000, "Phone page not published",
+            "The phone page isn't published yet. Open the activity log for the link from Tailscale.", ToolTipIcon.Warning);
+    });
 
     // Run something on the UI thread (the web server calls this from its own threads).
     public void OnUi(Action a)
@@ -167,9 +229,10 @@ sealed class TrayApp : ApplicationContext
     // Returns when Serve is changed, in the background; the tray does not wait for it.
     public Task SetAwake(bool on)
     {
-        if (on) KeepAwake.On(settings); else KeepAwake.Off(settings);
+        var lid = LidResult.Changed;
+        if (on) lid = KeepAwake.On(settings); else KeepAwake.Off(settings);
         // The countdown starts when it goes from off to on, and ends when it goes off.
-        if (on && !isOn) Countdown.Start();
+        if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; }
         else if (!on) Countdown.Stop();
         isOn = on;
         toggle.Checked = on;
@@ -178,6 +241,10 @@ sealed class TrayApp : ApplicationContext
         if (on && !phone.PageRunning)
             icon.ShowBalloonTip(5000, "Phone page not available",
                 $"Lid Awake is on, but the phone page couldn't start: port {phone.Port} is in use by another program.", ToolTipIcon.Warning);
+        // A desktop PC has no lid action (NoLidSetting): nothing to say.
+        if (on && lid == LidResult.Failed)
+            icon.ShowBalloonTip(10000, "Lid setting not changed",
+                "Couldn't change what closing the lid does. Keep the lid open, or see Lid Awake's help.", ToolTipIcon.Warning);
         return phone.Set(on);
     }
 

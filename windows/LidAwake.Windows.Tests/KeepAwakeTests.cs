@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using LidAwake;
 using Xunit;
 using Xunit.Abstractions;
@@ -303,6 +304,48 @@ public class KeepAwakeTests : IDisposable
 
         Assert.Equal(LidResult.Failed, KeepAwake.On(settings));
         Assert.True(KeepAwake.IsHolding);
+    }
+
+    // Signing out or shutting down while on (SessionEnd, called from the tray's SessionEnding).
+    [Fact]
+    public void SessionEndPutsTheLidBackRemovesServeAndLogs()
+    {
+        KeepAwake.On(settings);
+        settings.Set(Tailnet.ServedKey, true);
+        var commands = new List<string>();
+        var tailnet = new Tailnet(settings, args => { lock (commands) commands.Add(args); return ""; });
+        var logFolder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        folders.Add(logFolder);
+        var log = new AccessLog(logFolder);
+
+        SessionEnd.TurnOff(settings, () => tailnet.SetServed(false, 8787), log);
+
+        Assert.False(KeepAwake.IsHolding);
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        lock (commands) Assert.Equal(new[] { "serve --https=443 off" }, commands);
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.EndsWith("  " + SessionEnd.LogLine, Assert.Single(log.Recent(10)));
+    }
+
+    [Fact]
+    public void SessionEndWaitsForTailscaleOnlyAFewSeconds()
+    {
+        Assert.True(SessionEnd.MaxWait <= TimeSpan.FromSeconds(3));
+        KeepAwake.On(settings);
+        settings.Set(Tailnet.ServedKey, true);
+        var stuck = new ManualResetEventSlim(false);
+        var tailnet = new Tailnet(settings, _ => { stuck.Wait(TimeSpan.FromSeconds(30)); return ""; });
+        var watch = Stopwatch.StartNew();
+
+        SessionEnd.TurnOff(settings, () => tailnet.SetServed(false, 8787), null, TimeSpan.FromMilliseconds(300));
+
+        watch.Stop();
+        stuck.Set();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"took {watch.Elapsed}");
+        // The lid part does not wait for Tailscale.
+        Assert.False(KeepAwake.IsHolding);
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
     }
 
     [Fact]
