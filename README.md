@@ -100,8 +100,8 @@ Make sure **Tailscale is on** on your phone first (open the Tailscale app; the s
 
 **On an Android phone (Samsung or similar)**
 
-1. Point the **Camera** at the QR code on your Mac and tap the link (it opens in Chrome).
-2. Tap **⋮** → **Add to Home screen** (or **Install app**).
+1. Point the **Camera** at the QR code on your Mac and tap the link (it opens in your browser, such as Chrome or Samsung Internet).
+2. Open the browser menu (**⋮** in Chrome, **≡** in Samsung Internet) → **Add to Home screen** (or **Install app**).
 3. Open **Lid Awake** from your Home screen and type the phone password from Step 4.
 4. Optional: in the app, tap the gear ⚙︎ → turn on **Fingerprint** (to sign in faster) and **Alerts** (battery, Mac turned off, and more).
 
