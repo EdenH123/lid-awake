@@ -99,6 +99,41 @@ jobs:
           Assert (Test-Path -LiteralPath 'windows\app') 'windows\app is still there'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the install'
 
+          # The installed app itself starts and answers on 127.0.0.1:8787. It shows no window (only
+          # a tray icon), which is fine here. Every wait has a time limit, so a hang cannot use up
+          # the job; the app is stopped before anything is asserted.
+          $app = Start-Process -FilePath $exe -WorkingDirectory $dest -PassThru
+          [void]$app.Handle  # Windows PowerShell 5.1 returns no exit state unless the handle is read
+          $authOk = $false
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not $authOk -and (Get-Date) -lt $deadline -and -not $app.HasExited) {
+            try {
+              $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8787/auth' -UseBasicParsing -TimeoutSec 5
+              $j = $r.Content | ConvertFrom-Json
+              $authOk = ($j.loopback -eq $true -and $j.os -eq 'windows')
+            } catch { }
+            if (-not $authOk) { Start-Sleep -Milliseconds 500 }
+          }
+          $pageStatus = 0
+          $pageCsp = ''
+          if ($authOk) {
+            try {
+              $page = Invoke-WebRequest -Uri 'http://127.0.0.1:8787/' -UseBasicParsing -TimeoutSec 10
+              $pageStatus = [int]$page.StatusCode
+              $pageCsp = [string]$page.Headers['Content-Security-Policy']
+            } catch { Write-Host "GET / failed: $($_.Exception.Message)" }
+          }
+          $wasRunning = -not $app.HasExited
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          $exited = $app.WaitForExit(15000)
+          Assert $wasRunning 'the installed app kept running'
+          Assert $authOk 'the installed app answers GET /auth with loopback true and os windows'
+          Assert ($pageStatus -eq 200) "GET / answers 200 (got $pageStatus)"
+          Assert ($pageCsp.Length -gt 0) 'GET / has a Content-Security-Policy header'
+          Assert $exited 'the installed app stopped'
+          Assert (-not (Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)) 'no Lid Awake is left running'
+          Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by starting the app'
+
           # Updating: a running Lid Awake (a stand-in process with that name) is stopped.
           $fake = Join-Path $env:RUNNER_TEMP 'fake\LidAwake.exe'
           New-Item -ItemType Directory -Path (Split-Path $fake) -Force | Out-Null
