@@ -4070,7 +4070,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   function saveAlertsOff(off) { try { localStorage.setItem("alertsOff", JSON.stringify(off)); } catch (e) {} }
   document.querySelectorAll("[data-alert]").forEach(b => b.addEventListener("click", async () => {
-    if (!pushPossible() || !standalone()) return renderAlerts();
+    if (!pushPossible() || (PHONE === "ios" && !standalone())) return renderAlerts();
     tick();
     const kind = b.dataset.alert, wasOn = b.getAttribute("aria-checked") === "true";
     try {
