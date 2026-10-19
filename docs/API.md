@@ -723,7 +723,7 @@ A computer that cannot measure a field sends the **safe default** in the last co
 | `heatGuard` | boolean | "turn off when hot" switch (Mac default on) | `true` |
 | `batteryLimit` | integer, percent | battery level below which it turns off (Mac: `10`) | `10`; required (the page prints it) |
 | `maxBatteryTemp` | integer, degrees C | temperature at which it turns off (Mac: `40`) | `40`; required (the page uses it) |
-| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value | `"nominal"` |
+| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value. Windows measures no heat yet and sends `"unknown"`, so the page shows a dash rather than a "Normal" nothing measured | `"nominal"` |
 
 ### 6.2 Remote access state
 
@@ -1044,6 +1044,7 @@ tailscale serve --https=443 off
 **Funnel is never allowed.** If `serve status --json` shows any `AllowFunnel` entry set to true, the agent runs `tailscale funnel --https=443 off`, logs it and notifies the owner. (Requests carrying `Tailscale-Funnel-Request` are refused in any case, 2.2 step 1.)
 
 On the Mac the Tailscale binary is `/Applications/Tailscale.app/Contents/MacOS/Tailscale` run with the environment variable `TAILSCALE_BE_CLI=1`.
+
 
 For `link` in `/status` (6.6) the agent runs `tailscale status --json` at most every 10 seconds, in the background.
 

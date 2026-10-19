@@ -110,7 +110,9 @@ public sealed class StatusInfo
             ["heatGuard"] = false,
             ["batteryLimit"] = 10,
             ["maxBatteryTemp"] = 40,
-            ["thermalState"] = "nominal",
+            // "unknown", not the documented "nominal": Windows measures no heat yet, and the page
+            // shows a dash for a value it doesn't know, instead of "Normal".
+            ["thermalState"] = "unknown",
             // 6.2
             ["remoteScreen"] = false,
             ["remoteControl"] = false,

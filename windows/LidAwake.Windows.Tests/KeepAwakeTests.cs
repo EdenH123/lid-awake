@@ -35,6 +35,7 @@ public class KeepAwakeTests : IDisposable
         public int Ac, Dc;
         public bool HasLid = true;
         public bool FailWrites;    // value-set commands fail, like a powercfg that exits non-zero
+        public bool FailQueries;   // /query fails
         public bool IgnoreWrites;  // value-set commands succeed but change nothing
         public readonly List<string> Writes = new();       // /setacvalueindex and /setdcvalueindex
         public readonly List<string> Activations = new();  // /setactive
@@ -45,6 +46,7 @@ public class KeepAwakeTests : IDisposable
             var command = parts.Length > 0 ? parts[0] : "";
             if (command == "/query")
             {
+                if (FailQueries) throw new InvalidOperationException("powercfg failed (fake)");
                 if (!HasLid) return SchemeLine;
                 return RealLaptopOutput.Substring(0, RealLaptopOutput.IndexOf("    Current AC", StringComparison.Ordinal)) +
                     $"    Current AC Power Setting Index: 0x{Ac:x8}\n" +
@@ -67,6 +69,7 @@ public class KeepAwakeTests : IDisposable
 
     readonly ITestOutputHelper output;
     readonly Func<string, string> originalPowercfg = KeepAwake.Powercfg;
+    readonly Func<bool?> originalHasLid = KeepAwake.HasLid;
     readonly List<string> folders = new();
     readonly Settings settings;
     readonly FakePowercfg fake = new() { Ac = 1, Dc = 2 };
@@ -91,6 +94,7 @@ public class KeepAwakeTests : IDisposable
         finally
         {
             KeepAwake.Powercfg = originalPowercfg;
+            KeepAwake.HasLid = originalHasLid;
         }
         foreach (var folder in folders)
         {
@@ -123,7 +127,7 @@ public class KeepAwakeTests : IDisposable
     [Fact]
     public void OnSetsLidToDoNothingThenOffRestores()
     {
-        KeepAwake.On(settings);
+        Assert.Equal(LidResult.Changed, KeepAwake.On(settings));
 
         Assert.True(KeepAwake.IsHolding);
         Assert.Equal((0, 0), (fake.Ac, fake.Dc));
@@ -167,7 +171,7 @@ public class KeepAwakeTests : IDisposable
     {
         fake.HasLid = false;
 
-        KeepAwake.On(settings);
+        Assert.Equal(LidResult.NoLidSetting, KeepAwake.On(settings));
 
         Assert.True(KeepAwake.IsHolding);
         Assert.Empty(fake.Writes);
@@ -208,8 +212,9 @@ public class KeepAwakeTests : IDisposable
     public void OnWhenWritesFailDoesNotThrowAndStillHolds()
     {
         fake.FailWrites = true;
+        KeepAwake.HasLid = () => true;
 
-        KeepAwake.On(settings);
+        Assert.Equal(LidResult.Failed, KeepAwake.On(settings));
 
         Assert.True(KeepAwake.IsHolding);
         // The saved values stay, so a later Off can still restore.
@@ -256,6 +261,48 @@ public class KeepAwakeTests : IDisposable
 
         Assert.Equal((1, 2), (fake.Ac, fake.Dc));
         Assert.Null(settings.Get<int?>("savedLidAc"));
+    }
+
+    [Fact]
+    public void OnFailsWhenPowercfgCannotReadTheLid()
+    {
+        fake.FailQueries = true;
+        KeepAwake.HasLid = () => true;
+
+        Assert.Equal(LidResult.Failed, KeepAwake.On(settings));
+        Assert.True(KeepAwake.IsHolding);
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+    }
+
+    [Fact]
+    public void OnFailsWhenTheLidActionDoesNotChange()
+    {
+        // powercfg says yes, but something (a maker's power app) keeps the old lid action.
+        fake.IgnoreWrites = true;
+        KeepAwake.HasLid = () => true;
+
+        Assert.Equal(LidResult.Failed, KeepAwake.On(settings));
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+    }
+
+    // A desktop PC: nothing to change, nothing to warn about.
+    [Fact]
+    public void AFailureOnAPcWithoutALidIsNoLidSetting()
+    {
+        fake.FailQueries = true;
+        KeepAwake.HasLid = () => false;
+
+        Assert.Equal(LidResult.NoLidSetting, KeepAwake.On(settings));
+    }
+
+    [Fact]
+    public void OnNeverThrowsEvenWhenTheLidCheckThrows()
+    {
+        fake.FailWrites = true;
+        KeepAwake.HasLid = () => throw new InvalidOperationException("boom");
+
+        Assert.Equal(LidResult.Failed, KeepAwake.On(settings));
+        Assert.True(KeepAwake.IsHolding);
     }
 
     [Fact]
