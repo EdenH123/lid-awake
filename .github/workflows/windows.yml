@@ -46,6 +46,15 @@ jobs:
             & powershell -NoProfile -ExecutionPolicy Bypass -File $script @flags | Out-Host
             if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: $script exited with $LASTEXITCODE"; exit 1 }
           }
+          # The double-click launchers at the repo root, run the way a person's double-click does.
+          # (From PowerShell, not "cmd /c": cmd drops the quotes around a name with parentheses.)
+          function Invoke-Launcher([string]$name, [string[]]$flags) {
+            Write-Host "---- $name $flags"
+            & (Join-Path (Get-Location).Path $name) @flags | Out-Host
+            if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: $name exited with $LASTEXITCODE"; exit 1 }
+          }
+          $installCmd = 'Install Lid Awake (Windows).cmd'
+          $uninstallCmd = 'Uninstall Lid Awake (Windows).cmd'
           $dest = Join-Path $env:LOCALAPPDATA 'LidAwake'
           $exe = Join-Path $dest 'LidAwake.exe'
           $settingsDir = Join-Path $env:APPDATA 'LidAwake'
@@ -65,7 +74,25 @@ jobs:
           [IO.File]::WriteAllText($settingsFile, $settingsText)
 
           Assert (Test-Path -LiteralPath 'windows\app\LidAwake.exe') 'the published app is in windows\app'
-          Invoke-Script 'windows\install.ps1' @('-SkipTailscale', '-NoStart', '-NoPause')
+
+          # A launcher opened from a folder that is not the whole ZIP must explain and fail, not
+          # flash and close. It reaches "pause", so give it an Enter key and a time limit.
+          $guard = Join-Path $env:RUNNER_TEMP 'guard'
+          New-Item -ItemType Directory -Path $guard -Force | Out-Null
+          Copy-Item $installCmd $guard
+          $enter = Join-Path $env:RUNNER_TEMP 'enter.txt'
+          $guardOut = Join-Path $env:RUNNER_TEMP 'guard-out.txt'
+          [IO.File]::WriteAllText($enter, "`r`n")
+          $p = Start-Process -FilePath (Join-Path $guard $installCmd) -RedirectStandardInput $enter -RedirectStandardOutput $guardOut -PassThru -WindowStyle Hidden
+          [void]$p.Handle  # Windows PowerShell 5.1 returns no ExitCode unless the handle is read
+          $finished = $p.WaitForExit(60000)
+          if (-not $finished) { $p.Kill() }
+          Assert $finished 'the launcher in an empty folder did not hang'
+          Assert ($p.ExitCode -ne 0) 'the launcher in an empty folder failed'
+          Assert ([IO.File]::ReadAllText($guardOut) -match 'unpack the whole ZIP') 'the launcher in an empty folder says to unpack the ZIP'
+          Assert (-not (Test-Path -LiteralPath $exe)) 'the guarded launcher installed nothing'
+
+          Invoke-Launcher $installCmd @('-SkipTailscale', '-NoStart', '-NoPause')
           Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is installed in LOCALAPPDATA'
           Assert (Test-Path -LiteralPath (Join-Path $dest 'web')) 'the phone page files are installed'
           Assert ((Get-RunValue) -eq ('"' + $exe + '"')) 'the Run value points to the installed exe'
@@ -86,7 +113,7 @@ jobs:
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the update'
 
           # Uninstall, keeping settings.
-          Invoke-Script 'windows\uninstall.ps1' @('-NoPause', '-KeepSettings')
+          Invoke-Launcher $uninstallCmd @('-NoPause', '-KeepSettings')
           Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone'
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings kept by -KeepSettings'
@@ -130,6 +157,20 @@ jobs:
           Copy-Item 'windows\app' 'stage\windows\app' -Recurse
           Copy-Item 'windows\install.ps1', 'windows\uninstall.ps1' 'stage\windows'
           Copy-Item 'Install Lid Awake (Windows).cmd', 'Uninstall Lid Awake (Windows).cmd' 'stage'
+          # Plain ASCII, one line per row (Set-Content writes CRLF on Windows), so Notepad shows it right.
+          @(
+            'LID AWAKE FOR WINDOWS - START HERE',
+            '',
+            '1) Unpack the whole ZIP (right-click it, Extract All).',
+            '2) Double-click "Install Lid Awake (Windows)".',
+            '3) If Windows shows "Windows protected your PC", click More info, then Run anyway.',
+            '   If it asks "Do you want to run this file?", click Run.',
+            '4) When it finishes, right-click the Lid Awake icon by the clock, choose',
+            '   "Set phone password...", and then turn it on.',
+            '',
+            'To remove it later, double-click "Uninstall Lid Awake (Windows)".'
+          ) | Set-Content -Path 'stage\README-FIRST.txt' -Encoding ASCII
+          if (-not (Test-Path -LiteralPath 'stage\README-FIRST.txt')) { Write-Host 'README-FIRST.txt is missing from the ZIP'; exit 1 }
           if (-not (Test-Path -LiteralPath 'stage\windows\app\LidAwake.exe')) { Write-Host 'LidAwake.exe is missing from the ZIP'; exit 1 }
           exit 0
       - uses: actions/upload-artifact@v4

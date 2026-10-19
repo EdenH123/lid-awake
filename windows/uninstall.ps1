@@ -81,28 +81,42 @@ try {
 Show-Step '3/5  Putting your lid setting back'
 try {
     $restored = $false
+    $skipped = $false
     if (Test-Path -LiteralPath $settingsFile) {
         $raw = [IO.File]::ReadAllText($settingsFile)
         $s = $raw | ConvertFrom-Json
         if ($null -ne $s -and $null -ne $s.savedLidAc -and $null -ne $s.savedLidDc) {
-            $ac = [int]$s.savedLidAc
-            $dc = [int]$s.savedLidDc
-            [void](Invoke-Quietly { (& powercfg /setacvalueindex SCHEME_CURRENT $subButtons $lidAction $ac 2>&1) | Out-String })
-            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the plugged-in lid action.' }
-            [void](Invoke-Quietly { (& powercfg /setdcvalueindex SCHEME_CURRENT $subButtons $lidAction $dc 2>&1) | Out-String })
-            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the on-battery lid action.' }
-            [void](Invoke-Quietly { (& powercfg /setactive SCHEME_CURRENT 2>&1) | Out-String })
-            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not apply the power plan.' }
-            # Forget the saved values, so installing again later never "restores" an old one.
-            $cleared = [regex]::Replace($raw, '("savedLid(?:Ac|Dc)"\s*:\s*)-?\d+', '${1}null')
-            $tmp = $settingsFile + '.tmp'
-            [IO.File]::WriteAllText($tmp, $cleared)
-            Move-Item -LiteralPath $tmp -Destination $settingsFile -Force
-            $restored = $true
+            $savedAc = $s.savedLidAc
+            $savedDc = $s.savedLidDc
+            # The lid action is 0 (nothing), 1 (sleep), 2 (hibernate) or 3 (shut down). Anything
+            # else was not written by Lid Awake: leave it alone.
+            $valid = $true
+            foreach ($v in @($savedAc, $savedDc)) {
+                if (-not (($v -is [int] -or $v -is [long]) -and $v -ge 0 -and $v -le 3)) { $valid = $false }
+            }
+            if (-not $valid) {
+                $skipped = $true
+                Show-Problem 'The saved lid setting looks wrong; set the lid action by hand in Control Panel -> Power Options -> Choose what closing the lid does.'
+            } else {
+                $ac = [int]$savedAc
+                $dc = [int]$savedDc
+                [void](Invoke-Quietly { (& powercfg /setacvalueindex SCHEME_CURRENT $subButtons $lidAction $ac 2>&1) | Out-String })
+                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the plugged-in lid action.' }
+                [void](Invoke-Quietly { (& powercfg /setdcvalueindex SCHEME_CURRENT $subButtons $lidAction $dc 2>&1) | Out-String })
+                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the on-battery lid action.' }
+                [void](Invoke-Quietly { (& powercfg /setactive SCHEME_CURRENT 2>&1) | Out-String })
+                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not apply the power plan.' }
+                # Forget the saved values, so installing again later never "restores" an old one.
+                $cleared = [regex]::Replace($raw, '("savedLid(?:Ac|Dc)"\s*:\s*)-?\d+', '${1}null')
+                $tmp = $settingsFile + '.tmp'
+                [IO.File]::WriteAllText($tmp, $cleared)
+                Move-Item -LiteralPath $tmp -Destination $settingsFile -Force
+                $restored = $true
+            }
         }
     }
     if ($restored) { Show-Ok 'Lid setting back to what it was before Lid Awake' }
-    else { Show-Ok 'Nothing to put back (Lid Awake was off)' }
+    elseif (-not $skipped) { Show-Ok 'Nothing to put back (Lid Awake was off)' }
 } catch {
     Show-Problem ('Could not put the lid setting back: ' + $_.Exception.Message + ' Open Control Panel, Power Options, "Choose what closing the lid does" and check it.')
 }

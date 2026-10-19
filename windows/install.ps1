@@ -23,6 +23,7 @@ $dest = Join-Path $env:LOCALAPPDATA 'LidAwake'
 $exe = Join-Path $dest 'LidAwake.exe'
 $tsExe = 'C:\Program Files\Tailscale\tailscale.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$tempDir = $null
 
 function Show-Step([string]$text) { Write-Host ''; Write-Host $text }
 function Show-Ok([string]$text) { Write-Host "  [OK] $text" -ForegroundColor Green }
@@ -32,6 +33,10 @@ function Wait-ForEnter {
 }
 function Stop-Here([string]$text) {
     Write-Host "  [X] $text" -ForegroundColor Red
+    # Exiting skips the cleanup further down, so remove a half-built temp folder here too.
+    if ($tempDir -and (Test-Path -LiteralPath $tempDir)) {
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Wait-ForEnter
     exit 1
 }
@@ -80,7 +85,6 @@ if ($SkipTailscale) {
 # ---- 2/5 The app files ------------------------------------------------------------------
 Show-Step '2/5  Getting the app ready'
 $appDir = $null
-$tempDir = $null
 try {
     $prebuilt = Join-Path $root 'app'
     if (Test-Path -LiteralPath (Join-Path $prebuilt 'LidAwake.exe')) {
