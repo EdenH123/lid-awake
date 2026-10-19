@@ -212,7 +212,21 @@ Dependencies on the Mac side:
 
 A route for a feature the computer does not implement should answer the default `404` `Not found`.
 
-**Today the page only stores the list.** It defines `can(feature)` but does not call it yet, so it does not hide anything for a missing feature. Treat hiding as planned work in the page, not as current behaviour.
+**The page hides what is missing.** `can(feature)` is true while no status has arrived yet (so nothing changes before the first answer) and afterwards only for listed features. A missing feature hides its part of the page and the page never calls its routes:
+
+| Missing | The page hides |
+|---|---|
+| `screen` | the Screen page and its tab (also stops the live socket) |
+| `apps` | the Apps page and its tab, app icons |
+| `push` | the Alerts section in Settings |
+| `passkeys` | the Face ID / fingerprint rows, offer and sign-in button |
+| `camera` | the camera notch on the Screen page |
+| `history` | the graphs: the battery, temperature and processor readings stay but no longer open |
+| `memory` | the memory window: the memory reading stays but no longer opens |
+| `control` | clicking, typing, and the lock / screen-off buttons send nothing |
+| `limits` | the Safety limits section (the page never posts `/limits`) |
+
+With only the Status page left, the tab bar goes too.
 
 `os` is `"mac"` or `"windows"`. The page treats any other value as `"mac"`. It uses it for wording (Mac or PC) and for the names of the two modifier keys (section 8).
 
@@ -783,7 +797,7 @@ These come from `SystemInfo.snapshot()`. Two objects, `mac` and `net` (the key i
 | `wifi` | string | Wi-Fi network name (the Mac needs Location permission to read it) | omit |
 | `rssi` | integer, dBm | Wi-Fi signal. `0` is never sent | omit |
 | `iface` | string | the network interface in use (for example `en0`) | omit |
-| `wired` | boolean | the interface in use is not Wi-Fi. The page shows Ethernet when `true`, otherwise Wi-Fi (and "Not connected" with no `rssi`) | omit (set `true` on a desktop with no Wi-Fi) |
+| `wired` | boolean | the interface in use is not Wi-Fi. The page shows Ethernet when `true`, otherwise Wi-Fi (and "Not connected" with no `rssi`; when `os` is `"windows"` and `wired` is `false` with no `rssi`, it reads "Connected" without signal bars) | omit (set `true` on a desktop with no Wi-Fi) |
 | `down` | number, bytes per second | received, since the previous status request | omit |
 | `up` | number, bytes per second | sent, since the previous status request | omit |
 
@@ -1038,7 +1052,6 @@ For `link` in `/status` (6.6) the agent runs `tailscale status --json` at most e
 
 Short list of things a Windows implementer should know that this document cannot settle from the Mac code:
 
-- **Features are not hidden yet.** The page stores `features` but does not hide anything (section 4).
 - **Camera and passkeys depend on a page-side passkey.** The page offers passkeys only when it is on `https` and the browser supports them. An agent without `passkeys` should also leave out `camera` (the camera needs a passkey).
 - **Error sentences mention the Mac.** The page shows them as written. A Windows agent should reword them, for example `Lid-awake can only be turned on from this PC.`
 - **Wording of passkey errors** names Face ID. A neutral wording is fine; the page shows the sentence as is.

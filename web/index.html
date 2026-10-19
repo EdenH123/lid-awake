@@ -243,6 +243,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .scale i { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
     background: #fff; box-shadow: 0 0 0 2px var(--card), 0 1px 3px rgba(0,0,0,.3); transition: left .5s ease; }
   /* Tapping Battery or Temperature opens the last hours as a graph (a sheet, like a Weather detail). */
+  /* A tile or row the computer can't open (no history, no memory window) stays as a plain reading. */
+  .no-tap { pointer-events: none; }
+  .no-tap .tile-chev, .no-tap .row-chev, .no-tap .tick-pad { display: none; }
   .tile.tappable { position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .2s ease, opacity .2s ease; }
   .tile.tappable:active { transform: scale(.97); opacity: .85; }
   .tile-chev { width: 7px !important; height: 12px !important; margin-left: auto; stroke-width: 2.2 !important; color: var(--faint); }
@@ -1189,13 +1192,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <div class="row"><span class="set-icon gray"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><button type="button" class="row-link start danger" id="lockNowBtn">Lock this page now</button></div>
       </div>
       <div class="section-foot" id="faceIdError" hidden></div>
-      <div class="section-foot">You stay signed in on this <span data-w="phone">iPhone</span> for 7 days. Adding <span data-w="unlock">Face ID</span> asks for your password. Change the password from the Lid Awake menu on your Mac.</div>
+      <div class="section-foot">You stay signed in on this <span data-w="phone">iPhone</span> for 7 days.<span data-feature="passkeys"> Adding <span data-w="unlock">Face ID</span> asks for your password.</span> Change the password from the Lid Awake menu on your Mac.</div>
     </div>
 
     <div class="section" id="devicesSection" hidden>
       <div class="section-head">Signed-in devices</div>
       <div class="list" id="devicesList"></div>
-      <div class="section-foot">Sign out anything you don't recognize. Your <span data-w="phone">iPhone</span> gets an alert whenever someone signs in with the password or adds <span data-w="unlock">Face ID</span>.</div>
+      <div class="section-foot">Sign out anything you don't recognize. Your <span data-w="phone">iPhone</span> gets an alert whenever someone signs in with the password<span data-feature="passkeys"> or adds <span data-w="unlock">Face ID</span></span>.</div>
     </div>
 
     <div class="section" id="activitySection" hidden>
@@ -1204,7 +1207,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="section-foot">The full log is on your Mac: Lid Awake menu → Signed-in devices → Show activity log.</div>
     </div>
 
-    <div class="section">
+    <div class="section" data-feature="limits">
       <div class="section-head">Safety limits</div>
       <section class="alerts-card limits-card">
         <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Low battery<small id="batteryLimitText">Turns off below 10% on battery</small></span><button type="button" class="mini-switch" data-limit="battery" role="switch" aria-label="Turn off at low battery"></button></div>
@@ -1363,7 +1366,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   </div>
 </div>
 <div class="sheet-shade" id="histShade" hidden></div>
-<section class="hist-sheet" id="histSheet" role="dialog" aria-label="History" aria-hidden="true">
+<section class="hist-sheet" id="histSheet" data-feature="history" role="dialog" aria-label="History" aria-hidden="true">
   <div class="sheet-head" id="histHead"><span id="histTitle"></span><button type="button" id="histDone">Done</button></div>
   <div class="hist-body" id="histBody">
     <div class="segmented" id="histRange" role="radiogroup" aria-label="Time range">
@@ -1387,7 +1390,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section-foot" id="histFoot"></div>
   </div>
 </section>
-<section class="hist-sheet" id="memSheet" role="dialog" aria-label="Memory" aria-hidden="true">
+<section class="hist-sheet" id="memSheet" data-feature="memory" role="dialog" aria-label="Memory" aria-hidden="true">
   <div class="sheet-head" id="memHead"><span>Memory</span><button type="button" id="memDone">Done</button></div>
   <div class="hist-body">
     <div class="card mem-graph-card">
@@ -1478,7 +1481,33 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       try { localStorage.setItem("computer", os); } catch (e) {}
       applyDevice();
     }
+    applyFeatures();
   }
+  // Parts of the page this computer can't do (yet) are hidden, and never call their requests (each
+  // request's function also checks can() first). Safe to call again on every status.
+  function applyFeatures() {
+    const tabs = [...document.querySelectorAll(".tabs [data-tab]")];
+    tabs.forEach(b => { b.hidden = b.dataset.tab !== "status" && !can(b.dataset.tab); });
+    document.querySelector(".tabbar").hidden = tabs.filter(b => !b.hidden).length < 2;  // one page needs no bar
+    const shownTabs = tabs.filter(b => !b.hidden).map(b => b.dataset.tab).join();
+    const tabsChanged = shownTabs !== lastTabs;
+    lastTabs = shownTabs;
+    $("alertsSection").hidden = !can("push");
+    $("camNotch").hidden = !can("camera");
+    renderFaceIDRow();
+    if (!can("passkeys")) $("faceIdOffer").hidden = true;
+    document.querySelectorAll("[data-feature]").forEach(el => { el.hidden = !can(el.dataset.feature); });
+    // Readings stay; only the tap that opens a window or graph goes.
+    for (const [id, feature] of [["batteryTile", "history"], ["tempTile", "history"], ["cpuRow", "history"], ["memRow", "memory"]]) {
+      const el = $(id), on = can(feature);
+      el.classList.toggle("no-tap", !on);
+      if (on) { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); }
+      else { el.removeAttribute("role"); el.removeAttribute("tabindex"); }
+    }
+    if (currentTab !== "status" && currentTab !== "settings" && !can(currentTab)) showTab("status");
+    else if (tabsChanged) movePill(false);  // the pill's place moves when a tab goes
+  }
+  let lastTabs = "status,screen,apps";
   applyDevice();
   let data = null, fetchedAt = 0, lastOk = 0;
   const TAB_TITLES = { screen: "Screen", apps: "Apps", settings: "Settings" };
@@ -1661,12 +1690,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
     // Signal: 4 bars ≥ −55 dBm, 3 ≥ −65, 2 ≥ −75, otherwise 1.
     const rssi = net.rssi;
+    // A PC that is online but doesn't report Wi-Fi signal (no rssi) is connected, just without bars.
+    const noSignal = COMPUTER === "windows" && net.wired === false && rssi == null;
     const bars = net.wired ? 4 : rssi == null ? 0 : rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
     [...$("wifiBars").children].forEach((r, i) => r.classList.toggle("on", i < bars));
     $("netKind").textContent = net.wired ? "Ethernet" : "Wi-Fi";
-    $("wifiName").textContent = net.wired ? "Connected" : rssi == null ? "Not connected"
+    $("wifiName").textContent = net.wired || noSignal ? "Connected" : rssi == null ? "Not connected"
       : net.wifi || ["", "Weak", "Fair", "Good", "Excellent"][bars] + " signal";
-    $("wifiBars").style.display = net.wired ? "none" : "";
+    $("wifiBars").style.display = net.wired || noSignal ? "none" : "";
     $("netDown").textContent = fmtRate(net.down);
     $("netUp").textContent = fmtRate(net.up);
     $("netPing").textContent = pingMs == null ? "—" : Math.round(pingMs) + " ms";
@@ -1739,7 +1770,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("liveText").textContent = "Locked";
     if (auth.hasPassword) {
       $("gateTitle").textContent = "Locked";
-      $("faceIdBtn").hidden = !(auth.faceID && faceIDPossible());
+      $("faceIdBtn").hidden = !(auth.faceID && faceIDPossible() && can("passkeys"));
       $("gateText").textContent = $("faceIdBtn").hidden ? "Enter your Lid Awake password." : `Use ${word("unlock")}, or enter your Lid Awake password.`;
       $("loginForm").hidden = false;
     } else {
@@ -1789,6 +1820,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function setFaceIDState(v) { try { localStorage.setItem("faceid", v); } catch (e) {} }
 
   async function faceIDLogin() {
+    if (!can("passkeys")) return;
     $("loginError").textContent = "";
     try {
       const o = await (await fetch("passkey/login-options", { cache: "no-store" })).json();
@@ -1824,6 +1856,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
 
   async function faceIDSetup() {
+    if (!can("passkeys")) return;
     const pw = recentPassword || $("faceIdPassword").value;
     faceIDError("");
     if (!pw) {
@@ -1967,12 +2000,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // After a password sign-in, offer it once (and keep a "Set up" row in settings if declined).
   function offerFaceID() {
     renderFaceIDRow();
-    if (!faceIDPossible() || faceIDState() === "on") return;
+    if (!can("passkeys") || !faceIDPossible() || faceIDState() === "on") return;
     if (faceIDState() !== "declined") $("faceIdOffer").hidden = false;
   }
   function renderFaceIDRow() {
     const on = faceIDState() === "on";
-    $("faceIdRow").hidden = !faceIDPossible();
+    $("faceIdRow").hidden = !faceIDPossible() || !can("passkeys");
     $("faceIdState").hidden = !on;
     $("faceIdRowBtn").hidden = on;
   }
@@ -2066,6 +2099,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function showTab(name, swiped) {
     if (settleSwipe) settleSwipe();  // a tap on the tab bar while a swipe is still settling
     else if (swipe && swipe.live) { clearSwipePeer(); swipe = null; document.body.classList.remove("swiping"); }
+    if ((name === "screen" || name === "apps") && !can(name)) name = "status";  // a page this computer lacks
     const changed = currentTab !== name;
     currentTab = name;
     tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (name === "settings" ? "status" : name)));
@@ -2105,11 +2139,11 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // sliding in beside it, and the tab-bar pill follows too. Up and down stays page scrolling.
   // What already uses the finger keeps it: sliders, the dock, the tool row, and on the Screen tab
   // the picture, trackpad and tools (there, swipe from the phone's edge or the title instead).
-  const TAB_ORDER = ["status", "screen", "apps"];
+  const tabOrder = () => ["status", "screen", "apps"].filter(t => t === "status" || can(t));
   const SWIPE_EASE = "cubic-bezier(.25,1,.5,1)";
   let swipe = null, settleSwipe = null;
   function swipeAllowed(e) {
-    if (!unlocked || $("app").hidden || !TAB_ORDER.includes(currentTab)) return false;  // Settings has its Back button
+    if (!unlocked || $("app").hidden || !tabOrder().includes(currentTab)) return false;  // Settings has its Back button
     const body = document.body.classList;
     if (body.contains("landscape-full") || body.contains("apps-full") || editingApps || drag) return false;
     if (document.querySelector(".key-sheet.open, .hist-sheet.open, .dock-shade, .app-zoom")) return false;
@@ -2133,7 +2167,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     s.dir = dir;
     const titles = document.querySelector(".titles"), cur = $("tab-" + currentTab);
     s.movers = [[titles, 0], ...[...cur.children].map(el => [el, 0])];
-    s.peer = TAB_ORDER[TAB_ORDER.indexOf(currentTab) + dir];
+    s.peer = tabOrder()[tabOrder().indexOf(currentTab) + dir];
     if (!s.peer) return;  // nothing further this way: the page just stretches
     const sc = $("scroller"), page = $("tab-" + s.peer);
     const tallNow = sc.scrollHeight, curHeight = cur.offsetHeight;
@@ -2265,7 +2299,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   {
     const bar = document.querySelector(".tabbar");
     let slide = null;
-    const nearest = x => [...tabButtons].reduce((a, b) =>
+    const shown = () => [...tabButtons].filter(b => !b.hidden);
+    const nearest = x => shown().reduce((a, b) =>
       Math.abs(b.offsetLeft - x) < Math.abs(a.offsetLeft - x) ? b : a);
     bar.addEventListener("pointerdown", e => {
       if (!e.isPrimary || e.button > 0) return;
@@ -2277,7 +2312,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const dx = e.clientX - slide.x0;
       if (!slide.live && Math.abs(dx) < 8) return;
       if (!slide.live) { slide.live = true; bar.classList.add("dragging", "no-anim"); }
-      const first = tabButtons[0].offsetLeft, last = tabButtons[tabButtons.length - 1].offsetLeft;
+      const first = shown()[0].offsetLeft, last = shown()[shown().length - 1].offsetLeft;
       // Past either end the pill only gives a little, more slowly the further the finger goes.
       const want = slide.from + dx, past = want < first ? want - first : want > last ? want - last : 0;
       const x = slide.x = Math.max(first, Math.min(last, want)) + Math.sign(past) * 8 * (1 - 1 / (1 + Math.abs(past) / 40));
@@ -2511,7 +2546,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false, why: videoProblem }));
   }
 
-  function watching() { return unlocked && currentTab === "screen" && !document.hidden && !streamPaused && !camOn; }
+  function watching() { return can("screen") && unlocked && currentTab === "screen" && !document.hidden && !streamPaused && !camOn; }
 
   // ----- Pause when nobody is using it -----
   // The page keeps the iPhone awake, so an untouched Screen tab would stream forever. After 3
@@ -2546,7 +2581,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   // Opens the socket; after 3 failed tries falls back to long-polling and retries the socket every 30 s.
   function startFrames() {
-    if (!watching()) { stopLive(); return; }
+    if (!can("screen") || !watching()) { stopLive(); return; }
     if (ws || framesRunning) return;
     if (wsFailures >= 3 && Date.now() < wsRetryAt) { startPolling(); return; }
     let opened = false;
@@ -2585,7 +2620,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   // Fallback: the Mac holds each request until the screen changes (up to 2 s).
   async function startPolling() {
-    if (framesRunning) return;
+    if (!can("screen") || framesRunning) return;
     framesRunning = true;
     while (watching() && !ws) {
       if (Date.now() >= wsRetryAt) { framesRunning = false; startFrames(); return; }
@@ -2649,7 +2684,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
 
   async function openCamera() {
-    if (camOn || camOpening) return;
+    if (!can("camera") || camOn || camOpening) return;
     camOpening = true;
     showCamNotice("");
     setViewButtons("camera");
@@ -2901,6 +2936,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     pumpInput();
   }
   async function pumpInput() {
+    if (!can("control")) { inputQueue.length = 0; return; }
     if (inputBusy) return;
     inputBusy = true;
     while (inputQueue.length) {
@@ -3326,6 +3362,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("screenOffOverlay").hidden = !(recentlyOff || (data && data.screenOff && !recentlyWoken));
   }
   function power(action) {
+    if (!can("control")) return Promise.resolve();
     return fetch("power", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
@@ -3520,6 +3557,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The grid is rebuilt only when the list changes, so icons aren't downloaded again.
   let appsKey = null, openedTimer = null;
   function renderApps() {
+    if (!can("apps")) return;
     const apps = data.apps || [];
     const key = apps.map(a => a.id).join();
     if (key !== appsKey && !editingApps) {
@@ -3580,6 +3618,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The dock: other apps open on the Mac. A tap brings one to the front, like the Mac's Dock.
   let dockKey = "";
   function renderDock() {
+    if (!can("apps")) return;
     const others = data.otherApps || [];
     const key = others.map(a => a.id).join();
     if (key !== dockKey) {
@@ -3668,6 +3707,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function closeDockMenu() { document.querySelectorAll(".dock-menu, .dock-shade").forEach(n => n.remove()); }
 
   async function focusApp(app, button, action = "focus") {
+    if (!can("apps")) return;
     if (action === "focus") tick();
     let message = { focus: `Switched to ${app.name}`, hide: `Hid ${app.name}`, quit: `Asked ${app.name} to quit` }[action];
     try {
@@ -3689,6 +3729,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
 
   async function openApp(app, button) {
+    if (!can("apps")) return;
     tick();
     button.classList.add("opening");
     let message = `Opened ${app.name}`;
@@ -3814,7 +3855,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         if (up > 8 && up > side) {
           // Following the finger upward: the icon lifts a little and grows.
           clearTimeout(appHoldTimer);
-          if (!app.classList.contains("lifting")) new Image().src = bigIcon(app);
+          if (can("apps") && !app.classList.contains("lifting")) new Image().src = bigIcon(app);
           app.classList.add("lifting");
           img.style.transform = `translateY(${-Math.min(up, 60) * 0.5}px) scale(${1 + Math.min(up, 60) / 300})`;
           if (up > 44) { stop(); slideOpen(app); }
@@ -3838,6 +3879,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The sharper icon for the big zoom, fetched as soon as the finger starts to slide.
   const bigIcon = button => "app-icon.png?size=512&id=" + encodeURIComponent(button.dataset.id);
   function slideOpen(button) {
+    if (!can("apps")) return;
     const app = (data.apps || []).find(a => a.id === button.dataset.id);
     if (!app) return;
     slideOpened = true;
@@ -3855,6 +3897,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The zoom shared by the grid and the dock: the icon floats to the middle and grows (drawn at its
   // final size from the sharper icon), then the Screen tab appears and the icon fades.
   function zoomIntoScreen(img, big, done) {
+    if (!can("apps")) return;
     const r = img.getBoundingClientRect();
     const size = Math.min(innerWidth * 0.86, 360);
     const zoom = document.createElement("div");
@@ -3920,6 +3963,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   appGrid.addEventListener("pointerup", endDrag);
   appGrid.addEventListener("pointercancel", endDrag);
   async function quitApp(button) {
+    if (!can("apps")) return;
     const app = (data.apps || []).find(a => a.id === button.dataset.id);
     if (!app) return;
     button.classList.remove("running");
@@ -3938,6 +3982,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     setTimeout(poll, 1200);
   }
   async function saveAppOrder() {
+    if (!can("apps")) return;
     const ids = [...appGrid.children].map(el => el.dataset.id);
     appsKey = ids.join();
     // Match the last status too, so nothing redraws the old order before the next update.
@@ -4073,6 +4118,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!res.ok) throw new Error(localize(await res.text()));
   }
   async function subscribeAlerts() {
+    if (!can("push")) return false;
     if (await Notification.requestPermission() !== "granted") return false;
     const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
     await navigator.serviceWorker.ready;
@@ -4083,6 +4129,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   function saveAlertsOff(off) { try { localStorage.setItem("alertsOff", JSON.stringify(off)); } catch (e) {} }
   document.querySelectorAll("[data-alert]").forEach(b => b.addEventListener("click", async () => {
+    if (!can("push")) return;
     if (!pushPossible() || (PHONE === "ios" && !standalone())) return renderAlerts();
     tick();
     const kind = b.dataset.alert, wasOn = b.getAttribute("aria-checked") === "true";
@@ -4116,6 +4163,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // ---------- Safety limits (same as the Mac menu) ----------
   let limitSaving = false;
   document.querySelectorAll("[data-limit]").forEach(b => b.addEventListener("click", async () => {
+    if (!can("limits")) return;
     const on = b.getAttribute("aria-checked") !== "true";
     b.setAttribute("aria-checked", on);
     tick();
@@ -4275,6 +4323,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     return el;
   }
   async function loadHistory(kind = histKind) {
+    if (!can("history")) return;
     const h = histData[kind];
     try {
       const res = await fetchWithin(8000, HISTORY[kind].url + "?hours=24", { cache: "no-store" });
@@ -4288,6 +4337,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!scrubbing && kind === histKind) renderHistory();  // a finger on the graph keeps its reading
   }
   function setHistoryOpen(open, kind) {
+    if (open && !can("history")) return;
     const sheet = $("histSheet"), shade = $("histShade");
     sheet.style.removeProperty("--drag");
     sheet.setAttribute("aria-hidden", !open);
@@ -4464,6 +4514,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const RANGE_WORDS = { 1: "last hour", 6: "last 6 hours", 24: "last 24 hours" };
   const cpuIcons = new Map();  // app key → promise of a blob URL (or null)
   function cpuIcon(key) {
+    if (!can("history")) return Promise.resolve(null);
     if (!cpuIcons.has(key)) cpuIcons.set(key, fetchWithin(8000, "cpu-icon?key=" + encodeURIComponent(key))
       .then(r => r.ok ? r.blob() : null).then(b => b && URL.createObjectURL(b)).catch(() => null)
       .then(url => { if (!url) cpuIcons.delete(key); return url; }));
@@ -4665,6 +4716,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const memRows = new Map();
   const memGB = b => b == null ? "—" : (b / GiB < 10 ? (b / GiB).toFixed(1) : Math.round(b / GiB)) + " GB";
   function setMemoryOpen(open) {
+    if (open && !can("memory")) return;
     const sheet = $("memSheet"), shade = $("histShade");
     sheet.style.removeProperty("--drag");
     sheet.setAttribute("aria-hidden", !open);
@@ -4691,6 +4743,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     loadMemory();
   }
   async function loadMemory() {
+    if (!can("memory")) return;
     try {
       const res = await fetchWithin(4000, "memory", { cache: "no-store" });
       if (!res.ok) throw new Error(res.status);
@@ -4721,13 +4774,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const row = document.createElement("div");
     row.className = "row";
     let icon;
-    if (a.id) {
+    if (a.id && can("apps")) {
       icon = document.createElement("img");
       icon.src = "app-icon.png?id=" + encodeURIComponent(a.id);
       icon.alt = "";
       icon.addEventListener("error", () => { const blank = document.createElement("span"); blank.className = "mem-icon blank"; icon.replaceWith(blank); });
     } else icon = document.createElement("span");
-    icon.className = a.id ? "mem-icon" : "mem-icon blank";
+    icon.className = a.id && can("apps") ? "mem-icon" : "mem-icon blank";
     const title = document.createElement("div");
     title.className = "title";
     title.append(a.name, document.createElement("i"));
