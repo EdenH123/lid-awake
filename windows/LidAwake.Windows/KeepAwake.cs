@@ -17,18 +17,14 @@ public static class KeepAwake
     static Thread? holder;
     static ManualResetEventSlim? release;
 
+    // How powercfg is run. Tests swap this for a fake so the logic can run without a lid.
+    public static Func<string, string> Powercfg { get; set; } = RunPowercfg;
+
     public static void On(Settings settings)
     {
-        // Remember the current lid action once. If it cannot be read, change nothing and save
-        // nothing, so Off() never "restores" a guessed value.
-        if (settings.Get<int?>("savedLidAc") is null)
-        {
-            var current = ReadLidAction();
-            if (current is null) return;
-            settings.Set("savedLidAc", current.Value.ac);
-            settings.Set("savedLidDc", current.Value.dc);
-        }
-        SetLidAction(0, 0);  // 0 = do nothing
+        SetLidToDoNothing(settings);
+        // The idle-sleep hold does not depend on the lid setting: a PC whose lid setting cannot
+        // be read still must not idle-sleep.
         if (holder != null) return;
         // The request belongs to a thread, so one quiet thread holds it until Off().
         var done = new ManualResetEventSlim(false);
@@ -39,6 +35,20 @@ public static class KeepAwake
             SetThreadExecutionState(ES_CONTINUOUS);
         }) { IsBackground = true, Name = "keep-awake" };
         holder.Start();
+    }
+
+    // Remember the current lid action once, then set it to "do nothing". If it cannot be read,
+    // change nothing and save nothing, so Off() never "restores" a guessed value.
+    static void SetLidToDoNothing(Settings settings)
+    {
+        if (settings.Get<int?>("savedLidAc") is null)
+        {
+            var current = ReadLidAction();
+            if (current is null) return;
+            settings.Set("savedLidAc", current.Value.ac);
+            settings.Set("savedLidDc", current.Value.dc);
+        }
+        SetLidAction(0, 0);  // 0 = do nothing
     }
 
     public static void Off(Settings settings)
@@ -57,23 +67,26 @@ public static class KeepAwake
 
     // The current plan's lid-close action for plugged in and on battery, or null when powercfg
     // does not print both values.
-    public static (int ac, int dc)? ReadLidAction()
+    public static (int ac, int dc)? ReadLidAction() =>
+        ParseLidAction(Powercfg($"/query SCHEME_CURRENT {Sub} {LidAction}"));
+
+    // The last two hex values in the output are the current AC and DC settings. Matching hex
+    // values rather than label text keeps this independent of the Windows display language.
+    public static (int ac, int dc)? ParseLidAction(string output)
     {
-        var output = Run($"/query SCHEME_CURRENT {Sub} {LidAction}");
         var values = Regex.Matches(output, @"0x([0-9a-fA-F]{8})").Select(m => Convert.ToInt32(m.Groups[1].Value, 16)).ToList();
-        // The last two hex values are the current AC and DC settings.
         if (values.Count < 2) return null;
         return (values[^2], values[^1]);
     }
 
     static void SetLidAction(int ac, int dc)
     {
-        Run($"/setacvalueindex SCHEME_CURRENT {Sub} {LidAction} {ac}");
-        Run($"/setdcvalueindex SCHEME_CURRENT {Sub} {LidAction} {dc}");
-        Run("/setactive SCHEME_CURRENT");
+        Powercfg($"/setacvalueindex SCHEME_CURRENT {Sub} {LidAction} {ac}");
+        Powercfg($"/setdcvalueindex SCHEME_CURRENT {Sub} {LidAction} {dc}");
+        Powercfg("/setactive SCHEME_CURRENT");
     }
 
-    static string Run(string args)
+    public static string RunPowercfg(string args)
     {
         using var p = Process.Start(new ProcessStartInfo("powercfg.exe", args)
         {
