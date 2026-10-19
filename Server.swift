@@ -399,8 +399,7 @@ final class StatusServer: @unchecked Sendable {
             // Shows the Mac's alerts on the phone (also while the page is closed).
             return reply(c, "200 OK", "text/javascript; charset=utf-8", Data(serviceWorkerJS.utf8))
         case "/manifest.webmanifest":
-            let manifest = ##"{"name":"Lid Awake","short_name":"Lid Awake","start_url":"/","display":"standalone","background_color":"#000000","theme_color":"#000000","icons":[{"src":"/apple-touch-icon.png","sizes":"180x180","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}]}"##
-            return reply(c, "200 OK", "application/manifest+json", Data(manifest.utf8))
+            return reply(c, "200 OK", "application/manifest+json", webFile("manifest.webmanifest") ?? Data("{}".utf8))
         default:
             break
         }
