@@ -1454,6 +1454,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   try { COMPUTER = localStorage.getItem("computer") === "windows" ? "windows" : "mac"; } catch (e) {}
   const word = key => key in PHONE_WORDS ? PHONE_WORDS[key] : COMPUTER_WORDS[COMPUTER][key];
   const can = feature => !FEATURES || FEATURES.includes(feature);
+  // Texts from the Mac name "Face ID"; on other phones they say that phone's own word. Capital at a sentence start.
+  const localize = text => PHONE === "ios" ? text : String(text)
+    .replace(/(^|[.!?]\s)Face ID/g, (_, lead) => lead + word("Unlock")).replace(/Face ID/g, word("unlock"));
   // Fills every <span data-w="key"> and relabels the modifier keys. Safe to call again.
   function applyDevice() {
     document.documentElement.dataset.phone = PHONE;
@@ -1767,7 +1770,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         await checkAuth();
         offerFaceID();
       } else {
-        $("loginError").textContent = await res.text();
+        $("loginError").textContent = localize(await res.text());
         $("password").select();
       }
     } catch (err) {
@@ -1799,7 +1802,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
                                authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature) }),
       });
       if (res.ok) return checkAuth();
-      $("loginError").textContent = await res.text();
+      $("loginError").textContent = localize(await res.text());
     } catch (e) {
       if (e.name !== "NotAllowedError") $("loginError").textContent = `${word("Unlock")} didn't work. Use your password.`;
     }
@@ -1839,7 +1842,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (!optRes.ok) {
         recentPassword = "";
         $("faceIdPassword").value = "";
-        throw new Error(await optRes.text());
+        throw new Error(localize(await optRes.text()));
       }
       const o = await optRes.json();
       const cred = await navigator.credentials.create({ publicKey: {
@@ -1855,7 +1858,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
         body: JSON.stringify({ clientData: b64u(cred.response.clientDataJSON), attestation: b64u(cred.response.attestationObject) }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(localize(await res.text()));
       recentPassword = "";
       $("faceIdPassword").value = "";
       $("faceIdPwRow").hidden = true;
@@ -2560,7 +2563,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       let m;
       try { m = JSON.parse(e.data); } catch (err) { return; }
       if (m.video) setupVideo(m.video);
-      if (m.error) setScreenMsg(m.error);
+      if (m.error) setScreenMsg(localize(m.error));
     };
     socket.onclose = () => {
       ws = null;
@@ -2590,7 +2593,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         } else {
           // Access turned off or permission missing: hide the old picture and controls.
           if (res.status === 403) $("screenControls").hidden = true;
-          setScreenMsg(await res.text());
+          setScreenMsg(localize(await res.text()));
           frameId = 0;
           wait = 2000;
         }
@@ -2660,7 +2663,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     let ticket;
     try {
       const res = await fetch("camera/options", { method: "POST", headers: { "X-LidAwake": "1" }, cache: "no-store" });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(localize(await res.text()));
       const o = await res.json();
       const cred = await navigator.credentials.get({ publicKey: {
         challenge: fromB64u(o.challenge), rpId: o.rpId, userVerification: "required", timeout: 60000,
@@ -2673,7 +2676,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         body: JSON.stringify({ id: b64u(cred.rawId), clientData: b64u(r.clientDataJSON),
                                authenticatorData: b64u(r.authenticatorData), signature: b64u(r.signature) }),
       });
-      if (!unlock.ok) throw new Error(await unlock.text());
+      if (!unlock.ok) throw new Error(localize(await unlock.text()));
       ticket = (await unlock.json()).ticket;
     } catch (e) {
       camOpening = false;
@@ -2698,9 +2701,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       let m;
       try { m = JSON.parse(e.data); } catch (err) { return; }
       if (m.camera) camSetup(m.camera);
-      if (typeof m.cameraError === "string") setCamMsg(m.cameraError);
-      if (m.error) setCamMsg(m.error);
-      if (m.cameraStopped) closeCamera(m.cameraStopped);
+      if (typeof m.cameraError === "string") setCamMsg(localize(m.cameraError));
+      if (m.error) setCamMsg(localize(m.error));
+      if (m.cameraStopped) closeCamera(localize(m.cameraStopped));
     };
     socket.onclose = () => { if (camWS === socket) closeCamera("The camera closed: the connection to your Mac dropped."); };
   }
@@ -2905,7 +2908,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
           body: JSON.stringify(cmd),
         });
         if (res.status === 401 || res.status === 423) { inputQueue.length = 0; locked(); break; }
-        if (!res.ok && res.status !== 204) setScreenMsg(await res.text());
+        if (!res.ok && res.status !== 204) setScreenMsg(localize(await res.text()));
       } catch (e) { /* dropped; the next command will try again */ }
     }
     inputBusy = false;
@@ -3322,7 +3325,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       body: JSON.stringify({ action }),
     }).then(async res => {
       if (res.status === 401 || res.status === 423) return locked();
-      if (!res.ok && res.status !== 204) setScreenMsg(await res.text());
+      if (!res.ok && res.status !== 204) setScreenMsg(localize(await res.text()));
     }).catch(() => setScreenMsg("Can't reach your Mac."));
   }
   $("lockMacBtn").addEventListener("click", async () => {
@@ -3667,7 +3670,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         body: JSON.stringify({ id: app.id, action }),
       });
       if (res.status === 401 || res.status === 423) return locked();
-      if (!res.ok) message = await res.text();
+      if (!res.ok) message = localize(await res.text());
     } catch (e) { message = "Can't reach your Mac."; }
     if (action === "focus" && message.startsWith("Switched")) {
       button.classList.remove("launched");
@@ -3689,7 +3692,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         body: JSON.stringify({ id: app.id }),
       });
       if (res.status === 401 || res.status === 423) return locked();
-      if (!res.ok) message = await res.text();
+      if (!res.ok) message = localize(await res.text());
     } catch (e) { message = "Can't reach your Mac."; }
     setTimeout(() => button.classList.remove("opening"), 400);
     if (message.startsWith("Opened")) {
@@ -3921,7 +3924,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         body: JSON.stringify({ id: app.id }),
       });
       if (res.status === 401 || res.status === 423) return locked();
-      if (!res.ok) message = await res.text();
+      if (!res.ok) message = localize(await res.text());
     } catch (e) { message = "Can't reach your Mac."; }
     showOpened(message);
     // Apps can take a moment to close (or stop to ask about saving), so check again shortly.
@@ -4060,7 +4063,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   async function postJSON(url, body) {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-LidAwake": "1" }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(localize(await res.text()));
   }
   async function subscribeAlerts() {
     if (await Notification.requestPermission() !== "granted") return false;

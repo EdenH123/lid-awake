@@ -9,6 +9,7 @@ html = html
   .replace(/^\s*\/\/.*$/gm, "")
   .replace(/\s\/\/ .*$/gm, "")
   .replace(/const PHONE = [\s\S]*?: "other";/, "")  // the browser check that tells an iPhone apart
+  .replace(/const localize = [\s\S]*?word\("unlock"\)\);/, "")  // swaps the Mac's "Face ID" for the phone's own word
   .replace(/const PHONE_WORDS = \{[\s\S]*?\}\[PHONE\];/, "")
   .replace(/<span data-w="[a-zA-Z]+">[^<]*<\/span>/g, "").replace(/data-w-placeholder="[^"]*"/g, "");
 const bad = html.split("\n").map((l, i) => [i + 1, l]).filter(([, l]) => /iPhone|Face ID/.test(l));
