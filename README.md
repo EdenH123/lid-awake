@@ -1,6 +1,6 @@
 # Lid Awake
 
-Lid Awake is a small Mac app that keeps your MacBook running with the lid closed, and a phone app (iPhone or Android, such as Samsung) that lets you use it from anywhere. On the Mac, one switch in the menu bar keeps it awake, with a timer and safety limits that turn it off if the battery runs low or gets too hot. On your phone you can see how the Mac is doing (battery, temperature, memory, network), watch its screen live, use the phone as its trackpad and keyboard, and open, switch or quit its apps. Tap the notch in the MacBook drawing to see and hear the room through the Mac's camera, and hold the mic button to talk through its speakers. Everything goes over your own private Tailscale connection, so only you can reach it, protected by a password, Face ID or fingerprint and a log of every time someone views or controls the Mac.
+Lid Awake is a small app that keeps your laptop running with the lid closed, on a MacBook or on a Windows laptop (see [On a Windows laptop](#on-a-windows-laptop)), and a phone app (iPhone or Android, such as Samsung) that lets you use it from anywhere. On the Mac, one switch in the menu bar keeps it awake, with a timer and safety limits that turn it off if the battery runs low or gets too hot. On your phone you can see how the Mac is doing (battery, temperature, memory, network), watch its screen live, use the phone as its trackpad and keyboard, and open, switch or quit its apps. Tap the notch in the MacBook drawing to see and hear the room through the Mac's camera, and hold the mic button to talk through its speakers. Everything goes over your own private Tailscale connection, so only you can reach it, protected by a password, Face ID or fingerprint and a log of every time someone views or controls the Mac.
 
 ---
 
@@ -121,6 +121,81 @@ The **camera and microphone** have their own switch: cup in the menu bar → **A
 
 ---
 
+## On a Windows laptop
+
+Lid Awake also runs on a Windows laptop, with the same phone app (iPhone, or an Android phone such as a Samsung). Windows does **less** than the Mac so far: see the two lists below before you rely on it.
+
+### Before you start
+
+- **A Windows laptop** with Tailscale (free).
+- **Your phone**, with Tailscale installed and signed in. Do Step 1 above for the phone, and for the account switch **MagicDNS** and **HTTPS Certificates** (the "One switch for your account" part of [Step 1](#step-1--install-tailscale-on-your-mac-and-your-phone)).
+- **Tailscale on the laptop:** download it from [tailscale.com/download/windows](https://tailscale.com/download/windows) and sign in with **the same account** as on your phone.
+
+You don't need to install any programming tools.
+
+### Install it
+
+1. On this page (the GitHub page for Lid Awake), open **Actions** → **Windows** → **Run workflow**.
+2. When the run has finished, open it and download **LidAwake-Windows** from **Artifacts** at the bottom. It's kept for 3 days.
+3. Unpack the **whole** ZIP (right-click it → **Extract All**). Inside, **README-FIRST.txt** repeats these steps.
+4. Double-click **Install Lid Awake (Windows)**.
+   - If Windows says **"Windows protected your PC"**, click **More info** → **Run anyway**.
+   - If it asks **"Do you want to run this file?"**, click **Run**.
+5. A window shows each step with **[OK]**. If a line shows **[X]**, it tells you what to do (for example "Tailscale is not signed in"). Do it, then open **Install Lid Awake (Windows)** again.
+
+> Already have the source ZIP and the .NET 8 SDK installed? The same installer builds the app for you.
+
+### Finish and add it to your phone
+
+1. Right-click the **Lid Awake** icon in the tray by the clock (it may be under the **^** arrow).
+2. Choose **Set phone password…** and pick a password.
+3. Turn on **Lid Awake on**. The phone page only opens while Lid Awake is on.
+4. On your phone, make sure Tailscale is on, then open `https://<pc-name>.<tailnet>.ts.net/` in the browser. You'll find your laptop's exact name in the Tailscale app on the phone (the list of your machines), or at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
+5. Add it to your Home screen:
+   - **iPhone:** in Safari tap **Share** → **Add to Home Screen** → **Add**.
+   - **Android (Samsung or similar):** open the browser menu (**⋮** in Chrome, **≡** in Samsung Internet) → **Add to Home screen** (or **Install app**).
+6. Open **Lid Awake** from your Home screen and type your phone password.
+
+Each time a new phone signs in, the laptop shows a small alert at the tray: **New sign-in to Lid Awake**.
+
+### Every day on Windows
+
+- **Turn it on:** right-click the tray icon → **Lid Awake on**. You can turn it **off** from your phone too.
+- **Turn it on for a while only:** tray icon → **Turn off after** (for example 2 hours). When the time is up, Lid Awake turns itself off.
+- **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed.
+- **See what happened:** tray icon → **Show activity log**.
+- **Keep it plugged in.** On Windows, Lid Awake does **not** turn itself off when the battery is low or the laptop gets hot yet.
+
+### What works on Windows so far
+
+- See how the laptop is doing on your phone: battery, memory, processor, network and uptime.
+- Keep it running with the lid closed.
+- Turn it off from your phone.
+- **Turn off after** timer.
+- Sign in with your phone password, with an alert at the tray for each new sign-in.
+- See your signed-in devices and sign one out.
+- The activity log.
+
+### Not on Windows yet
+
+Don't rely on these on Windows. They work on the Mac only, for now.
+
+- Watching the screen and using the phone as trackpad and keyboard.
+- Opening, switching and quitting apps.
+- Alerts on your phone.
+- Face ID or fingerprint sign-in (you use your password).
+- The camera and microphone.
+- Battery and temperature history graphs.
+- **The low-battery and too-hot safety switches.** Lid Awake will **not** turn itself off if the battery runs low or the laptop gets hot, so keep it plugged in.
+- Wi-Fi signal bars.
+
+### Update or remove it on Windows
+
+- **Update:** download the new LidAwake-Windows ZIP (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are.
+- **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was.
+
+---
+
 ## Every day
 
 - **Turn it on:** click the cup in the Mac's menu bar and flip the switch. You can turn it **off** from your phone too.
@@ -150,6 +225,10 @@ Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks w
 | The **Screen** tab stays black | Do Step 6 again: Screen Recording must be on for Lid Awake. |
 | The camera says **the lid is closed** | macOS switches off the built-in camera and microphone when the lid is closed. Open the lid, or plug in a USB camera. |
 | You **forgot the phone password** | Cup in the menu bar → **Change phone password…** |
+| **Windows:** the Lid Awake icon is missing from the tray | Look under the **^** arrow by the clock. If it isn't there, open **Install Lid Awake (Windows)** again. |
+| **Windows:** a message says **"Phone page not available"** | Another program is using the port Lid Awake needs (8787). Restart the PC, then turn **Lid Awake on** again. |
+| **Windows:** the phone **can't reach the PC** | Make sure Tailscale is on, on both the PC and the phone, with the same account. |
+| **Windows:** the laptop still **sleeps with the lid closed** | Right-click the tray icon and make sure **Lid Awake on** is ticked. On some laptops the maker's own power software overrides Windows; if so, keep the laptop plugged in. |
 
 ---
 
@@ -160,3 +239,4 @@ Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks w
 - The camera and microphone need their own switch, Face ID or fingerprint every time, and turn off by themselves after 10 minutes.
 - The installer gives Lid Awake one admin permission only: turning sleep off and on (`pmset -a disablesleep 0/1`).
 - Every sign-in, screen view, control and camera use is written to the activity log (cup in the menu bar → **Show activity log**).
+- On Windows, as on the Mac, programs already running on the laptop itself are trusted not to pretend to be your phone. They would still need your phone password.
