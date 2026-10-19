@@ -523,6 +523,61 @@ public class WebServerTests : IDisposable
         Assert.True(json.GetProperty("lidAwake").GetBoolean());
     }
 
+    // Task 12: GET /status, signed in, carries the full status (docs/API.md section 6).
+    [Fact]
+    public async Task StatusAnswersTheFullStatusFromStatusInfo()
+    {
+        var fake = new FakeReadings
+        {
+            PowerNow = new PowerReading(0, 1, 80, 7200),
+            CpuNow = new CpuTimes(1000, 2000, 500),
+            NetNow = new NetCounters("Ethernet", true, 1000, 500),
+            Ms = 0,
+        };
+        var info = new StatusInfo(fake);
+        statusAnswer = () => info.Build(true);
+        var cookie = await SignIn();
+
+        var first = await Send("GET", "/status", cookie: cookie);
+        Assert.Equal(200, first.Code);
+        Assert.Equal("application/json", first.Header("Content-Type"));
+        var s = Json(first);
+        StatusInfoTests.AssertEveryKeyWithItsKind(s);
+        Assert.Equal("windows", s.GetProperty("os").GetString());
+        Assert.Equal("DESKTOP-TEST", s.GetProperty("host").GetString());
+        Assert.True(s.GetProperty("lidAwake").GetBoolean());
+        Assert.Equal(80, s.GetProperty("battery").GetInt32());
+        Assert.Equal(120, s.GetProperty("minutesToEmpty").GetInt32());
+        Assert.Equal(1920, s.GetProperty("screenWidth").GetInt32());
+        Assert.Equal(16UL << 30, s.GetProperty("mac").GetProperty("memTotal").GetUInt64());
+        Assert.Equal("Ethernet", s.GetProperty("net").GetProperty("iface").GetString());
+        Assert.True(s.GetProperty("net").GetProperty("wired").GetBoolean());
+        Assert.False(s.GetProperty("mac").TryGetProperty("cpu", out _));
+
+        // The second request measures the load and the network speed since the first.
+        fake.CpuNow = new CpuTimes(1750, 3000, 1000);
+        fake.NetNow = new NetCounters("Ethernet", true, 3000, 1500);
+        fake.Ms = 2000;
+        var second = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(50.0, second.GetProperty("mac").GetProperty("cpu").GetDouble());
+        Assert.Equal(1000.0, second.GetProperty("net").GetProperty("down").GetDouble());
+        Assert.Equal(500.0, second.GetProperty("net").GetProperty("up").GetDouble());
+    }
+
+    [Fact]
+    public async Task StatusWithTheRealReadingsIsWhole()
+    {
+        var info = new StatusInfo(new SystemReadings());
+        statusAnswer = () => info.Build(true);
+        var cookie = await SignIn();
+        var r = await Send("GET", "/status", cookie: cookie);
+        Assert.Equal(200, r.Code);
+        var s = Json(r);
+        StatusInfoTests.AssertEveryKeyWithItsKind(s);
+        Assert.Equal("windows", s.GetProperty("os").GetString());
+        Assert.True(s.GetProperty("mac").GetProperty("memTotal").GetUInt64() > 0);
+    }
+
     [Fact]
     public async Task AnyValidCookieOfSeveralCounts()
     {

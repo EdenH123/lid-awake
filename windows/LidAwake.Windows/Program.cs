@@ -18,9 +18,12 @@ static class Program
         // The server starts before the tray exists, so the tray knows whether it may serve the
         // page. Until the tray is there, the page answers as if Lid Awake were off.
         TrayApp? tray = null;
-        // `status` is replaced by the full status in a later task.
+        // One StatusInfo for all requests: processor load and network speed are measured between
+        // two requests. It is built on the web server's threads and touches no WinForms controls
+        // (IsOn is a volatile field).
+        var status = new StatusInfo(new SystemReadings());
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
-            () => new { os = "windows", lidAwake = tray?.IsOn == true },
+            () => status.Build(tray?.IsOn == true),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body));
         try { server.Start(); }
         catch (Exception e)
