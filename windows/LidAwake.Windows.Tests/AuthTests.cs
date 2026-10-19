@@ -228,6 +228,140 @@ public class AuthTests : IDisposable
         Assert.True(a.HasPassword);
     }
 
+    // Three devices signed in one minute apart: the oldest first, so the list must reverse them.
+    (Auth A, string[] Tokens) ThreeSessions(Settings? settings = null)
+    {
+        var a = NewAuth(settings);
+        a.SetPassword(Good);
+        var tokens = new string[3];
+        var devices = new[] { "iPhone", "Mac", "Android phone" };
+        for (int i = 0; i < 3; i++)
+        {
+            clock += TimeSpan.FromMinutes(1);
+            tokens[i] = a.Login(Good, devices[i]).Token!;
+        }
+        return (a, tokens);
+    }
+
+    [Fact]
+    public void SessionsAreListedNewestFirstWithTheirShortIdAndCurrentFlag()
+    {
+        var settings = NewSettings();
+        var (a, t) = ThreeSessions(settings);
+        var stored = settings.Get<List<Auth.Session>>("sessions")!;
+        var list = a.Sessions(new[] { t[1] });
+
+        Assert.Equal(new[] { "Android phone", "Mac", "iPhone" }, list.Select(s => s.Device));
+        Assert.Equal(new[] { false, true, false }, list.Select(s => s.Current));
+        Assert.True(list[0].Created > list[1].Created && list[1].Created > list[2].Created);
+        Assert.Equal(clock.ToUnixTimeSeconds(), list[0].Created);
+        foreach (var s in list)
+        {
+            Assert.Equal(12, s.Id.Length);
+            Assert.Matches("^[0-9a-f]{12}$", s.Id);
+            Assert.Contains(stored, x => x.Hash.StartsWith(s.Id, StringComparison.Ordinal));
+        }
+        Assert.Equal(3, list.Select(s => s.Id).Distinct().Count());
+    }
+
+    [Fact]
+    public void NoSessionIsCurrentForAnUnknownTokenOrNone()
+    {
+        var (a, _) = ThreeSessions();
+        Assert.All(a.Sessions(new[] { "made-up" }), s => Assert.False(s.Current));
+        Assert.All(a.Sessions(Array.Empty<string>()), s => Assert.False(s.Current));
+        Assert.All(a.Sessions(new string[] { "" }), s => Assert.False(s.Current));
+    }
+
+    [Fact]
+    public void ExpiredSessionsAreNotListed()
+    {
+        var (a, t) = ThreeSessions();
+        // After this the iPhone one (signed in 2 minutes before the last one) is just past 7 days, the Mac one is not.
+        clock += TimeSpan.FromDays(Auth.SessionDays) - TimeSpan.FromSeconds(90);
+        Assert.Equal(new[] { "Android phone", "Mac" }, a.Sessions(new[] { t[2] }).Select(s => s.Device));
+    }
+
+    [Fact]
+    public void SignOutOneByIdRemovesOnlyThatSession()
+    {
+        var (a, t) = ThreeSessions();
+        var mac = a.Sessions(new[] { t[2] }).Single(s => s.Device == "Mac");
+        Assert.Equal(1, a.SignOut(mac.Id, new[] { t[2] }));
+        Assert.True(a.IsValid(t[0]));
+        Assert.False(a.IsValid(t[1]));
+        Assert.True(a.IsValid(t[2]));
+        Assert.Equal(2, a.Sessions(new[] { t[2] }).Count);
+    }
+
+    [Fact]
+    public void SignOutNeverEndsTheCallersOwnSession()
+    {
+        var (a, t) = ThreeSessions();
+        var own = a.Sessions(new[] { t[2] }).Single(s => s.Current);
+        Assert.Equal(0, a.SignOut(own.Id, new[] { t[2] }));
+        Assert.True(a.IsValid(t[2]));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("abc")]
+    [InlineData("0123456789abc")]  // 13 characters
+    [InlineData("000000000000")]   // 12 characters, matches nothing
+    public void AnIdThatIsNotTwelveCharactersOrMatchesNothingChangesNothing(string? id)
+    {
+        var (a, t) = ThreeSessions();
+        Assert.Equal(0, a.SignOut(id, new[] { t[2] }));
+        Assert.All(t, token => Assert.True(a.IsValid(token)));
+    }
+
+    [Fact]
+    public void ALongerIdThatStartsLikeARealOneDoesNotMatch()
+    {
+        var (a, t) = ThreeSessions();
+        var other = a.Sessions(new[] { t[2] }).First(s => !s.Current);
+        Assert.Equal(0, a.SignOut(other.Id + "0", new[] { t[2] }));
+        Assert.Equal(0, a.SignOut(other.Id[..11], new[] { t[2] }));
+        Assert.Equal(0, a.SignOut(other.Id.ToUpperInvariant() == other.Id ? other.Id + "x" : other.Id.ToUpperInvariant(), new[] { t[2] }));
+        Assert.Equal(3, a.Sessions(new[] { t[2] }).Count);
+    }
+
+    [Fact]
+    public void SignOutOthersKeepsTheCallersSession()
+    {
+        var (a, t) = ThreeSessions();
+        Assert.Equal(2, a.SignOutOthers(new[] { t[1] }));
+        Assert.False(a.IsValid(t[0]));
+        Assert.True(a.IsValid(t[1]));
+        Assert.False(a.IsValid(t[2]));
+        var only = Assert.Single(a.Sessions(new[] { t[1] }));
+        Assert.True(only.Current);
+        Assert.Equal(0, a.SignOutOthers(new[] { t[1] }));
+    }
+
+    [Fact]
+    public void SignOutOthersKeepsEveryCookieTheRequestCarried()
+    {
+        var (a, t) = ThreeSessions();
+        Assert.Equal(1, a.SignOutOthers(new[] { t[0], t[1] }));
+        Assert.True(a.IsValid(t[0]));
+        Assert.True(a.IsValid(t[1]));
+        Assert.False(a.IsValid(t[2]));
+    }
+
+    [Fact]
+    public void SignOutsAreKeptOnDisk()
+    {
+        var settings = NewSettings();
+        var (a, t) = ThreeSessions(settings);
+        a.SignOutOthers(new[] { t[0] });
+        var again = NewAuth(settings);
+        Assert.True(again.IsValid(t[0]));
+        Assert.False(again.IsValid(t[1]));
+        Assert.False(again.IsValid(t[2]));
+    }
+
     [Theory]
     [InlineData("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", "iPhone")]
     [InlineData("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36", "Android phone")]

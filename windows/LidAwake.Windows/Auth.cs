@@ -120,6 +120,51 @@ public sealed class Auth
         }
     }
 
+    // One signed-in device, as GET /sessions lists it. `Id` is the first 12 characters of the stored
+    // hash: a handle for signing it out that does not reveal anything about the token. `Current` is
+    // the session of the request that asked. (There are no passkeys on Windows, so a session is
+    // always a password sign-in.)
+    public sealed record SessionInfo(string Id, string Device, long Created, bool Current);
+
+    public const int SessionIdLength = 12;
+
+    // The sessions that have not expired, newest first. `callerTokens` are the session tokens the
+    // request carried: any of them marks its session as the current one.
+    public List<SessionInfo> Sessions(IEnumerable<string> callerTokens)
+    {
+        var mine = callerTokens.Where(t => !string.IsNullOrEmpty(t)).Select(HashToken).ToHashSet(StringComparer.Ordinal);
+        lock (gate)
+        {
+            return Live()
+                .Select(s => new SessionInfo(s.Hash[..Math.Min(SessionIdLength, s.Hash.Length)], s.Device ?? "Unknown device", s.Created, mine.Contains(s.Hash)))
+                .OrderByDescending(s => s.Created)
+                .ToList();
+        }
+    }
+
+    // Signs out one device by its short id, never one of the caller's own sessions. An id that is
+    // not exactly 12 characters, or matches nothing, changes nothing. Returns how many were removed.
+    public int SignOut(string? id, IEnumerable<string> callerTokens)
+    {
+        if (id is null || id.Length != SessionIdLength) return 0;
+        return Remove(callerTokens, s => s.Hash.StartsWith(id, StringComparison.Ordinal));
+    }
+
+    // Signs out every device except the caller's own. Returns how many were removed.
+    public int SignOutOthers(IEnumerable<string> callerTokens) => Remove(callerTokens, _ => true);
+
+    int Remove(IEnumerable<string> callerTokens, Func<Session, bool> pick)
+    {
+        var mine = callerTokens.Where(t => !string.IsNullOrEmpty(t)).Select(HashToken).ToHashSet(StringComparer.Ordinal);
+        lock (gate)
+        {
+            var sessions = Live();
+            var removed = sessions.RemoveAll(s => !mine.Contains(s.Hash) && pick(s));
+            if (removed > 0) settings.Set("sessions", sessions);
+            return removed;
+        }
+    }
+
     // "iPhone", "iPad", "Mac"... from the browser's description of itself (as on the Mac).
     public static string DeviceName(string? userAgent)
     {
