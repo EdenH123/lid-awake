@@ -905,7 +905,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .faceid-offer { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: center; padding: 14px 16px; }
   .faceid-icon { width: 42px; height: 42px; border-radius: 11px; background: var(--blue); color: #fff; display: grid; place-items: center; }
   .faceid-text { display: grid; gap: 2px; font-size: 15px; }
-  .faceid-text span { color: var(--muted); font-size: 13px; line-height: 1.35; }
+  .faceid-text > span { color: var(--muted); font-size: 13px; line-height: 1.35; }
   .faceid-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
   .faceid-actions button { font-size: 15px; font-weight: 600; border: 0; border-radius: 99px; padding: 8px 16px; cursor: pointer; color: var(--blue); background: var(--fill); }
   .faceid-actions button.primary { color: #fff; background: var(--blue); }
@@ -1038,7 +1038,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <h2 id="gateTitle">Connecting…</h2>
     <p id="gateText">Reaching your Mac.</p>
     <form id="loginForm" hidden>
-      <button type="button" class="faceid-btn" id="faceIdBtn" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg>Sign in with Face ID</button>
+      <button type="button" class="faceid-btn" id="faceIdBtn" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg>Sign in with <span data-w="unlock">Face ID</span></button>
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
       <button id="unlockBtn">Unlock</button>
       <div class="error" id="loginError"></div>
@@ -1050,7 +1050,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   <div class="tab" id="tab-status">
     <section class="card faceid-offer" id="faceIdOffer" hidden>
       <div class="faceid-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></div>
-      <div class="faceid-text"><b>Sign in with Face ID?</b><span>Skip the password next time. Your face never leaves this iPhone.</span></div>
+      <div class="faceid-text"><b>Sign in with <span data-w="unlock">Face ID</span>?</b><span data-w="unlockPrivacy">Skip the password next time. Your face never leaves this iPhone.</span></div>
       <div class="faceid-actions"><button type="button" id="faceIdLater">Not now</button><button type="button" class="primary" id="faceIdOn">Turn on</button></div>
     </section>
     <div class="section">
@@ -1140,8 +1140,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         </div>
         <div class="row"><span class="title">Download</span><span class="value" id="netDown">—</span></div>
         <div class="row"><span class="title">Upload</span><span class="value" id="netUp">—</span></div>
-        <div class="row"><span class="title">Response time to this iPhone</span><span class="value" id="netPing">—</span></div>
-        <div class="row"><span class="title">Connection to this iPhone</span><span class="value" id="netPath">—</span></div>
+        <div class="row"><span class="title">Response time to this <span data-w="phone">iPhone</span></span><span class="value" id="netPing">—</span></div>
+        <div class="row"><span class="title">Connection to this <span data-w="phone">iPhone</span></span><span class="value" id="netPath">—</span></div>
       </div>
     </div>
   </div>
@@ -1170,7 +1170,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <section class="alerts-card" id="alertsSection">
       <header class="alerts-head">
         <div class="alerts-badge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></div>
-        <div><h2>Alerts</h2><p>Notifications on this iPhone, even when Lid Awake is closed. Sign-in alerts are always on.</p></div>
+        <div><h2>Alerts</h2><p>Notifications on this <span data-w="phone">iPhone</span>, even when Lid Awake is closed. Sign-in alerts are always on.</p></div>
       </header>
       <div class="alert-row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, low battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
       <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
@@ -1183,19 +1183,19 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section">
       <div class="section-head">Sign-in</div>
       <div class="list icon-list">
-        <div class="row" id="faceIdRow" hidden><span class="set-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></span><span class="title">Face ID</span>
+        <div class="row" id="faceIdRow" hidden><span class="set-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg></span><span class="title"><span data-w="unlock">Face ID</span></span>
           <span class="value" id="faceIdState" hidden>On</span><button type="button" class="row-link" id="faceIdRowBtn">Set up</button></div>
-        <form class="row pw-row" id="faceIdPwRow" hidden><input type="password" id="faceIdPassword" placeholder="Password, to add Face ID" autocomplete="current-password" aria-label="Your Lid Awake password"><button class="row-link" id="faceIdPwGo">Continue</button></form>
+        <form class="row pw-row" id="faceIdPwRow" hidden><input type="password" id="faceIdPassword" data-w-placeholder="Password, to add {unlock}" autocomplete="current-password" aria-label="Your Lid Awake password"><button class="row-link" id="faceIdPwGo">Continue</button></form>
         <div class="row"><span class="set-icon gray"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><button type="button" class="row-link start danger" id="lockNowBtn">Lock this page now</button></div>
       </div>
       <div class="section-foot" id="faceIdError" hidden></div>
-      <div class="section-foot">You stay signed in on this iPhone for 7 days. Adding Face ID asks for your password. Change the password from the Lid Awake menu on your Mac.</div>
+      <div class="section-foot">You stay signed in on this <span data-w="phone">iPhone</span> for 7 days. Adding <span data-w="unlock">Face ID</span> asks for your password. Change the password from the Lid Awake menu on your Mac.</div>
     </div>
 
     <div class="section" id="devicesSection" hidden>
       <div class="section-head">Signed-in devices</div>
       <div class="list" id="devicesList"></div>
-      <div class="section-foot">Sign out anything you don't recognize. Your iPhone gets an alert whenever someone signs in with the password or adds Face ID.</div>
+      <div class="section-foot">Sign out anything you don't recognize. Your <span data-w="phone">iPhone</span> gets an alert whenever someone signs in with the password or adds <span data-w="unlock">Face ID</span>.</div>
     </div>
 
     <div class="section" id="activitySection" hidden>
@@ -1218,7 +1218,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <section class="alerts-card limits-card">
         <div class="alert-row"><span class="set-icon pink"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="2"/><path d="M4.5 8.5v7M19.5 8.5v7"/></svg></span><span class="title">Tiny vibrations<small>Switches, opening apps, picture quality</small></span><button type="button" class="mini-switch" id="hapticsSwitch" role="switch" aria-label="Tiny vibrations"></button></div>
       </section>
-      <div class="section-foot">Only on this iPhone. If you don't feel them, turn on System Haptics in iPhone Settings → Sounds &amp; Haptics.</div>
+      <div class="section-foot"><span data-w="hapticsHelp">Only on this iPhone. If you don't feel them, turn on System Haptics in iPhone Settings → Sounds &amp; Haptics.</span></div>
     </div>
 
     <div class="section">
@@ -1228,7 +1228,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <button type="button" data-theme-choice="light" role="radio">Light</button>
         <button type="button" data-theme-choice="dark" role="radio">Dark</button>
       </div>
-      <div class="section-foot">Automatic follows your iPhone's light or dark setting.</div>
+      <div class="section-foot">Automatic follows your <span data-w="phone">iPhone</span>'s light or dark setting.</div>
     </div>
   </div>
 
@@ -1289,13 +1289,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Right-click</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span><span>Drag<small>Scroll</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10V4h6M20 14v6h-6M4 4l6 6M20 20l-6-6"/></svg></span><span>Pinch<small>Zoom in on this phone only</small></span></div>
-      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Hold the mic button to talk through the Mac's speakers. Face ID each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Hold the mic button to talk through the Mac's speakers. <span data-w="unlock">Face ID</span> each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
       <div class="tips-head">Trackpad</div>
       <div class="tip"><span class="tip-icon txt">1</span><span>1 finger<small>Move · tap to click · tap twice, then hold and slide to drag</small></span></div>
       <div class="tip"><span class="tip-icon txt">2</span><span>2 fingers<small>Slide to scroll · tap to right-click</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="4"/><path d="M10 8h4M10 11h4M10 14h4"/></svg></span><span>Scroll wheel<small>The ridged strip on the trackpad's right edge: slide your thumb to scroll, flick to keep it rolling</small></span></div>
       <div class="tip"><span class="tip-icon txt">3</span><span>3 fingers<small>← → switch desktop · ↑ Mission Control · ↓ app windows</small></span></div>
-      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span><span>Type and Keys<small>Type uses the iPhone keyboard · Keys has esc, arrows, ⌘ and more</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span><span>Type and Keys<small>Type uses the <span data-w="phone">iPhone</span> keyboard · Keys has esc, arrows, ⌘ and more</small></span></div>
     </div>
     <div class="zoombar" id="zoomBar" hidden>Zoomed <span id="zoomLevel">1.0×</span> on this phone only <button id="zoomReset">Reset zoom</button></div>
     <div class="notice warn-notice" id="hint" hidden></div>
@@ -1459,6 +1459,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     document.documentElement.dataset.phone = PHONE;
     document.documentElement.dataset.computer = COMPUTER;
     document.querySelectorAll("[data-w]").forEach(el => { el.textContent = word(el.dataset.w); });
+    document.querySelectorAll("[data-w-placeholder]").forEach(el => {
+      el.placeholder = el.dataset.wPlaceholder.replace(/\{(\w+)\}/g, (_, k) => word(k));
+    });
     document.querySelectorAll('[data-mod="cmd"]').forEach(b => { b.textContent = word("cmdKey"); b.setAttribute("aria-label", word("cmdName")); });
     document.querySelectorAll('[data-mod="alt"]').forEach(b => { b.textContent = word("altKey"); b.setAttribute("aria-label", word("altName")); });
   }
@@ -1733,7 +1736,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (auth.hasPassword) {
       $("gateTitle").textContent = "Locked";
       $("faceIdBtn").hidden = !(auth.faceID && faceIDPossible());
-      $("gateText").textContent = $("faceIdBtn").hidden ? "Enter your Lid Awake password." : "Use Face ID, or enter your Lid Awake password.";
+      $("gateText").textContent = $("faceIdBtn").hidden ? "Enter your Lid Awake password." : `Use ${word("unlock")}, or enter your Lid Awake password.`;
       $("loginForm").hidden = false;
     } else {
       $("gateTitle").textContent = "Set a password first";
@@ -1798,7 +1801,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (res.ok) return checkAuth();
       $("loginError").textContent = await res.text();
     } catch (e) {
-      if (e.name !== "NotAllowedError") $("loginError").textContent = "Face ID didn't work. Use your password.";
+      if (e.name !== "NotAllowedError") $("loginError").textContent = `${word("unlock")} didn't work. Use your password.`;
     }
   }
   $("faceIdBtn").addEventListener("click", faceIDLogin);
@@ -1868,11 +1871,11 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         return renderFaceIDRow();
       }
       if (e.name !== "NotAllowedError") {
-        const msg = "Couldn't turn on Face ID: " + (e.message || e);
+        const msg = `Couldn't turn on ${word("unlock")}: ` + (e.message || e);
         if (currentTab === "settings") faceIDError(msg);
         else {
           $("faceIdOffer").hidden = false;
-          $("faceIdOffer").querySelector(".faceid-text span").textContent = msg;
+          $("faceIdOffer").querySelector(".faceid-text > span").textContent = msg;
         }
       }
     }
@@ -1894,7 +1897,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         title.className = "title";
         title.textContent = d.current ? `${d.device} (this one)` : d.device;
         const small = document.createElement("small");
-        small.textContent = `Signed in ${dayFmt.format(new Date(d.created * 1000))} with ${d.faceID ? "Face ID" : "the password"}`;
+        small.textContent = `Signed in ${dayFmt.format(new Date(d.created * 1000))} with ${d.faceID ? word("unlock") : "the password"}`;
         title.append(small);
         row.append(title);
         if (!d.current) {
@@ -2643,7 +2646,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("camView").hidden = false;
     camCanvas.hidden = true;
     $("camLeft").textContent = "";
-    setCamMsg("Confirm with Face ID to open the camera.");
+    setCamMsg(`Confirm with ${word("unlock")} to open the camera.`);
     // iPhone only plays sound that a tap started, so it's set up now, before Face ID; "playback"
     // lets it play with the ring switch on silent too.
     try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
@@ -2814,7 +2817,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       talkStream = stream;
     } catch (e) {
       stopTalk();
-      setCamMsg("To talk, allow the microphone for this page on your iPhone.");
+      setCamMsg(`To talk, allow the microphone for this page on your ${word("phone")}.`);
       return;
     }
     camAudio.resume();
@@ -4835,7 +4838,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const lock = await navigator.wakeLock.request("screen");
       wakeLock = lock;
       wakeState = "held";
-      lock.addEventListener("release", () => { if (wakeLock === lock) wakeLock = null; wakeState = "released by iPhone"; });
+      lock.addEventListener("release", () => { if (wakeLock === lock) wakeLock = null; wakeState = `released by ${word("phone")}`; });
     } catch (e) { wakeLock = null; wakeState = "refused: " + (e && e.name || "error"); }
   }
   document.addEventListener("visibilitychange", keepPhoneAwake);
