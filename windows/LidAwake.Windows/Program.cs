@@ -31,10 +31,13 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit Lid Awake", null, (_, _) => { SetAwake(false); icon!.Visible = false; ExitThread(); });
         icon = new NotifyIcon { Icon = SystemIcons.Application, Text = "Lid Awake", ContextMenuStrip = menu, Visible = true };
+        // Put back a lid action left over from a crash.
+        KeepAwake.Off(settings);
     }
 
     public void SetAwake(bool on)
     {
+        if (on) KeepAwake.On(settings); else KeepAwake.Off(settings);
         IsOn = on;
         toggle.Checked = on;
         icon.Text = on ? "Lid Awake: on" : "Lid Awake: off";
