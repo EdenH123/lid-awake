@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace LidAwake;
@@ -55,6 +56,9 @@ public sealed class WebServer : IDisposable
     {
         if (app != null) return;
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = baseDir });
+        // No environment variable, appsettings.json or command line may add an address
+        // (Kestrel:Endpoints, URLS, HTTP_PORTS): the one Listen below is the only one.
+        ((IConfigurationBuilder)builder.Configuration).Sources.Clear();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(o =>
         {
@@ -63,27 +67,51 @@ public sealed class WebServer : IDisposable
             o.Limits.MaxRequestBodySize = MaxBody;
             o.Limits.MaxRequestHeadersTotalSize = 16 * 1024;
             o.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(10);
+            o.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(10);
+            // A body must keep coming: 64 KB takes at most about 8 seconds after a 5-second grace.
+            // (Kestrel's default, 240 bytes a second, would let 64 KB dribble in for 4.5 minutes.)
+            o.Limits.MinRequestBodyDataRate = new MinDataRate(8 * 1024, TimeSpan.FromSeconds(5));
             o.Limits.MaxConcurrentConnections = 64;
         });
         var built = builder.Build();
         built.Run(Handle);
-        // Wait for the port to be taken, so "already in use" is reported to the caller.
-        Task.Run(() => built.StartAsync()).GetAwaiter().GetResult();
+        try
+        {
+            // Wait for the port to be taken, so "already in use" is reported to the caller.
+            Task.Run(() => built.StartAsync()).GetAwaiter().GetResult();
+            // Settings read before the sources above were cleared (ASPNETCORE_URLS with
+            // PREFERHOSTINGURLS) could still move the server: refuse any address but ours.
+            var urls = built.Urls.ToList();
+            if (urls.Count == 0 || !urls.All(IsOurAddress))
+                throw new InvalidOperationException($"The phone page would listen on {string.Join(", ", urls)} instead of 127.0.0.1:{port}.");
+        }
+        catch (Exception)
+        {
+            Shutdown(built);
+            throw;
+        }
         app = built;
     }
+
+    bool IsOurAddress(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == "http" && u.Host == "127.0.0.1" && u.Port == port;
 
     public void Stop()
     {
         var running = app;
         app = null;
-        if (running == null) return;
+        if (running != null) Shutdown(running);
+    }
+
+    static void Shutdown(WebApplication running)
+    {
         try
         {
             Task.Run(async () =>
             {
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
                 try { await running.StopAsync(cts.Token); }
-                catch (OperationCanceledException) { }
+                catch (Exception) { }
                 await running.DisposeAsync();
             }).Wait(TimeSpan.FromSeconds(5));
         }
@@ -117,19 +145,28 @@ public sealed class WebServer : IDisposable
         }
     }
 
-    static async Task Fail(HttpContext c, int code, string message)
+    // An error answer that replaces whatever the failed request had set (a cookie, the CSP).
+    internal static async Task Fail(HttpContext c, int code, string message)
     {
         try
         {
-            if (!c.Response.HasStarted) await SendText(c, code, message);
+            if (c.Response.HasStarted) return;
+            c.Response.Headers.Clear();
+            AddCommonHeaders(c);
+            await SendText(c, code, message);
         }
         catch (Exception) { }
+    }
+
+    static void AddCommonHeaders(HttpContext c)
+    {
+        foreach (var (k, v) in PageHeaders.Common) c.Response.Headers[k] = v;
     }
 
     async Task Route(HttpContext c)
     {
         var req = c.Request;
-        foreach (var (k, v) in PageHeaders.Common) c.Response.Headers[k] = v;
+        AddCommonHeaders(c);
 
         // Section 2.1: a request that is malformed or too big.
         if (req.Headers.ContainsKey("Transfer-Encoding") || req.ContentLength > MaxBody)

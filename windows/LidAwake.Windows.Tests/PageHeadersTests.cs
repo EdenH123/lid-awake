@@ -14,6 +14,21 @@ public class PageHeadersTests
         Assert.Contains("connect-src 'self' wss://pc.tail1234.ts.net", csp);
     }
 
+    // Known answers, computed outside .NET: printf 'a()' | openssl dgst -sha256 -binary | base64
+    // (and the same for "\n b();\n"). The bytes between the tags are hashed exactly as written.
+    [Fact]
+    public void HashesAreTheKnownAnswers()
+    {
+        var html = "<script>a()</script><p>x</p><script>\n b();\n</script>";
+        Assert.Equal("'sha256-qVpDBgj7bpq5hMAcGp3AOc79J3Y1Z4HvySTwKrWDoy4=' 'sha256-BGtj7gyCwuPHj2IUl3OAH2YdwjT9txpMiTb0b97i8ns='",
+            PageHeaders.ScriptHashes(html));
+        Assert.Equal(
+            "default-src 'none'; script-src 'sha256-qVpDBgj7bpq5hMAcGp3AOc79J3Y1Z4HvySTwKrWDoy4='; style-src 'unsafe-inline'; "
+            + "img-src 'self' blob:; connect-src 'self' wss://127.0.0.1; worker-src 'self'; manifest-src 'self'; "
+            + "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            PageHeaders.Csp("<script>a()</script>", "127.0.0.1"));
+    }
+
     [Fact]
     public void ScriptsWithAttributesAreNotHashed()
     {

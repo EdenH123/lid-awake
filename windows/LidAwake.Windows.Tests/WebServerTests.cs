@@ -19,6 +19,7 @@ public class WebServerTests : IDisposable
     const string OffText = "Lid Awake is off on your PC.";
     const string NotYours = "This device isn't signed in to the Tailscale account this PC uses.";
     const string IPhone = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)";
+    const string UseTailscale = "Open Lid Awake at its Tailscale address.";
 
     readonly string folder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
     readonly string site;
@@ -189,6 +190,14 @@ public class WebServerTests : IDisposable
         Assert.Equal(404, evil.Code);
         Assert.Equal("Not found", evil.Body);
 
+        // Launch screens are optional on Windows (section 3), and never need a session.
+        foreach (var path in new[] { "/splash/x.png", "/splash/1179x2556.png" })
+        {
+            var splash = await Send("GET", path);
+            Assert.Equal(404, splash.Code);
+            Assert.Equal("Not found", splash.Body);
+        }
+
         foreach (var path in new[] { "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png" })
         {
             var small = await Send("GET", path);
@@ -216,9 +225,10 @@ public class WebServerTests : IDisposable
     [Fact]
     public async Task LoopbackOnlyPointsToTheTailscaleAddress()
     {
-        var page = await Send("GET", "/", host: "127.0.0.1", owner: null);
+        var page = await Send("GET", "/", host: $"127.0.0.1:{port}", owner: null);
         Assert.Equal(200, page.Code);
-        Assert.Contains("wss://127.0.0.1", page.Header("Content-Security-Policy"));
+        // The port is removed and nothing else is added: exactly the loopback address.
+        Assert.Contains("connect-src 'self' wss://127.0.0.1; worker-src 'self';", page.Header("Content-Security-Policy"));
 
         var authReply = await Send("GET", "/auth", host: "127.0.0.1", owner: null);
         Assert.Equal(200, authReply.Code);
@@ -231,8 +241,30 @@ public class WebServerTests : IDisposable
 
         var status = await Send("GET", "/status", host: "127.0.0.1", owner: null);
         Assert.Equal(403, status.Code);
-        Assert.Equal("Open Lid Awake at its Tailscale address.", status.Body);
-        Assert.Equal(403, (await Send("POST", "/login", host: "localhost", owner: null, lid: true, json: "{}")).Code);
+        Assert.Equal(UseTailscale, status.Body);
+        var login = await Send("POST", "/login", host: "localhost", owner: null, lid: true, json: "{}");
+        Assert.Equal(403, login.Code);
+        Assert.Equal(UseTailscale, login.Body);
+    }
+
+    // A local program can claim to be the owner, but 127.0.0.1 never gets past 2.3.
+    [Fact]
+    public async Task LoopbackWithAForgedOwnerIsStillRefused()
+    {
+        var cookie = await SignIn();
+        foreach (var host in new[] { "127.0.0.1", "localhost", $"127.0.0.1:{port}" })
+        {
+            var status = await Send("GET", "/status", host: host, owner: Owner, cookie: cookie);
+            Assert.Equal(403, status.Code);
+            Assert.Equal(UseTailscale, status.Body);
+
+            var login = await Send("POST", "/login", host: host, owner: Owner, lid: true, json: $"{{\"password\":\"{Good}\"}}");
+            Assert.Equal(403, login.Code);
+            Assert.Equal(UseTailscale, login.Body);
+            Assert.False(login.Has("Set-Cookie"));
+        }
+        // Only the sign-in above was announced.
+        Assert.Single(announced);
     }
 
     [Fact]
@@ -251,7 +283,9 @@ public class WebServerTests : IDisposable
         var funnel = await Send("GET", "/status", funnel: true);
         Assert.Equal(403, funnel.Code);
         Assert.Equal("Forbidden", funnel.Body);
-        Assert.Equal(403, (await Send("GET", "/", host: "127.0.0.1", owner: null, funnel: true)).Code);
+        var funnelPage = await Send("GET", "/", host: "127.0.0.1", owner: null, funnel: true);
+        Assert.Equal(403, funnelPage.Code);
+        Assert.Equal("Forbidden", funnelPage.Body);
 
         var wrongHost = await Send("GET", "/auth", host: "evil.example.com");
         Assert.Equal(403, wrongHost.Code);
@@ -261,11 +295,30 @@ public class WebServerTests : IDisposable
         Assert.Equal(403, wrongOwner.Code);
         Assert.Equal(NotYours, wrongOwner.Body);
 
-        Assert.Equal(403, (await Send("GET", "/auth", owner: null)).Code);
-        Assert.Equal(403, (await Send("GET", "/", owner: "someone@example.com")).Code);
+        var noOwner = await Send("GET", "/auth", owner: null);
+        Assert.Equal(403, noOwner.Code);
+        Assert.Equal(NotYours, noOwner.Body);
+        var otherPage = await Send("GET", "/", owner: "someone@example.com");
+        Assert.Equal(403, otherPage.Code);
+        Assert.Equal(NotYours, otherPage.Body);
 
         Assert.Equal(200, (await Send("GET", "/auth", owner: "OWNER@Example.com")).Code);
         Assert.Equal(200, (await Send("GET", "/auth", host: "PC.Example.TS.net:443")).Code);
+    }
+
+    // The Host must be exactly this PC's name: no suffix, prefix or trailing dot.
+    [Fact]
+    public async Task NamesThatOnlyLookLikeThisPcAreRefused()
+    {
+        foreach (var host in new[] { "pc.example.ts.net.evil.com", "xpc.example.ts.net", "pc.example.ts.net.", "example.ts.net" })
+        {
+            foreach (var path in new[] { "/", "/auth", "/sw.js" })
+            {
+                var r = await Send("GET", path, host: host);
+                Assert.Equal(403, r.Code);
+                Assert.Equal(NotYours, r.Body);
+            }
+        }
     }
 
     // 2.2 step 4
@@ -276,9 +329,23 @@ public class WebServerTests : IDisposable
         var cross = await Send("GET", "/status", fetchSite: "cross-site", cookie: cookie);
         Assert.Equal(403, cross.Code);
         Assert.Equal("Forbidden", cross.Body);
-        Assert.Equal(403, (await Send("GET", "/auth", fetchSite: "same-site")).Code);
+        var sameSite = await Send("GET", "/auth", fetchSite: "same-site");
+        Assert.Equal(403, sameSite.Code);
+        Assert.Equal("Forbidden", sameSite.Body);
         Assert.Equal(200, (await Send("GET", "/status", fetchSite: "same-origin", cookie: cookie)).Code);
         Assert.Equal(200, (await Send("GET", "/status", fetchSite: "none", cookie: cookie)).Code);
+    }
+
+    [Fact]
+    public async Task SignInFromAnotherSiteIsRefusedWithoutATry()
+    {
+        auth.SetPassword(Good);
+        var r = await Send("POST", "/login", fetchSite: "cross-site", lid: true, json: $"{{\"password\":\"{Good}\"}}");
+        Assert.Equal(403, r.Code);
+        Assert.Equal("Forbidden", r.Body);
+        Assert.False(r.Has("Set-Cookie"));
+        Assert.Empty(announced);
+        Assert.Equal(0, settings.Get<int?>("loginFailures") ?? 0);
     }
 
     // 2.4
@@ -400,6 +467,41 @@ public class WebServerTests : IDisposable
         Assert.Equal("Wrong password.", r.Body);
     }
 
+    // Sends exactly these bytes and reads until the server closes the connection.
+    async Task<string> SendRaw(string request)
+    {
+        using var tcp = new TcpClient();
+        await tcp.ConnectAsync(IPAddress.Loopback, port);
+        using var stream = tcp.GetStream();
+        var bytes = Encoding.ASCII.GetBytes(request);
+        await stream.WriteAsync(bytes);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        return await reader.ReadToEndAsync(cts.Token);
+    }
+
+    // 2.1
+    [Fact]
+    public async Task ChunkedBodyIsRefused()
+    {
+        auth.SetPassword(Good);
+        var body = $"{{\"password\":\"{Good}\"}}";
+        var reply = await SendRaw(
+            "POST /login HTTP/1.1\r\n" +
+            $"Host: {TailHost}\r\n" +
+            $"Tailscale-User-Login: {Owner}\r\n" +
+            "X-LidAwake: 1\r\n" +
+            "Content-Type: application/json\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Connection: close\r\n" +
+            "\r\n" +
+            $"{body.Length:x}\r\n{body}\r\n0\r\n\r\n");
+        Assert.StartsWith("HTTP/1.1 400 ", reply);
+        Assert.Contains("Bad request", reply);
+        Assert.DoesNotContain("Set-Cookie", reply);
+        Assert.Empty(announced);
+    }
+
     [Fact]
     public async Task BodyOverSixtyFourKilobytesIsRefused()
     {
@@ -462,6 +564,18 @@ public class WebServerTests : IDisposable
     }
 
     [Fact]
+    public async Task LogoutWithTwoCookiesEndsBothSessions()
+    {
+        var first = await SignIn();
+        var second = await SignIn(IPhone);
+        Assert.NotEqual(first, second);
+        var r = await Send("POST", "/logout", lid: true, cookie: first + "; " + second);
+        Assert.Equal(204, r.Code);
+        Assert.Equal(401, (await Send("GET", "/status", cookie: first)).Code);
+        Assert.Equal(401, (await Send("GET", "/status", cookie: second)).Code);
+    }
+
+    [Fact]
     public async Task LogoutWithAMadeUpTokenChangesNothing()
     {
         var cookie = await SignIn();
@@ -489,8 +603,12 @@ public class WebServerTests : IDisposable
         Assert.Equal("Locked", status.Body);
 
         // Public routes need no session, but a POST still needs the header.
-        Assert.Equal(403, (await Send("POST", "/logout")).Code);
-        Assert.Equal(403, (await Send("POST", "/login", json: "{}")).Code);
+        var logout = await Send("POST", "/logout");
+        Assert.Equal(403, logout.Code);
+        Assert.Equal("Forbidden", logout.Body);
+        var login = await Send("POST", "/login", json: "{}");
+        Assert.Equal(403, login.Code);
+        Assert.Equal("Forbidden", login.Body);
     }
 
     // 2.2 step 9
@@ -541,5 +659,69 @@ public class WebServerTests : IDisposable
         Assert.Equal("Something went wrong.", r.Body);
         Assert.Equal(0, settings.Get<int?>("loginFailures") ?? 0);
         Assert.Equal(200, (await Send("GET", "/")).Code);
+    }
+
+    // An error replaces whatever the failed request had already set.
+    [Fact]
+    public async Task AnErrorAnswerDropsHeadersSetBeforeIt()
+    {
+        var c = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        var body = new MemoryStream();
+        c.Response.Body = body;
+        c.Response.Headers["Set-Cookie"] = "__Host-la_session=abc; Path=/";
+        c.Response.Headers["Content-Security-Policy"] = "default-src 'none'";
+        c.Response.ContentType = "application/json";
+        await WebServer.Fail(c, 500, "Something went wrong.");
+        Assert.Equal(500, c.Response.StatusCode);
+        Assert.False(c.Response.Headers.ContainsKey("Set-Cookie"));
+        Assert.False(c.Response.Headers.ContainsKey("Content-Security-Policy"));
+        Assert.Equal("text/plain; charset=utf-8", c.Response.ContentType);
+        foreach (var (name, value) in PageHeaders.Common)
+            Assert.Equal(value, c.Response.Headers[name].ToString());
+        Assert.Equal("Something went wrong.", Encoding.UTF8.GetString(body.ToArray()));
+    }
+
+    // Only the one loopback address in the code is listened on, whatever the environment says.
+    [Fact]
+    public async Task TheEnvironmentCannotAddAnAddress()
+    {
+        var extra = FreePort();
+        var otherPort = FreePort();
+        const string name = "Kestrel__Endpoints__Extra__Url";
+        Environment.SetEnvironmentVariable(name, $"http://127.0.0.1:{extra}");
+        try
+        {
+            using var other = new WebServer(auth, new Tailnet(settings, _ => null), () => on, () => statusAnswer(),
+                () => turnOffCalls++, (_, _) => { }, otherPort, site);
+            other.Start();
+            Assert.True(other.IsRunning);
+            using var probe = new TcpClient();
+            await Assert.ThrowsAnyAsync<SocketException>(() => probe.ConnectAsync(IPAddress.Loopback, extra));
+        }
+        finally { Environment.SetEnvironmentVariable(name, null); }
+    }
+
+    // URLS read when the server is built could move it off 127.0.0.1:<port>: then it refuses to run.
+    [Fact]
+    public async Task HostingUrlsFromTheEnvironmentCannotMoveTheServer()
+    {
+        var extra = FreePort();
+        var otherPort = FreePort();
+        Environment.SetEnvironmentVariable("ASPNETCORE_URLS", $"http://127.0.0.1:{extra}");
+        Environment.SetEnvironmentVariable("ASPNETCORE_PREFERHOSTINGURLS", "true");
+        try
+        {
+            using var other = new WebServer(auth, new Tailnet(settings, _ => null), () => on, () => statusAnswer(),
+                () => turnOffCalls++, (_, _) => { }, otherPort, site);
+            try { other.Start(); }
+            catch (InvalidOperationException) { Assert.False(other.IsRunning); }
+            using var probe = new TcpClient();
+            await Assert.ThrowsAnyAsync<SocketException>(() => probe.ConnectAsync(IPAddress.Loopback, extra));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ASPNETCORE_URLS", null);
+            Environment.SetEnvironmentVariable("ASPNETCORE_PREFERHOSTINGURLS", null);
+        }
     }
 }
