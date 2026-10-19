@@ -201,8 +201,9 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 | `memory` | `/memory` |
 | `screen` | `/screen.jpg`, the live socket and its screen frames |
 | `control` | `/input`, `/power`, input messages on the live socket |
+| `limits` | `/limits`, and the low-battery and too-hot safety switches (`batteryGuard`, `heatGuard`) |
 
-The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys"]`.
+The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits"]`.
 
 Dependencies on the Mac side:
 
@@ -232,7 +233,7 @@ Notation: `-> 204` means success with an empty body. All POST bodies are JSON. A
 | `POST /sessions/signout` | core | yes | sign a device out |
 | `GET /activity` | core | yes | latest activity lines |
 | `POST /awake` | core | yes | turn Lid Awake off |
-| `POST /limits` | core | yes | safety limits |
+| `POST /limits` | limits | yes | safety limits |
 | `POST /timer` | core | yes | auto-off timer |
 | `GET /status` | core | yes | everything the Status page shows |
 | `GET /passkey/login-options` | passkeys | no | challenge for passkey sign-in |
