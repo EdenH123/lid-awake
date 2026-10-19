@@ -1423,7 +1423,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const PHONE = /Android/i.test(navigator.userAgent) ? "android"
     : /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1) ? "ios"
     : "other";
-  const PHONE_WORDS = {
+  const ALL_PHONE_WORDS = {
     ios: {
       phone: "iPhone", unlock: "Face ID", Unlock: "Face ID",
       unlockPrivacy: "Skip the password next time. Your face never leaves this iPhone.",
@@ -1445,7 +1445,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       installHelp: "To use alerts, add Lid Awake to your Home screen.",
       alertsBlocked: "Notifications are blocked. Allow them in your browser's settings.",
     },
-  }[PHONE];
+  };
+  const PHONE_WORDS = ALL_PHONE_WORDS[PHONE];
   const COMPUTER_WORDS = {
     mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option" },
     windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt" },
@@ -1887,6 +1888,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   // ---------- Signed-in devices and recent activity (Settings) ----------
   const dayFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+  // How a listed device signed in is named after that device (Auth.swift: "iPhone", "Android phone", "Mac"…),
+  // not after the phone this page is open on.
+  function signInWord(device) {
+    const kind = /iPhone|iPad/.test(device) ? "ios" : /Android/.test(device) ? "android" : "other";
+    return (kind === "other" ? "a " : "") + ALL_PHONE_WORDS[kind].unlock;
+  }
   const timeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   async function loadDevices() {
     try {
@@ -1900,7 +1907,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         title.className = "title";
         title.textContent = d.current ? `${d.device} (this one)` : d.device;
         const small = document.createElement("small");
-        small.textContent = `Signed in ${dayFmt.format(new Date(d.created * 1000))} with ${d.faceID ? word("unlock") : "the password"}`;
+        small.textContent = `Signed in ${dayFmt.format(new Date(d.created * 1000))} with ${d.faceID ? signInWord(d.device) : "the password"}`;
         title.append(small);
         row.append(title);
         if (!d.current) {
