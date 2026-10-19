@@ -4,7 +4,7 @@ name: Windows
 on:
   push:
     branches: [claude/windows-phase-2]
-    paths: ["windows/**", "web/**", "assets/sky-*.jpg", ".github/workflows/windows.yml"]
+    paths: ["windows/**", "web/**", "assets/sky-*.jpg", "*.cmd", ".github/workflows/windows.yml"]
   workflow_dispatch:
 concurrency:
   group: windows-${{ github.ref }}
@@ -28,3 +28,113 @@ jobs:
       - name: Test
         if: hashFiles('windows/LidAwake.Windows.Tests/*.csproj') != ''
         run: dotnet test windows/LidAwake.Windows.Tests/LidAwake.Windows.Tests.csproj -c Release --logger "console;verbosity=normal"
+      - name: Publish the app for the installer test
+        shell: powershell
+        run: dotnet publish windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=false -o windows/app
+      # Runs the real installer and uninstaller with Windows PowerShell 5.1, the one the
+      # double-click launchers use. The switches (-SkipTailscale -NoStart -NoPause -KeepSettings
+      # -DeleteSettings) are documented at the top of each script as "for automated tests".
+      - name: Installer and uninstaller
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Assert([bool]$ok, [string]$what) {
+            if ($ok) { Write-Host "PASS: $what" } else { Write-Host "FAIL: $what"; exit 1 }
+          }
+          function Invoke-Script([string]$script, [string[]]$flags) {
+            Write-Host "---- $script $flags"
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $script @flags | Out-Host
+            if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: $script exited with $LASTEXITCODE"; exit 1 }
+          }
+          $dest = Join-Path $env:LOCALAPPDATA 'LidAwake'
+          $exe = Join-Path $dest 'LidAwake.exe'
+          $settingsDir = Join-Path $env:APPDATA 'LidAwake'
+          $settingsFile = Join-Path $settingsDir 'settings.json'
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $settingsText = '{"tailnetHost":"ci-test.ts.net"}'
+          function Get-RunValue { (Get-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue).LidAwake }
+
+          # The scripts must be plain ASCII, or Windows PowerShell 5.1 misreads them.
+          foreach ($f in (Get-ChildItem -Path 'windows\*.ps1', '*.cmd')) {
+            $bad = [IO.File]::ReadAllBytes($f.FullName) | Where-Object { $_ -gt 127 }
+            Assert (-not $bad) "$($f.Name) is plain ASCII"
+          }
+
+          # Settings that must survive installing and updating.
+          New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+          [IO.File]::WriteAllText($settingsFile, $settingsText)
+
+          Assert (Test-Path -LiteralPath 'windows\app\LidAwake.exe') 'the published app is in windows\app'
+          Invoke-Script 'windows\install.ps1' @('-SkipTailscale', '-NoStart', '-NoPause')
+          Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is installed in LOCALAPPDATA'
+          Assert (Test-Path -LiteralPath (Join-Path $dest 'web')) 'the phone page files are installed'
+          Assert ((Get-RunValue) -eq ('"' + $exe + '"')) 'the Run value points to the installed exe'
+          Assert (Test-Path -LiteralPath 'windows\app') 'windows\app is still there'
+          Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the install'
+
+          # Updating: a running Lid Awake (a stand-in process with that name) is stopped.
+          $fake = Join-Path $env:RUNNER_TEMP 'fake\LidAwake.exe'
+          New-Item -ItemType Directory -Path (Split-Path $fake) -Force | Out-Null
+          Copy-Item "$env:SystemRoot\System32\cmd.exe" $fake
+          [void](Start-Process -FilePath $fake -ArgumentList '/c', 'ping -n 300 127.0.0.1 > nul' -WindowStyle Hidden)
+          Start-Sleep -Seconds 2
+          Assert ([bool](Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)) 'a stand-in LidAwake process is running'
+          Invoke-Script 'windows\install.ps1' @('-SkipTailscale', '-NoStart', '-NoPause')
+          Assert (-not (Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)) 'the update stopped the running app'
+          Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is still installed after the update'
+          Assert ((Get-RunValue) -eq ('"' + $exe + '"')) 'the Run value is still right after the update'
+          Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the update'
+
+          # Uninstall, keeping settings.
+          Invoke-Script 'windows\uninstall.ps1' @('-NoPause', '-KeepSettings')
+          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone'
+          Assert ($null -eq (Get-RunValue)) 'the Run value is gone'
+          Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings kept by -KeepSettings'
+
+          # Uninstalling again when nothing is installed still works.
+          Invoke-Script 'windows\uninstall.ps1' @('-NoPause', '-KeepSettings')
+
+          # Install, then uninstall deleting settings too.
+          Invoke-Script 'windows\install.ps1' @('-SkipTailscale', '-NoStart', '-NoPause')
+          Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is installed again'
+          Invoke-Script 'windows\uninstall.ps1' @('-NoPause', '-DeleteSettings')
+          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone (second time)'
+          Assert ($null -eq (Get-RunValue)) 'the Run value is gone (second time)'
+          Assert (-not (Test-Path -LiteralPath $settingsDir)) 'settings deleted by -DeleteSettings'
+          exit 0
+
+  # Builds the ready-made ZIP for people whose PC has no .NET SDK. Run it by hand from the Actions
+  # tab (Run workflow); download "LidAwake-Windows", unpack, and open "Install Lid Awake (Windows)".
+  package:
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+      - name: Publish the app
+        shell: powershell
+        run: dotnet publish windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=false -o windows/app
+      # The ZIP is laid out like the repo: unpacked, the launchers at the top work as they are.
+      - name: Lay out the ZIP
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'stage\windows' -Force | Out-Null
+          Copy-Item 'windows\app' 'stage\windows\app' -Recurse
+          Copy-Item 'windows\install.ps1', 'windows\uninstall.ps1' 'stage\windows'
+          Copy-Item 'Install Lid Awake (Windows).cmd', 'Uninstall Lid Awake (Windows).cmd' 'stage'
+          if (-not (Test-Path -LiteralPath 'stage\windows\app\LidAwake.exe')) { Write-Host 'LidAwake.exe is missing from the ZIP'; exit 1 }
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LidAwake-Windows
+          path: stage
+          retention-days: 3
+          if-no-files-found: error
