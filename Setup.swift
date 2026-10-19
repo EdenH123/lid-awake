@@ -132,8 +132,8 @@ struct SetupView: View {
                     Step(n: 1, text: "Install Tailscale and sign in with the same account.")
                     Step(n: 2, text: model.awake ? "Lid Awake is on, so the page is open." : "Turn Lid Awake on: the page only opens while it's on.")
                     if !model.awake && model.ready { Button("Turn Lid Awake on", action: model.turnOn) }
-                    Step(n: 3, text: "Point the Camera at this code and open the link in Safari.")
-                    Step(n: 4, text: "Share → Add to Home Screen, then sign in with your password.")
+                    Step(n: 3, text: "Point the Camera at this code and open the link (Safari on iPhone, Chrome on Android).")
+                    Step(n: 4, text: "Add it to the Home Screen (iPhone: Share → Add to Home Screen; Android: ⋮ → Add to Home screen), then sign in with your password.")
                 }
             }
 
