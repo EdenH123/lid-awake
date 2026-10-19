@@ -57,7 +57,18 @@ public class PhoneAccessTests : IDisposable
         Assert.False(phone.PageRunning);
         await phone.Set(true);
         Assert.Empty(ServeCommands());
-        // It makes sure nothing is left served instead.
+        // Lid Awake never added Serve, so it leaves Serve as it is.
+        lock (commands) Assert.Empty(commands);
+    }
+
+    [Fact]
+    public async Task ServeLeftFromBeforeIsRemovedWhenTheServerWasNeverStarted()
+    {
+        settings.Set(Tailnet.ServedKey, true);
+        using var server = NewServer(FreePort());
+        var phone = new PhoneAccess(tailnet, server);
+        await phone.Set(true);
+        Assert.Empty(ServeCommands());
         lock (commands) Assert.Equal(new[] { "serve --https=443 off" }, commands);
     }
 
@@ -105,7 +116,24 @@ public class PhoneAccessTests : IDisposable
         using var server = NewServer(port);
         server.Start();
         var phone = new PhoneAccess(tailnet, server);
+        await phone.Set(true);
+        lock (commands) commands.Clear();
         await phone.Set(false);
         lock (commands) Assert.Equal(new[] { "serve --https=443 off" }, commands);
+    }
+
+    [Fact]
+    public async Task TheMinuteCheckServesAgainOnlyWhileOn()
+    {
+        var port = FreePort();
+        using var server = NewServer(port);
+        server.Start();
+        var phone = new PhoneAccess(tailnet, server);
+        await phone.Recheck();
+        Assert.Empty(ServeCommands());
+        await phone.Set(true);
+        await phone.Recheck();
+        // This fake Tailscale never shows the mapping, so each check adds it again.
+        Assert.Equal(new[] { $"serve --bg {port}", $"serve --bg {port}" }, ServeCommands());
     }
 }

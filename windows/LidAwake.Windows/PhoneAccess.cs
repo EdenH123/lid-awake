@@ -16,8 +16,11 @@ public sealed class PhoneAccess
 
     public int Port => server.Port;
 
-    // On: serve the page if our server is running, otherwise make sure nothing is served.
-    // Off: remove everything. Both go through Tailnet's one-at-a-time path; the task ends when
-    // this call has been applied.
+    // On: serve the page if our server is running, otherwise make sure our mapping is gone.
+    // Off: remove what Lid Awake added (Tailnet.ServedKey). Both go through Tailnet's
+    // one-at-a-time path; the task ends when this call has been applied.
     public Task Set(bool on) => tailnet.SetServed(on && server.IsRunning, server.Port);
+
+    // The check every 60 seconds while on: Serve is added back if it went missing.
+    public Task Recheck() => tailnet.Recheck();
 }

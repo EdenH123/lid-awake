@@ -1045,6 +1045,7 @@ tailscale serve --https=443 off
 
 On the Mac the Tailscale binary is `/Applications/Tailscale.app/Contents/MacOS/Tailscale` run with the environment variable `TAILSCALE_BE_CLI=1`.
 
+**Windows differs in three ways.** It removes Serve only when it added the mapping itself (remembered as `servedByLidAwake` in its settings, and cleared once removed), so a Serve setup of the owner's own stays; this is checked at start-up too, after a crash. It matches `127.0.0.1:<port>` exactly (`8787` does not match `87870`). After `serve --bg` it reads `serve status --json` again; if the mapping is missing, the command timed out, or Tailscale printed a link (to allow Serve or HTTPS for the tailnet), it writes what Tailscale printed to the activity log and tells the owner at the tray.
 
 For `link` in `/status` (6.6) the agent runs `tailscale status --json` at most every 10 seconds, in the background.
 

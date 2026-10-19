@@ -1,6 +1,6 @@
 # Removes Lid Awake from this PC. Double-click "Uninstall Lid Awake (Windows).cmd" in the folder above.
-# It stops the app, closes the phone page on Tailscale, puts your lid setting back, and asks
-# before deleting your settings and phone password.
+# It stops the app, closes the phone page on Tailscale (if Lid Awake opened it), puts your lid
+# setting back, and asks before deleting your settings and phone password.
 #
 # The switches below are FOR AUTOMATED TESTS ONLY. A person never needs them; without them the
 # uninstaller asks the question and waits for Enter at the end.
@@ -67,8 +67,18 @@ try {
 # ---- 2/5 Tailscale and start at sign-in -------------------------------------------------
 Show-Step '2/5  Closing the phone page and the start at sign-in'
 try {
-    if (Test-Path -LiteralPath $tsExe) {
+    # Only what Lid Awake added (servedByLidAwake in its settings): another Serve setup stays.
+    $servedByUs = $false
+    if (Test-Path -LiteralPath $settingsFile) {
+        try { $servedByUs = (([IO.File]::ReadAllText($settingsFile) | ConvertFrom-Json).servedByLidAwake -eq $true) } catch { $servedByUs = $false }
+    }
+    if ($servedByUs -and (Test-Path -LiteralPath $tsExe)) {
         [void](Invoke-Quietly { (& $tsExe serve --https=443 off 2>&1) | Out-String })
+        $raw = [IO.File]::ReadAllText($settingsFile)
+        $cleared = [regex]::Replace($raw, '("servedByLidAwake"\s*:\s*)true', '${1}false')
+        $tmp = $settingsFile + '.tmp'
+        [IO.File]::WriteAllText($tmp, $cleared)
+        Move-Item -LiteralPath $tmp -Destination $settingsFile -Force
     }
     Remove-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue
     if (Get-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue) { throw 'the start-at-sign-in entry is still there.' }
@@ -154,7 +164,7 @@ try {
         } elseif ($DeleteSettings) {
             $delete = $true
         } elseif (-not $NoPause) {
-            Write-Host '       Settings are your phone password, phone sign-ins and alerts.'
+            Write-Host '       Settings are your phone password and phone sign-ins.'
             $answer = Read-Host '       Also delete your settings and phone password? (y/N)'
             $delete = ($answer.Trim() -match '^(y|yes)$')
         }
