@@ -1,5 +1,6 @@
 # Builds and tests the Windows version of Lid Awake on a Windows machine at GitHub.
 # Only for the Windows branch; turned off (gh workflow disable windows.yml) when not needed.
+# The ready-made ZIP (job "package") is built on a manual run, or on a push whose commit message contains [package].
 name: Windows
 on:
   push:
