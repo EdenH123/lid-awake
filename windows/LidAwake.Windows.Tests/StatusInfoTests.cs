@@ -42,9 +42,22 @@ public class StatusInfoTests
 
     // Every key the Mac always sends (docs/API.md section 6), with the kind of JSON value the page
     // expects. Shared with the web server test, which checks the same answer over HTTP.
+    // Every top-level key section 6 allows (always sent, or sent only sometimes).
+    static readonly HashSet<string> AllowedTopLevel = new()
+    {
+        "host", "lidAwake", "timerMinutes", "timerRemaining", "batteryGuard", "heatGuard", "batteryLimit", "maxBatteryTemp", "thermalState",
+        "remoteScreen", "remoteControl", "cameraAllowed", "screenPermission", "controlPermission", "screenWidth", "screenOff", "lidClosed", "displayAsleep",
+        "apps", "otherApps", "claude",
+        "battery", "onBattery", "charging", "charged", "minutesToEmpty", "minutesToFull", "batteryTemp",
+        "mac", "net", "link", "os", "features",
+    };
+
     public static void AssertEveryKeyWithItsKind(JsonElement s)
     {
         Assert.Equal(JsonValueKind.Object, s.ValueKind);
+        // Nothing outside section 6 at the top level (memTotal and uptime belong inside "mac").
+        foreach (var property in s.EnumerateObject())
+            Assert.True(AllowedTopLevel.Contains(property.Name), "unexpected top-level key: " + property.Name);
         // 6.1
         Assert.Equal(JsonValueKind.String, s.GetProperty("host").ValueKind);
         Assert.True(IsBool(s.GetProperty("lidAwake")));
@@ -92,8 +105,9 @@ public class StatusInfoTests
         Assert.False(s.GetProperty("lidAwake").GetBoolean());
         Assert.Equal(0, s.GetProperty("timerMinutes").GetInt32());
         Assert.False(s.TryGetProperty("timerRemaining", out _));
-        Assert.True(s.GetProperty("batteryGuard").GetBoolean());
-        Assert.True(s.GetProperty("heatGuard").GetBoolean());
+        // false: there are no battery or heat guards on Windows yet, so the page must not show them on.
+        Assert.False(s.GetProperty("batteryGuard").GetBoolean());
+        Assert.False(s.GetProperty("heatGuard").GetBoolean());
         Assert.Equal(10, s.GetProperty("batteryLimit").GetInt32());
         Assert.Equal(40, s.GetProperty("maxBatteryTemp").GetInt32());
         Assert.Equal("nominal", s.GetProperty("thermalState").GetString());
@@ -163,6 +177,19 @@ public class StatusInfoTests
         Assert.Equal(120, s.GetProperty("minutesToEmpty").GetInt32());
         Assert.Equal(-1, s.GetProperty("minutesToFull").GetInt32());
         Assert.False(s.TryGetProperty("batteryTemp", out _));
+    }
+
+    [Fact]
+    public void UnknownAcLineStatusLeavesOutOnBatteryButKeepsTheRest()
+    {
+        // AC 255 = Windows can't tell whether it is plugged in.
+        var s = Run(new FakeReadings { PowerNow = new PowerReading(255, 1, 60, -1) });
+        Assert.False(s.TryGetProperty("onBattery", out _));
+        Assert.Equal(60, s.GetProperty("battery").GetInt32());
+        Assert.False(s.GetProperty("charging").GetBoolean());
+        Assert.False(s.GetProperty("charged").GetBoolean());
+        Assert.Equal(-1, s.GetProperty("minutesToEmpty").GetInt32());
+        Assert.Equal(-1, s.GetProperty("minutesToFull").GetInt32());
     }
 
     [Fact]
@@ -405,8 +432,10 @@ public class StatusInfoTests
         Assert.NotNull(power);
         bool hasBattery = (power!.Value.BatteryFlag & 128) == 0 && power.Value.BatteryFlag != 255 && power.Value.BatteryLifePercent <= 100;
         var s = Run(new StatusInfo(new SystemReadings()).Build(true));
-        foreach (var key in new[] { "battery", "onBattery", "charging", "charged", "minutesToEmpty", "minutesToFull" })
+        foreach (var key in new[] { "battery", "charging", "charged", "minutesToEmpty", "minutesToFull" })
             Assert.Equal(hasBattery, s.TryGetProperty(key, out _));
+        // onBattery is also left out when the AC line status is unknown (255).
+        Assert.Equal(hasBattery && power.Value.AcLineStatus != 255, s.TryGetProperty("onBattery", out _));
         Assert.False(s.TryGetProperty("batteryTemp", out _));
         if (hasBattery)
         {
@@ -421,9 +450,9 @@ public class StatusInfoTests
         var info = new StatusInfo(new SystemReadings());
         Run(info.Build(true));
         Thread.Sleep(400);
-        var cpu = Run(info.Build(true)).GetProperty("mac");
-        // The counters can fail to advance on a very quiet machine; when it is there it must be 0 to 100.
-        if (cpu.TryGetProperty("cpu", out var load))
-            Assert.InRange(load.GetDouble(), 0.0, 100.0);
+        var mac = Run(info.Build(true)).GetProperty("mac");
+        // GetSystemTimes always works and 400 ms is long enough for the counters to advance.
+        Assert.True(mac.TryGetProperty("cpu", out var load));
+        Assert.InRange(load.GetDouble(), 0.0, 100.0);
     }
 }

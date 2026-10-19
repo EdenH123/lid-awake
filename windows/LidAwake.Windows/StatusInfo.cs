@@ -102,8 +102,10 @@ public sealed class StatusInfo
             ["host"] = readings.HostName(),
             ["lidAwake"] = lidAwake,
             ["timerMinutes"] = 0,
-            ["batteryGuard"] = true,
-            ["heatGuard"] = true,
+            // false, not the documented default true: there are no battery or heat guards on
+            // Windows yet (no /limits route), and the page shows a true switch as protection.
+            ["batteryGuard"] = false,
+            ["heatGuard"] = false,
             ["batteryLimit"] = 10,
             ["maxBatteryTemp"] = 40,
             ["thermalState"] = "nominal",
@@ -129,10 +131,13 @@ public sealed class StatusInfo
         // 6.4: a PC with no battery sends none of these.
         if (readings.Power() is { } p && HasBattery(p))
         {
+            // AC line status 255 means Windows can't tell: then onBattery is left out (the page
+            // would read false as "Plugged in").
+            bool acKnown = p.AcLineStatus != 255;
             bool onBattery = p.AcLineStatus == 0;
             bool charging = (p.BatteryFlag & 8) != 0;
             s["battery"] = (int)p.BatteryLifePercent;
-            s["onBattery"] = onBattery;
+            if (acKnown) s["onBattery"] = onBattery;
             s["charging"] = charging;
             s["charged"] = p.AcLineStatus == 1 && p.BatteryLifePercent == 100;
             // Windows only estimates the time left on battery, and never the time to full.
