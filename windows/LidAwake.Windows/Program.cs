@@ -155,6 +155,9 @@ sealed class TrayApp : ApplicationContext
         menu.Opening += (_, _) => { ShowLimits(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
+        menu.Items.Add(passkeysMenu);
+        menu.Opening += (_, _) => ShowPasskeys();
+        ShowPasskeys();
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit Lid Awake", null, (_, _) =>
@@ -385,6 +388,41 @@ sealed class TrayApp : ApplicationContext
         try { WlanReader.Read(null); }
         catch (Exception) { }
     });
+
+    // ---- Face ID / fingerprint sign-ins (main.swift removeFaceID) ----
+
+    readonly ToolStripMenuItem passkeysMenu = new("Face ID and fingerprint");
+
+    // One item per key, "iPhone · added 20 Oct 2026": clicking it removes the key.
+    void ShowPasskeys()
+    {
+        passkeysMenu.DropDownItems.Clear();
+        IReadOnlyList<Passkeys.Info> keys;
+        try { keys = auth.Passkeys.List; }
+        catch (Exception) { keys = Array.Empty<Passkeys.Info>(); }
+        passkeysMenu.DropDownItems.Add(new ToolStripMenuItem(
+            keys.Count == 0 ? "No Face ID or fingerprint sign-ins" : "Face ID and fingerprint sign-ins (click to remove)") { Enabled = false });
+        foreach (var key in keys)
+        {
+            var id = key.Id;  // the menu item keeps its own copy
+            var added = key.Added is { } a ? "added " + a.ToLocalTime().ToString("d MMM yyyy") : "added earlier";
+            passkeysMenu.DropDownItems.Add(new ToolStripMenuItem($"{key.Device} · {added}", null, (_, _) => RemovePasskey(id)));
+        }
+    }
+
+    // Forget one key, and sign out the devices that used it.
+    void RemovePasskey(string id)
+    {
+        try
+        {
+            auth.Passkeys.Remove(id);
+            auth.SignOutPasskey(id);
+        }
+        catch (Exception) { return; }  // the settings file couldn't be written: nothing changed
+        log.Write("Removed a Face ID or fingerprint sign-in on the PC");
+        icon.ShowBalloonTip(5000, "Face ID or fingerprint removed", "That device will need the password.", ToolTipIcon.Info);
+        ShowPasskeys();
+    }
 
     bool passwordFormOpen;
 

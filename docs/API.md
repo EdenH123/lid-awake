@@ -210,6 +210,8 @@ The Mac sends: `["screen","control","camera","apps","history","memory","push","p
 
 Windows sends `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
+Windows also sends `"passkeys"` always (section 5.3).
+
 Dependencies on the Mac side:
 
 - `camera` needs `passkeys` (the camera asks for a passkey every time) and `screen` (the live socket and the owner's screen switch).
@@ -456,6 +458,17 @@ Checks: Host ends in `.ts.net`; `clientData` has `type == "webauthn.create"`, th
 On success the Mac announces it like a sign-in: title `Face ID or fingerprint added to Lid Awake`, body `On an iPhone. If this wasn't you, remove it from the Lid Awake menu on your Mac.` (`On a browser.` if the device name is `Browser`).
 
 The owner removes a passkey in the computer's own app (no HTTP route).
+
+**Windows.** The same four routes, checks and answers (`Passkeys.cs`, a port of `Passkeys.swift`), and it does not announce passkey sign-ins either. A few things differ:
+
+- The registration body ends `... remove it from the Lid Awake menu on your PC.`
+- Keys are stored in the roaming `settings.json` under `passkeys`, next to the password hash and the sessions. The session of a passkey sign-in records `faceid:<credential id>`.
+- The owner removes a key from the tray menu: **Face ID and fingerprint**, then the key. This also signs out the devices that used that key.
+- It is a little stricter than the Mac, which no real phone should notice:
+  - a credential id must be 1 to 1023 bytes;
+  - the public key must be a point on the P-256 curve when it is added;
+  - a CBOR map, or `clientData`, that gives the same key twice is refused.
+- The challenge is compared with every stored challenge in constant time (`FixedTimeEquals`), not looked up, and so is the rp hash.
 
 ### 5.4 `camera`
 

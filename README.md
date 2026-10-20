@@ -179,6 +179,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - See your signed-in devices and sign one out.
 - The activity log.
 - The low-battery safety limit, and the too-hot one on laptops that report a temperature.
+- Face ID or fingerprint sign-in. On your phone: the gear ⚙︎ → turn on **Face ID** (or fingerprint), then type your password once more. The laptop shows **Face ID or fingerprint added to Lid Awake** at the tray. To remove one, use the tray icon → **Face ID and fingerprint** → click the device. Setting a new phone password removes them all.
 
 ### Not on Windows yet
 
@@ -187,7 +188,6 @@ Don't rely on these on Windows. They work on the Mac only, for now.
 - Watching the screen and using the phone as trackpad and keyboard.
 - Opening, switching and quitting apps.
 - Alerts on your phone.
-- Face ID or fingerprint sign-in (you use your password).
 - The camera and microphone.
 - Battery and temperature history graphs.
 
