@@ -11,7 +11,7 @@ using Xunit;
 // cookie headers are set by hand, the way Tailscale Serve and the phone would send them.
 // The tests are in one class: each one starts its own server, with its own settings folder.
 [Collection("WebServer")]
-public class WebServerTests : IDisposable
+public partial class WebServerTests : IDisposable
 {
     const string TailHost = "pc.example.ts.net";
     const string Owner = "owner@example.com";
@@ -701,8 +701,9 @@ public class WebServerTests : IDisposable
         Assert.Equal(404, (await Send("GET", "/sessions/signout", cookie: cookie)).Code);
         Assert.Equal(404, (await Send("POST", "/activity", lid: true, cookie: cookie)).Code);
         Assert.Equal(404, (await Send("GET", "/timer", cookie: cookie)).Code);
-        Assert.Equal(404, (await Send("GET", "/passkey/login-options", cookie: cookie)).Code);
-        Assert.Equal(401, (await Send("GET", "/passkey/login-options")).Code);
+        Assert.Equal(404, (await Send("POST", "/passkey/login-options", lid: true, cookie: cookie)).Code);
+        Assert.Equal(404, (await Send("GET", "/passkey/login")).Code);
+        Assert.Equal(401, (await Send("GET", "/passkey/register-options")).Code);
         Assert.False(unknown.Has("Server"));
     }
 
@@ -1306,20 +1307,20 @@ public class WebServerTests : IDisposable
 
         heat.Refresh(TimeSpan.Zero);
         var noTemperature = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "passkeys" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(noTemperature.TryGetProperty("batteryTemp", out _));
 
         // Only a thermal zone: the heat switch shows, but batteryTemp is the battery's alone.
         source = new TemperatureReading(null, 55.0);
         heat.Refresh(TimeSpan.Zero);
         var zoneOnly = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "heat" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "heat", "passkeys" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(zoneOnly.TryGetProperty("batteryTemp", out _));
 
         source = new TemperatureReading(36.66, 55.0);
         heat.Refresh(TimeSpan.Zero);
         var withHeat = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "heat" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "heat", "passkeys" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.Equal(36.7, withHeat.GetProperty("batteryTemp").GetDouble());
         StatusInfoTests.AssertEveryKeyWithItsKind(withHeat);
     }

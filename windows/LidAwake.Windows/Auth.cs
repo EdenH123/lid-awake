@@ -19,8 +19,9 @@ public sealed class Auth
     public const int MinPasswordLength = 10;
     public const int MaxTries = 5;
 
-    // Stored in settings, so its properties must be public.
-    public sealed record Session(string Hash, string Device, long Created);
+    // Stored in settings, so its properties must be public. `Via` is "password" or
+    // "faceid:<credential id>" for a passkey sign-in, as on the Mac (none: older, a password).
+    public sealed record Session(string Hash, string Device, long Created, string? Via = null);
 
     readonly Settings settings;
     readonly int iterations;
@@ -32,7 +33,11 @@ public sealed class Auth
         this.settings = settings;
         this.iterations = iterations;
         this.now = now ?? (() => DateTimeOffset.UtcNow);
+        Passkeys = new Passkeys(settings, this.now);
     }
+
+    // Face ID / fingerprint keys, kept in the same settings. A new password removes them all.
+    public Passkeys Passkeys { get; }
 
     public bool HasPassword => settings.Get<string>("pwHash") != null;
 
@@ -47,6 +52,7 @@ public sealed class Auth
             settings.Set("pwHash", Convert.ToBase64String(Derive(password, salt, iterations)));
             settings.Set("pwIterations", iterations);
             settings.Set("sessions", new List<Session>());  // a new password signs everyone out
+            Passkeys.RemoveAll();  // and removes every Face ID / fingerprint key
             Failures = 0;
             LockedUntil = 0;
         }
@@ -71,34 +77,64 @@ public sealed class Auth
     {
         lock (gate)
         {
-            var saltText = settings.Get<string>("pwSalt");
-            var hashText = settings.Get<string>("pwHash");
-            if (saltText == null || hashText == null) return new(LoginResult.Kind.NoPassword);
-            // Even the right password is refused while locked.
-            var wait = LockedUntil - NowSeconds;
-            if (wait > 0) return new(LoginResult.Kind.Locked, Seconds: (int)Math.Ceiling(wait));
-            var rounds = settings.Get<int?>("pwIterations") ?? iterations;
-            var ok = CryptographicOperations.FixedTimeEquals(
-                Derive(password, Convert.FromBase64String(saltText), rounds), Convert.FromBase64String(hashText));
-            if (!ok)
-            {
-                var failures = Failures + 1;
-                Failures = failures;
-                if (failures >= MaxTries)
-                {
-                    var seconds = (int)Math.Min(3600, 60 * Math.Pow(2, Math.Min(failures - MaxTries, 6)));
-                    LockedUntil = NowSeconds + seconds;
-                    return new(LoginResult.Kind.Locked, Seconds: seconds);
-                }
-                return new(LoginResult.Kind.Wrong);
-            }
-            Failures = 0;
-            var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-            var sessions = Live();
-            sessions.Add(new Session(HashToken(token), device, now().ToUnixTimeSeconds()));
-            settings.Set("sessions", sessions);
-            return new(LoginResult.Kind.Ok, token);
+            if (Check(password) is { } problem) return problem;
+            return new(LoginResult.Kind.Ok, MakeSession(device, "password"));
         }
+    }
+
+    // For changes that need the password again (adding a passkey): the same lockout, and wrong
+    // tries count too. Ok carries no token.
+    public LoginResult Confirm(string password)
+    {
+        lock (gate) return Check(password) ?? new(LoginResult.Kind.Ok);
+    }
+
+    // A passkey sign-in (Passkeys checked the signature): a session like a password sign-in,
+    // marked as a passkey one. Resets the wrong tries, as a password sign-in does.
+    public string LoginWithPasskey(string credentialId, string device)
+    {
+        lock (gate)
+        {
+            Failures = 0;
+            return MakeSession(device, "faceid:" + credentialId);
+        }
+    }
+
+    string MakeSession(string device, string via)
+    {
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var sessions = Live();
+        sessions.Add(new Session(HashToken(token), device, now().ToUnixTimeSeconds(), via));
+        settings.Set("sessions", sessions);
+        return token;
+    }
+
+    // Null when the password is right (the wrong tries start again), else why not. Under `gate`.
+    LoginResult? Check(string password)
+    {
+        var saltText = settings.Get<string>("pwSalt");
+        var hashText = settings.Get<string>("pwHash");
+        if (saltText == null || hashText == null) return new(LoginResult.Kind.NoPassword);
+        // Even the right password is refused while locked.
+        var wait = LockedUntil - NowSeconds;
+        if (wait > 0) return new(LoginResult.Kind.Locked, Seconds: (int)Math.Ceiling(wait));
+        var rounds = settings.Get<int?>("pwIterations") ?? iterations;
+        var ok = CryptographicOperations.FixedTimeEquals(
+            Derive(password, Convert.FromBase64String(saltText), rounds), Convert.FromBase64String(hashText));
+        if (!ok)
+        {
+            var failures = Failures + 1;
+            Failures = failures;
+            if (failures >= MaxTries)
+            {
+                var seconds = (int)Math.Min(3600, 60 * Math.Pow(2, Math.Min(failures - MaxTries, 6)));
+                LockedUntil = NowSeconds + seconds;
+                return new(LoginResult.Kind.Locked, Seconds: seconds);
+            }
+            return new(LoginResult.Kind.Wrong);
+        }
+        Failures = 0;
+        return null;
     }
 
     public bool IsValid(string? token)
@@ -122,9 +158,8 @@ public sealed class Auth
 
     // One signed-in device, as GET /sessions lists it. `Id` is the first 12 characters of the stored
     // hash: a handle for signing it out that does not reveal anything about the token. `Current` is
-    // the session of the request that asked. (There are no passkeys on Windows, so a session is
-    // always a password sign-in.)
-    public sealed record SessionInfo(string Id, string Device, long Created, bool Current);
+    // the session of the request that asked. `FaceID`: signed in with a passkey.
+    public sealed record SessionInfo(string Id, string Device, long Created, bool Current, bool FaceID = false);
 
     public const int SessionIdLength = 12;
 
@@ -136,7 +171,8 @@ public sealed class Auth
         lock (gate)
         {
             return Live()
-                .Select(s => new SessionInfo(s.Hash[..Math.Min(SessionIdLength, s.Hash.Length)], s.Device ?? "Unknown device", s.Created, mine.Contains(s.Hash)))
+                .Select(s => new SessionInfo(s.Hash[..Math.Min(SessionIdLength, s.Hash.Length)], s.Device ?? "Unknown device", s.Created, mine.Contains(s.Hash),
+                    (s.Via ?? "").StartsWith("faceid:", StringComparison.Ordinal)))
                 .OrderByDescending(s => s.Created)
                 .ToList();
         }
@@ -152,6 +188,10 @@ public sealed class Auth
 
     // Signs out every device except the caller's own. Returns how many were removed.
     public int SignOutOthers(IEnumerable<string> callerTokens) => Remove(callerTokens, _ => true);
+
+    // Signs out every device that signed in with this passkey (it was removed on the PC).
+    public int SignOutPasskey(string credentialId) =>
+        Remove(Array.Empty<string>(), s => s.Via == "faceid:" + credentialId);
 
     int Remove(IEnumerable<string> callerTokens, Func<Session, bool> pick)
     {

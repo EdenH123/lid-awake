@@ -91,8 +91,9 @@ public sealed class StatusInfo
     // recorded by Lid Awake itself) always; "heat" (the too-hot switch) only while a temperature
     // source works, re-checked with each status. No /memory route yet, so "memory" is not listed.
     // Grows as features land.
-    public static readonly string[] Features = { "limits", "history" };
-    public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat" };
+    // "passkeys": Face ID / fingerprint sign-in (/passkey/*).
+    public static readonly string[] Features = { "limits", "history", "passkeys" };
+    public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat", "passkeys" };
 
     readonly ISystemReadings readings;
     readonly Limits? limits;
