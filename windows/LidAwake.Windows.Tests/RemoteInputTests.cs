@@ -30,6 +30,9 @@ public sealed class FakeInput : ISendInput
     public int DoubleClickMilliseconds() => DoubleClick;
     public long Milliseconds() => Now;
     public bool OnUserDesktop() => UserDesktop;
+    // The display's scale (1.5 at 150%): a move's points become pixels with it.
+    public double Scale = 1.0;
+    public double PixelsPerPoint() => Scale;
 
     public List<INPUT> All() { lock (Calls) return Calls.SelectMany(c => c).ToList(); }
 }
@@ -136,6 +139,26 @@ public class RemoteInputTests
     {
         Run("""{"type":"move","dx":10,"dy":-20}""");
         Assert.Equal(new[] { Show(MoveTo(110, 180, 1920, 1080)) }, Sent());
+    }
+
+    // The page sends points (its finger movement times screenWidth, in points, over the picture's
+    // width): at 150% one point is one and a half pixels, so a drag across the picture still
+    // crosses the whole screen. Scroll stays in points (a wheel notch scrolls 100 of them).
+    [Fact]
+    public void MoveTurnsPointsIntoPixelsAtTheDisplaysScale()
+    {
+        fake.Scale = 1.5;
+        Run("""{"type":"move","dx":10,"dy":-20}""");
+        fake.Scale = double.NaN;  // nonsense from Windows: taken as 100%
+        Run("""{"type":"move","dx":10,"dy":-20}""");
+        Assert.Equal(new[] { Show(MoveTo(115, 170, 1920, 1080)), Show(MoveTo(110, 180, 1920, 1080)) }, Sent());
+        // A drag across the whole picture: screenWidth (points) is the whole width in pixels again.
+        fake.Calls.Clear();
+        fake.Scale = 1.5;
+        fake.CursorX = 0;
+        int points = SystemReadings.Points(1920, 144);
+        Run($$"""{"type":"move","dx":{{points}},"dy":0}""");
+        Assert.Equal(new[] { Show(MoveTo(1919, 200, 1920, 1080)) }, Sent());
     }
 
     [Fact]

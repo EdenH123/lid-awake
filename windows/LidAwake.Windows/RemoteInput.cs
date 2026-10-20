@@ -198,14 +198,17 @@ public sealed class InputInjector
 
     // Relative to where the pointer is, kept on the primary display. Sent as an absolute move to
     // the new place: a relative MOUSEEVENTF_MOVE would be scaled by the pointer speed and
-    // acceleration settings, and could leave the primary display.
+    // acceleration settings, and could leave the primary display. dx and dy are in points (the
+    // page scales the finger by /status's screenWidth, which is in points): turned into pixels.
     void Move(JsonElement cmd)
     {
         var (w, h) = native.PrimaryScreen();
         if (w <= 0 || h <= 0) return;
         var (cx, cy) = Pointer(w, h);
-        int x = Math.Clamp(cx + (int)Math.Round(Number(cmd, "dx")), 0, w - 1);
-        int y = Math.Clamp(cy + (int)Math.Round(Number(cmd, "dy")), 0, h - 1);
+        double perPoint = native.PixelsPerPoint();
+        if (!double.IsFinite(perPoint) || perPoint <= 0) perPoint = 1;
+        int x = Math.Clamp(cx + (int)Math.Round(Number(cmd, "dx") * perPoint), 0, w - 1);
+        int y = Math.Clamp(cy + (int)Math.Round(Number(cmd, "dy") * perPoint), 0, h - 1);
         Inject(new[] { MoveTo(x, y, w, h) });
     }
 

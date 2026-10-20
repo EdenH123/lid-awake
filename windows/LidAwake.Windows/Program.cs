@@ -311,8 +311,10 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add("Quit Lid Awake", null, (_, _) =>
         {
             // Wait (a little) for Serve to be removed, through the same one-at-a-time path as
-            // turning off, so a turn-on still being applied cannot add it back after it.
-            var unserved = SetAwake(false);
+            // turning off, so a turn-on still being applied cannot add it back after it. At once,
+            // not after PhoneAccess.OffDelay as a plain turn-off.
+            SetAwake(false);
+            var unserved = phone.Off();
             // ... and for the screen's brightness to be put back (done off this thread).
             try { Task.WaitAll(new[] { unserved, screen.SetOn(false) }, TimeSpan.FromSeconds(5)); }
             catch (Exception) { }
@@ -402,7 +404,7 @@ sealed class TrayApp : ApplicationContext
         camera?.StopAll();
         // The brightness goes back at the same time (off this thread), not after the rest.
         var screenDone = screen.SetOn(false);
-        SessionEnd.TurnOff(machine, () => phone.Set(false), log);
+        SessionEnd.TurnOff(machine, phone.Off, log);
         try { screenDone.Wait(TimeSpan.FromSeconds(2)); }
         catch (Exception) { }
     }

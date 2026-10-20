@@ -65,7 +65,7 @@ public sealed partial class WebServer : IDisposable
         rawHtml = File.ReadAllText(Path.Combine(web, "index.html"));
         // Hashed before the launch-screen marker is replaced, once, so editing the page never needs a code change.
         scriptHashes = PageHeaders.ScriptHashes(rawHtml);
-        html = rawHtml.Replace("<!--SPLASH-->", "");
+        html = rawHtml.Replace("<!--SPLASH-->", Splash.LinkTags);
     }
 
     public int Port => port;
@@ -274,8 +274,14 @@ public sealed partial class WebServer : IDisposable
                 Empty(c);
                 return;
             case ("GET", "/status"):
-                await SendJson(c, status());
+            {
+                // Plus how this very phone reaches the PC (6.6), which never waits for Tailscale.
+                var answer = status();
+                if (answer is Dictionary<string, object?> fields && tailnet.Link(req.Headers["X-Forwarded-For"].ToString()) is { } link)
+                    answer = new Dictionary<string, object?>(fields) { ["link"] = link };
+                await SendJson(c, answer);
                 return;
+            }
             case ("POST", "/awake"):
             {
                 var body = await ReadJson(c.Request);
@@ -635,6 +641,15 @@ public sealed partial class WebServer : IDisposable
 
     async Task Static(HttpContext c, string path)
     {
+        // The iPhone launch screens, drawn here (Splash) for the sizes the page's link tags list.
+        if (path.StartsWith("/splash/", StringComparison.Ordinal))
+        {
+            if (Splash.Png(path) is not { } png) { await SendText(c, 404, "Not found"); return; }
+            c.Response.ContentType = "image/png";
+            c.Response.ContentLength = png.Length;
+            await c.Response.Body.WriteAsync(png);
+            return;
+        }
         string? file = path switch
         {
             "/sw.js" => Path.Combine(web, "sw.js"),
@@ -643,7 +658,7 @@ public sealed partial class WebServer : IDisposable
             "/icon-512.png" => Path.Combine(baseDir, "icon-512.png"),
             "/sky/sunrise.jpg" or "/sky/day.jpg" or "/sky/sunset.jpg" or "/sky/night.jpg" =>
                 Path.Combine(baseDir, "sky", "sky-" + path["/sky/".Length..]),
-            _ => null,  // includes /splash/*: the Mac's iPhone launch screens are optional
+            _ => null,
         };
         string contentType = path switch
         {

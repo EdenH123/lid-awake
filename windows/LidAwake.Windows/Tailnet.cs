@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -59,6 +61,7 @@ public sealed class Tailnet
     {
         this.settings = settings;
         exec = run is null ? new Func<string, CliResult>(RunExe) : FromOutput(run);
+        peers = new(ReadPeers, PeersEvery);
     }
 
     static Func<string, CliResult> FromOutput(Func<string, string?> run) =>
@@ -68,6 +71,7 @@ public sealed class Tailnet
     {
         this.settings = settings;
         this.exec = exec;
+        peers = new(ReadPeers, PeersEvery);
     }
 
     // For tests that need what a failed or timed-out command printed.
@@ -94,12 +98,112 @@ public sealed class Tailnet
     {
         try
         {
-            var json = Run("status --json");
-            if (string.IsNullOrWhiteSpace(json)) return;
-            using var doc = JsonDocument.Parse(json);
-            Learn(doc.RootElement);
+            using var doc = ReadStatus();
+            if (doc != null) Learn(doc.RootElement);
         }
         catch (Exception) { }
+    }
+
+    // One `status --json`, parsed; null when Tailscale printed nothing (or failed). Throws on
+    // output that isn't JSON.
+    JsonDocument? ReadStatus()
+    {
+        var json = Run("status --json");
+        return string.IsNullOrWhiteSpace(json) ? null : JsonDocument.Parse(json);
+    }
+
+    // ---- link in /status (6.6): how the phone that asks reaches this PC ----
+
+    // A peer device as `status --json` shows it: CurAddr (its direct address and port, empty
+    // while relayed), Relay (the relay's region code) and Active (traffic is flowing now).
+    public readonly record struct PeerPath(string Direct, string Relay, bool Active);
+
+    public static readonly TimeSpan PeersEvery = TimeSpan.FromSeconds(10);
+
+    // Every peer by each of its Tailscale addresses, read in the background at most every 10
+    // seconds. A read with no peers (Tailscale failed) keeps the last ones, as on the Mac.
+    readonly BackgroundValue<Dictionary<string, PeerPath>> peers;
+
+    Dictionary<string, PeerPath>? ReadPeers()
+    {
+        using var doc = ReadStatus();
+        if (doc == null) return null;
+        var found = Peers(doc.RootElement);
+        return found.Count > 0 ? found : null;
+    }
+
+    // The Peer map of a parsed `status --json`, by each address in the peer's TailscaleIPs (in
+    // IPAddress's own spelling, so the request's address compares however it was written).
+    public static Dictionary<string, PeerPath> Peers(JsonElement root)
+    {
+        var found = new Dictionary<string, PeerPath>();
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("Peer", out var list) || list.ValueKind != JsonValueKind.Object)
+            return found;
+        foreach (var entry in list.EnumerateObject())
+        {
+            var peer = entry.Value;
+            if (peer.ValueKind != JsonValueKind.Object
+                || !peer.TryGetProperty("TailscaleIPs", out var ips) || ips.ValueKind != JsonValueKind.Array) continue;
+            var path = new PeerPath(Text(peer, "CurAddr"), Text(peer, "Relay"),
+                peer.TryGetProperty("Active", out var a) && a.ValueKind == JsonValueKind.True);
+            foreach (var ip in ips.EnumerateArray())
+                if (ip.ValueKind == JsonValueKind.String && IPAddress.TryParse(ip.GetString(), out var address))
+                    found[address.ToString()] = path;
+        }
+        return found;
+    }
+
+    static string Text(JsonElement o, string name) =>
+        o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+
+    // `link` for the device at `forwardedFor`, the X-Forwarded-For header Tailscale Serve adds (its
+    // Tailscale address, which a device can't fake). Null when unknown. Never waits for Tailscale:
+    // each call only starts a background read when the last one is older than 10 seconds, so the
+    // first status after a while has no link yet, as on the Mac.
+    public string? Link(string? forwardedFor)
+    {
+        var known = peers.Latest;
+        if (known == null || ForwardedAddress(forwardedFor) is not { } ip) return null;
+        return known.TryGetValue(ip, out var peer) ? LinkText(peer) : null;
+    }
+
+    // The last address in X-Forwarded-For (the one Serve itself added, after any the device sent),
+    // in IPAddress's spelling; null when there is none.
+    public static string? ForwardedAddress(string? forwardedFor)
+    {
+        if (string.IsNullOrWhiteSpace(forwardedFor)) return null;
+        var last = forwardedFor.Split(',')[^1].Trim();
+        return IPAddress.TryParse(last, out var address) ? address.ToString() : null;
+    }
+
+    static readonly Dictionary<string, string> RelayCities = new()
+    {
+        ["par"] = "Paris", ["fra"] = "Frankfurt", ["ams"] = "Amsterdam", ["lhr"] = "London", ["mad"] = "Madrid",
+        ["waw"] = "Warsaw", ["tlv"] = "Tel Aviv", ["nyc"] = "New York", ["sfo"] = "San Francisco", ["sin"] = "Singapore",
+    };
+
+    // The Mac's words (Tailnet.path): "Direct · same Wi-Fi", "Direct · iPhone hotspot", "Direct ·
+    // over the internet", "Through a relay in Paris" or "Through a relay server". Null for an idle
+    // device with no live path yet (the page is about to make one).
+    public static string? LinkText(PeerPath peer)
+    {
+        if (!peer.Active && peer.Direct.Length == 0) return null;
+        if (peer.Direct.Length == 0)
+            return RelayCities.TryGetValue(peer.Relay, out var city) ? "Through a relay in " + city : "Through a relay server";
+        // The address part of "1.2.3.4:41641" or "[fe80::1]:41641".
+        var address = peer.Direct;
+        int colon = address.LastIndexOf(':');
+        if (colon >= 0) address = address[..colon];
+        address = address.Trim('[', ']');
+        if (address.StartsWith("172.20.10.", StringComparison.Ordinal)) return "Direct · iPhone hotspot";
+        var octets = address.Split('.')
+            .Select(p => int.TryParse(p, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : (int?)null)
+            .Where(n => n != null).Select(n => n!.Value).ToArray();
+        bool privateV4 = octets.Length == 4 && (octets[0] == 10 || (octets[0] == 192 && octets[1] == 168)
+            || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] == 169 && octets[1] == 254));
+        var lower = address.ToLowerInvariant();
+        bool privateV6 = lower.StartsWith("fe80", StringComparison.Ordinal) || lower.StartsWith("fd", StringComparison.Ordinal);
+        return privateV4 || privateV6 ? "Direct · same Wi-Fi" : "Direct · over the internet";
     }
 
     // What the "Set up Lid Awake" window shows about Tailscale, from one `status --json` (the
