@@ -122,7 +122,7 @@ public sealed class HistoryWriteTests : IDisposable
     public void ALocalExeIsKept()
     {
         Directory.CreateDirectory(folder);
-        File.WriteAllText(FilePath, "{\"v\":2,\"apps\":{\"k\":[\"K\",\"app\",\"D:\\\\Tools\\\\x.exe\",null]}},"
+        File.WriteAllText(FilePath, "{\"v\":2,\"apps\":{\"k\":[\"K\",\"app\",\"D:\\\\Tools\\\\x.exe\",null]},"
                                     + $"\"samples\":[[{T0 - 60},50,0,0,null,50,60,{{\"k\":5}}]]}}");
         var store = new HistoryStore(folder, () => now, 4) { Icons = new FakeAppIcons() };
         Assert.Equal(new CpuApp("k", "K", "app", @"D:\Tools\x.exe"), store.App("k"));
