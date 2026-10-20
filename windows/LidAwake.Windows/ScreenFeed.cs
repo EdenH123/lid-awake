@@ -114,6 +114,21 @@ public sealed class ScreenFeed : IDisposable
     public string? EncoderName { get { lock (gate) return encoderName; } }
     public string? VideoProblem { get { lock (gate) return videoProblem; } }
     public string PresetName { get { lock (gate) return preset.Name; } }
+
+    // The diagnostics log (DiagnosticsLog): one line per capture session when it ends
+    // (StreamStats), and each fallback (Desktop Duplication to GDI, one encoder to another, video
+    // to still pictures) when it happens. Set before the first watcher.
+    public Action<string>? Diag { get; set; }
+
+    // This capture session's numbers, kept by the capture thread itself: a capture that stops can
+    // still be finishing while the next one starts on a new thread.
+    [ThreadStatic] static StreamStats? session;
+
+    void DiagNote(string text)
+    {
+        try { Diag?.Invoke(text); }
+        catch (Exception) { }
+    }
     public int Bitrate { get { lock (gate) return bitrate; } }
 
     long Now => clock.ElapsedMilliseconds;
@@ -337,6 +352,7 @@ public sealed class ScreenFeed : IDisposable
         int level = 0, grabFailures = 0, encodeFailures = 0;
         long nextOpen = 0, sharpenDue = -1, lastSharpen = long.MinValue / 2;
         var last = new LastPicture();
+        session = new StreamStats("screen");
         try
         {
             while (true)
@@ -395,6 +411,7 @@ public sealed class ScreenFeed : IDisposable
                         continue;
                     }
                     lock (gate) { unavailable = false; grabberKind = grabber.Kind; }
+                    session?.Capture(grabber.Kind);
                     Note("Screen capture: " + grabber.Kind);
                     last.Clear();
                     force = true;
@@ -418,7 +435,12 @@ public sealed class ScreenFeed : IDisposable
                     if (++grabFailures >= 3)
                     {
                         grabFailures = 0;
-                        if (level == 0) level = 1;
+                        if (level == 0)
+                        {
+                            level = 1;
+                            session?.Fallback();
+                            DiagNote("screen capture fallback: Desktop Duplication failed 3 times, GDI from now on (" + e.Message + ")");
+                        }
                         else
                         {
                             nextOpen = Now + RetryOpenMs;
@@ -489,6 +511,9 @@ public sealed class ScreenFeed : IDisposable
         {
             Dispose(ref grabber);
             Dispose(ref encoder);
+            var ended = session;
+            session = null;
+            if (ended != null) DiagNote(ended.Line());
         }
     }
 
@@ -552,6 +577,7 @@ public sealed class ScreenFeed : IDisposable
                 return null;
             }
             lock (gate) encoderName = encoder.Name;
+            if (session?.Encoder(encoder.Name) is { } before) DiagNote($"screen encoder fallback: {before} → {encoder.Name}");
             Note($"Screen video: {encoder.Name}, {image.Width}x{image.Height}");
             fresh = true;
         }
@@ -575,6 +601,8 @@ public sealed class ScreenFeed : IDisposable
 
     void BreakVideo(string why)
     {
+        session?.Fallback();
+        DiagNote("screen encoder fallback: no H.264 encoder works, still pictures instead (" + why + ")");
         lock (gate)
         {
             videoBroken = true;
@@ -588,6 +616,7 @@ public sealed class ScreenFeed : IDisposable
     void Distribute(IReadOnlyList<(VideoConfig Config, VideoChunk Chunk)> output)
     {
         if (output.Count == 0) return;
+        foreach (var (_, chunk) in output) session?.Frame(chunk.Data.Length, chunk.Key);
         var sends = new List<(VideoSink Sink, VideoPacket Packet)>();
         lock (gate)
         {
@@ -631,6 +660,7 @@ public sealed class ScreenFeed : IDisposable
             bool video = sinks.Count > 0 && !videoBroken;
             pushes = subscribers.Where(s => !(video && sinks.ContainsKey(s.Key))).Select(s => s.Value.Frame).ToList();
         }
+        session?.Picture(jpeg.Length);
         foreach (var p in polls) p.TrySetResult(new Poll(Result.Frame, jpeg, id));
         foreach (var push in pushes) Safe(() => push(jpeg));
     }

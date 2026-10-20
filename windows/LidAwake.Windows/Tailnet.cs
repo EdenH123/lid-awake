@@ -221,19 +221,44 @@ public sealed class Tailnet
         try
         {
             var r = exec("status --json");
-            if (r.Missing) return new(false, false, false);
-            if (!r.Ok || string.IsNullOrWhiteSpace(r.Output)) return new(true, false, false);
-            using var doc = JsonDocument.Parse(r.Output);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return new(true, false, false);
-            // A settings file that can't be written doesn't change what Tailscale said.
-            try { Learn(root); }
-            catch (Exception) { }
-            bool running = root.TryGetProperty("BackendState", out var b) && b.ValueKind == JsonValueKind.String && b.GetString() == "Running";
-            bool https = root.TryGetProperty("CertDomains", out var c) && c.ValueKind == JsonValueKind.Array && c.GetArrayLength() > 0;
-            return new(true, running, https);
+            var read = ReadSetup(r);
+            if (read.State.Installed && r.Ok)
+            {
+                // A settings file that can't be written doesn't change what Tailscale said.
+                try
+                {
+                    using var doc = JsonDocument.Parse(r.Output);
+                    Learn(doc.RootElement);
+                }
+                catch (Exception) { }
+            }
+            return read.State;
         }
         catch (Exception) { return new(true, false, false); }
+    }
+
+    // The same from one `status --json` as it came, saving nothing (also for `LidAwake.exe
+    // --selftest`): the state, this PC's HTTPS name (Self.DNSName, when it is a .ts.net one) and
+    // BackendState as Tailscale said it ("Running", "NeedsLogin"…). Never throws.
+    public static (SetupState State, string? Name, string? Backend) ReadSetup(CliResult r)
+    {
+        if (r.Missing) return (new(false, false, false), null, null);
+        if (!r.Ok || string.IsNullOrWhiteSpace(r.Output)) return (new(true, false, false), null, null);
+        try
+        {
+            using var doc = JsonDocument.Parse(r.Output);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return (new(true, false, false), null, null);
+            var backend = root.TryGetProperty("BackendState", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
+            bool https = root.TryGetProperty("CertDomains", out var c) && c.ValueKind == JsonValueKind.Array && c.GetArrayLength() > 0;
+            string? name = null;
+            if (root.TryGetProperty("Self", out var self) && self.ValueKind == JsonValueKind.Object
+                && self.TryGetProperty("DNSName", out var d) && d.ValueKind == JsonValueKind.String
+                && d.GetString() is { } dns && dns.EndsWith(".ts.net.", StringComparison.OrdinalIgnoreCase))
+                name = dns.TrimEnd('.').ToLowerInvariant();
+            return (new(true, backend == "Running", https), name, backend);
+        }
+        catch (Exception) { return (new(true, false, false), null, null); }
     }
 
     // The name and owner from a parsed `status --json`, saved together or not at all.
@@ -343,7 +368,20 @@ public sealed class Tailnet
     {
         if (said == lastLiveProblem) return;
         lastLiveProblem = said;
+        Note("Tailscale Serve: /live (the live screen) not published: " + said);
         try { LiveNotPublished?.Invoke(said); }
+        catch (Exception) { }
+    }
+
+    // Serve errors for the diagnostics log (DiagnosticsLog), each one once until it changes.
+    public Action<string>? Diag { get; set; }
+    string? lastNote;
+
+    void Note(string text)
+    {
+        if (text == lastNote) return;
+        lastNote = text;
+        try { Diag?.Invoke(text); }
         catch (Exception) { }
     }
 
@@ -397,9 +435,14 @@ public sealed class Tailnet
                     settings.Set(ServedKey, false);
                     if (settings.Get<bool?>(LiveServedKey) == true) settings.Set(LiveServedKey, false);
                 }
+                else Note("Tailscale Serve: removing the phone page failed; tried again later");
                 return;
             }
-            if (settings.Get<bool?>(LiveServedKey) == true && TryUnserveLive()) settings.Set(LiveServedKey, false);
+            if (settings.Get<bool?>(LiveServedKey) == true)
+            {
+                if (TryUnserveLive()) settings.Set(LiveServedKey, false);
+                else Note("Tailscale Serve: removing /live failed; tried again later");
+            }
         }
         catch (Exception) { }
     }
@@ -440,9 +483,12 @@ public sealed class Tailnet
             if (port == 0) { UnserveIfOurs(); return; }
             if (Serve(port) is { } said)
             {
+                Note("Tailscale Serve: the phone page not published: " + said);
                 try { NotPublished?.Invoke(said); }
                 catch (Exception) { }
             }
+            // Published: the same problem coming back later is written again.
+            else lastNote = null;
         }
     }
 
@@ -489,7 +535,7 @@ public sealed class Tailnet
 
     // Runs tailscale.exe for at most 15 seconds. `serve --bg` can wait for the owner to allow
     // Serve in the browser: then it is stopped, and what it printed so far is kept.
-    static CliResult RunExe(string args)
+    internal static CliResult RunExe(string args)
     {
         try
         {

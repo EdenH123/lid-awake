@@ -14,6 +14,12 @@ static class Program
             Environment.ExitCode = exitCode;
             return;
         }
+        // The troubleshooting flags (--selftest, --battery): the same, they only read and report.
+        if (Troubleshooting.Run(args) is { } checkCode)
+        {
+            Environment.ExitCode = checkCode;
+            return;
+        }
         using var single = new Mutex(true, "local.lidawake", out bool first);
         if (!first) return;
         ApplicationConfiguration.Initialize();
@@ -27,9 +33,13 @@ static class Program
         Tailnet.MoveToMachine(settings, machine);
         var tailnet = new Tailnet(machine);
         var log = new AccessLog();
+        // The troubleshooting lines (stream sessions, stay-awake, alert results, fallbacks, Serve errors).
+        var diag = new DiagnosticsLog();
+        tailnet.Diag = diag.Write;
         KeepAwake.Log = log.Write;
         WlanReader.Log = log.Write;
-        TemperatureSources.Log = log.Write;
+        // Which sensor the temperature comes from, and one left out as stuck: both logs.
+        TemperatureSources.Log = text => { log.Write(text); diag.Write(text); };
         // Put back what a crash or a forced stop left behind, before anything else (and before
         // any message could wait for a click): the lid action, and Serve if Lid Awake added it.
         KeepAwake.Off(machine);
@@ -81,12 +91,12 @@ static class Program
         var grabbers = new ScreenGrabbers { Note = text => log.Write("Screen: " + text) };
         using var feed = new ScreenFeed(grabbers.Open,
             MfH264Encoder.Factory(allowHardware: hardwareEncoder),
-            note: text => log.Write("Screen: " + text));
+            note: text => log.Write("Screen: " + text)) { Diag = diag.Write };
         feed.WatchingChanged += ScreenWatch.Capturing;
         var status = new StatusInfo(readings, limits, heat, phoneApps, ScreenAllowed) { Screen = screen, Control = control };
         // Phone alerts (Web Push). The key and the phones are this PC's own (machine.json); a new
         // password forgets the phones. Sign-ins are announced to them as `security` alerts.
-        using var push = new WebPush(machine);
+        using var push = new WebPush(machine) { Diag = diag.Write };
         auth.PasswordSet += push.RemoveAll;
         var alerts = new PhoneAlerts(push.Send, readings.Power, () => heat.Latest.Battery, () => limits.HeatGuard);
         // Claude plan usage (/status, the tray, the 90% alert) and the Claude session alerts (ClaudeAlerts.cs).
@@ -109,7 +119,7 @@ static class Program
         status.CameraAllowed = () => cameraSwitch.Allowed;
         var cameraTickets = new CameraTickets();
         using var camera = new CameraService(cameraTickets, () => tray?.IsOn == true && cameraSwitch.Allowed,
-            new CameraHardware(() => screen.LidClosed), cameraEncoders, new TalkPlayer(WasapiTalkOutput.Open), log);
+            new CameraHardware(() => screen.LidClosed), cameraEncoders, new TalkPlayer(WasapiTalkOutput.Open), log) { Diag = diag.Write };
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.TurnOffFromPhone(), (title, body) =>
@@ -125,7 +135,7 @@ static class Program
                 limits.Set(name, on);
                 tray?.LimitsChanged();
             },
-            push: push, control: control, screen: feed, screenAllowed: ScreenAllowed);
+            push: push, control: control, screen: feed, screenAllowed: ScreenAllowed) { Diag = diag.Write };
         // The live socket (started below, after the page). Input commands on it go to the same
         // control as POST /input (7.6); camera messages go to the camera first, and a socket that
         // closes closes its camera.
@@ -160,7 +170,7 @@ static class Program
         tailnet.LiveNotPublished = said => log.Write("Screen viewing not published by Tailscale (the phone page works): " + said);
         tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, alerts, screen,
             phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet, readings.Power, server.ScreenPolls,
-            () => TrayText.MinutesToFull(readings.Charge()));
+            () => TrayText.MinutesToFull(readings.Charge()), diag);
         // Claude in the tray (TrayClaude): its items after the safety limits, its "Claude 59% ·
         // 1h40m" as the tooltip's last line (the tray composes it), brought up to date each time
         // the menu opens (TrayApp.MenuOpening), then attached.
@@ -293,8 +303,9 @@ sealed class TrayApp : ApplicationContext
                    PhoneApps? apps = null, IStartMenuSource? startMenu = null, RemoteControl? control = null,
                    LiveServer? live = null, CameraSwitch? cameraSwitch = null, CameraService? camera = null,
                    Tailnet? tailnet = null, Func<PowerReading?>? power = null, ScreenPolls? screenPolls = null,
-                   Func<int>? minutesToFull = null)
+                   Func<int>? minutesToFull = null, DiagnosticsLog? diag = null)
     {
+        this.diag = diag;
         this.tailnet = tailnet;
         this.power = power;
         this.minutesToFull = minutesToFull;
@@ -406,6 +417,12 @@ sealed class TrayApp : ApplicationContext
         ShowPassword();
         if (phoneApps != null && startMenu != null) menu.Items.Add("Apps on phone…", null, (_, _) => ShowAppsForm());
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
+        // For finding out why something doesn't work (the Mac's --selftest, --battery and stream log).
+        var troubleshooting = new ToolStripMenuItem("Troubleshooting");
+        troubleshooting.DropDownItems.Add("Run self-test", null, (_, _) => RunCheck(Troubleshooting.SelfTestFlag));
+        troubleshooting.DropDownItems.Add("Battery check", null, (_, _) => RunCheck(Troubleshooting.BatteryFlag));
+        troubleshooting.DropDownItems.Add("Open diagnostics log", null, (_, _) => ShowDiagnosticsLog());
+        menu.Items.Add(troubleshooting);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit Lid Awake", null, (_, _) =>
         {
@@ -706,12 +723,30 @@ sealed class TrayApp : ApplicationContext
     void ShowActivityLog()
     {
         if (!File.Exists(log.FilePath)) log.Write("Activity log started");
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(log.FilePath) { UseShellExecute = true }); }
-        catch (Exception)
+        Troubleshooting.Open(log.FilePath);
+    }
+
+    // ---- Troubleshooting (the Mac's --selftest and --battery, and its stream log) ----
+
+    readonly DiagnosticsLog? diag;
+    // One check at a time (each runs LidAwake.exe with its flag, in the background).
+    int checkRunning;
+
+    void RunCheck(string flag)
+    {
+        if (Interlocked.Exchange(ref checkRunning, 1) == 1) return;
+        Task.Run(() =>
         {
-            try { System.Diagnostics.Process.Start("notepad.exe", "\"" + log.FilePath + "\""); }
-            catch (Exception) { }
-        }
+            try { Troubleshooting.RunAndShow(flag, log.Write); }
+            finally { Volatile.Write(ref checkRunning, 0); }
+        });
+    }
+
+    void ShowDiagnosticsLog()
+    {
+        var d = diag ?? new DiagnosticsLog();
+        if (!File.Exists(d.FilePath)) d.Write("Diagnostics log started");
+        Troubleshooting.Open(d.FilePath);
     }
 
     // The "Allow screen from phone" switch. Turning it off closes every live socket at once (the

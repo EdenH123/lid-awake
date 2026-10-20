@@ -103,6 +103,13 @@ public sealed class WebPush : IDisposable
         catch (Exception e) when (e is JsonException or InvalidOperationException) { return null; }
     }
 
+    // A stored key (machine.json's pushKey) that works, for `LidAwake.exe --selftest`; nothing is made or saved.
+    public static bool KeyWorks(string? stored)
+    {
+        using var key = Loaded(stored);
+        return key != null;
+    }
+
     static ECDsa? Loaded(string? stored)
     {
         if (string.IsNullOrEmpty(stored)) return null;
@@ -229,23 +236,36 @@ public sealed class WebPush : IDisposable
             var payload = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, string> { ["title"] = title, ["body"] = body, ["tag"] = kind });
             return Task.Run(async () =>
             {
-                try { await Task.WhenAll(targets.Select(t => SendOne(t, payload))); }
+                try { await Task.WhenAll(targets.Select(t => SendOne(t, payload, kind))); }
                 catch (Exception) { }
             });
         }
         catch (Exception) { return Task.CompletedTask; }
     }
 
-    async Task SendOne(Subscription target, byte[] payload)
+    // What each push service answered, for the diagnostics log (DiagnosticsLog.PushLine: the kind,
+    // the service's host and the status code, never the phone's endpoint path or keys).
+    public Action<string>? Diag { get; set; }
+
+    void Note(string kind, string endpoint, int status, string? failure = null)
+    {
+        try { Diag?.Invoke(DiagnosticsLog.PushLine(kind, endpoint, status, failure)); }
+        catch (Exception) { }
+    }
+
+    async Task SendOne(Subscription target, byte[] payload, string kind)
     {
         try
         {
             using var request = Request(target, payload);
-            if (request == null) return;
+            if (request == null) { Note(kind, target.Endpoint, 0, "its stored keys don't work"); return; }
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-            if ((int)response.StatusCode is 404 or 410) Unsubscribe(target.Endpoint);
+            int status = (int)response.StatusCode;
+            if (status is 404 or 410) Unsubscribe(target.Endpoint);
+            Note(kind, target.Endpoint, status);
         }
-        catch (Exception) { }  // a timeout, no network, a refused connection: this alert is lost
+        // A timeout, no network, a refused connection: this alert is lost.
+        catch (Exception e) { Note(kind, target.Endpoint, 0, DiagnosticsLog.Failure(e)); }
     }
 
     // The POST for one phone, or null when its stored keys don't work (the phone is kept).

@@ -402,7 +402,7 @@ Body: `{"minutes": <integer>}`, one of `0, 15, 30, 60, 120, 240, 480`. `0` means
 
 `200` JSON. Fields are in section 6.
 
-Optional query `wl`: text the page sends about its own wake-lock state (for example `held on status`). The Mac keeps letters, digits, spaces and `:()-`, cuts it at 60 characters, and writes a log line when it changes for that caller. An agent may ignore it.
+Optional query `wl`: text the page sends about its own wake-lock state (for example `held on status`). The Mac keeps letters, digits, spaces and `:()-`, cuts it at 60 characters, and writes a log line when it changes for that caller. Windows does the same, as `phone stay-awake: <state>` in `%LOCALAPPDATA%\LidAwake\LidAwake-diagnostics.log` (the caller is told apart by `X-Forwarded-For`, which is not written). An agent may ignore it.
 
 The page asks every 3 seconds, with an 8-second timeout. If 8 seconds pass with no good answer after it has had one, it shows "Can't reach Mac".
 

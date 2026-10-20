@@ -43,6 +43,9 @@ public interface IH264Encoder : IDisposable
     // in microseconds. `keyframe`: this one must be a keyframe. Gives back what the encoder has
     // ready, oldest first: zero, one or more access units.
     IReadOnlyList<H264Unit> Encode(byte[] nv12, long micros, bool keyframe);
+
+    // Which encoder this is, for the diagnostics log.
+    string Name => "H.264 encoder";
 }
 
 // One encoded access unit, Annex B, with whether it is a keyframe and its time in microseconds.

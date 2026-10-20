@@ -365,6 +365,47 @@ public class TemperatureVendorsTests : IDisposable
         Assert.Equal("the battery's own sensor and the thermal zone counters", chain.Source);
     }
 
+    // ReadRound names each value's own source, for the self-test and the battery check, and their
+    // report then shows what the app itself would decide from the same round.
+    [Fact]
+    public void EachValueIsNamedByItsOwnSourceAndTheBatteryCheckUsesTheWholeRound()
+    {
+        var wmi = new FakeWmi();
+        wmi[Hp] = Rows(HpSensor("Battery Temperature", 35));
+        counters = Counters(3252);  // 52.05 °C
+        var chain = Chain(wmi);
+        var round = chain.ReadRound();
+        Assert.Equal(new TemperatureRound(new TemperatureReading(35.0, round.Reading.Zone, ZoneConfirmed: false),
+            "HP BIOS sensors", TemperatureChain.FromZoneCounters), round);
+        battery = 33.0;
+        Assert.Equal(TemperatureChain.FromBattery, chain.ReadRound().BatteryFrom);
+
+        // Only HP's processor die sensor, at 95 and then 96 °C: past the board's 90 °C limit but under
+        // its own 100 °C one, so no safety stop.
+        (battery, counters) = (null, null);
+        Assert.Equal(TemperatureRound.None, Chain(new FakeWmi()).ReadRound());
+        wmi[Hp] = Rows(HpSensor("CPU0 Temperature", 95));
+        var die = Chain(wmi);
+        die.Read();
+        Later(TimeSpan.FromSeconds(15));
+        wmi[Hp] = Rows(HpSensor("CPU0 Temperature", 96));
+        var hot = die.ReadRound();
+        Assert.Equal(Limits.MaxDieTemp, hot.Reading.ZoneLimit);
+        var text = BatteryCheck.Report(new BatteryCheck.Readings(PluggedIn, null, hot, null), DateTimeOffset.Now);
+        Assert.Contains("\ntemperature, PC (HP BIOS sensors, a processor die sensor, limit 100 °C): 96.0 °C\n", text);
+        Assert.Contains("\nsafety stop with both limits on: none\n", text);
+
+        // Windows holding the processor to 40% on two reads in a row: too hot.
+        counters = Counters(3252, passive: 40);
+        var slowed = Chain(new FakeWmi());
+        slowed.Read();
+        var throttled = slowed.ReadRound();
+        Assert.True(throttled.Reading.Throttled);
+        text = BatteryCheck.Report(new BatteryCheck.Readings(PluggedIn, null, throttled, counters), DateTimeOffset.Now);
+        Assert.Contains($"\ntemperature, PC (the thermal zone counters, limit 90 °C): {Shown(3252)} °C\n", text);
+        Assert.Contains("\nsafety stop with both limits on: PC too hot (slowed down by Windows)\n", text);
+    }
+
     [Fact]
     public void AMakersBoardSensorIsPreferredOverTheCountersAndADieSensorOnlyWithoutEither()
     {

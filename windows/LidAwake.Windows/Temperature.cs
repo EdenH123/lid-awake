@@ -62,10 +62,13 @@ public static class TemperatureSources
     static readonly TemperatureChain chain = new(BatteryTemperature.Read, ZoneCounters.Read, VendorSensors.All, Wmi.Shared,
         load: () => cpu.Cpu() is { } times ? meter.Percent(times, Environment.TickCount64) : null, log: text => Log?.Invoke(text));
 
-    public static TemperatureReading Read()
+    public static TemperatureReading Read() => ReadRound().Reading;
+
+    // The same read, with the source of each value (the self-test and the battery check).
+    public static TemperatureRound ReadRound()
     {
-        try { return chain.Read(); }
-        catch (Exception) { return TemperatureReading.None; }
+        try { return chain.ReadRound(); }
+        catch (Exception) { return TemperatureRound.None; }
     }
 }
 

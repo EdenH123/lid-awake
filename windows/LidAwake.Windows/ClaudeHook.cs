@@ -47,7 +47,7 @@ public static class ClaudeHook
     // reads its first message (or for some seconds). Claude Code runs the status line as often as
     // every 300 ms, which would keep the pointer busy all the time: post a WM_NULL to this thread
     // and read it once, and Windows drops the pointer at once. Costs a few microseconds.
-    static void EndStartingCursor()
+    internal static void EndStartingCursor()
     {
         try
         {

@@ -87,18 +87,21 @@ public sealed class TemperatureChain
     // zone counters"), null when nothing did.
     public string? Source { get; private set; }
 
-    public TemperatureReading Read()
+    public TemperatureReading Read() => ReadRound().Reading;
+
+    // The reading with where each of its values came from (the self-test and the battery check).
+    public TemperatureRound ReadRound()
     {
         lock (gate)
         {
-            var reading = ReadOnce(out var source);
+            var round = ReadOnce(out var source);
             Source = source;
             if (source != null && logged.Add("from " + source)) Note("Temperature from " + source);
-            return reading;
+            return round;
         }
     }
 
-    TemperatureReading ReadOnce(out string? source)
+    TemperatureRound ReadOnce(out string? source)
     {
         double? cpu = Try(load);
         double? b = Sane(Try(battery));
@@ -149,8 +152,9 @@ public sealed class TemperatureChain
         if (zoneFrom != null && zoneFrom != batteryFrom) parts.Add(zoneFrom);
         source = parts.Count == 0 ? null : string.Join(" and ", parts);
         bool throttled = throttledStreak >= HotReads;
-        return z == null ? new TemperatureReading(b, null, Throttled: throttled)
+        var reading = z == null ? new TemperatureReading(b, null, Throttled: throttled)
             : new TemperatureReading(b, z, limit, ZoneConfirmed: hotStreak >= HotReads, Throttled: throttled);
+        return new TemperatureRound(reading, batteryFrom, z == null ? null : zoneFrom);
 
         // The zones that are alive this round, each tracked by its source and name.
         List<Live> Alive(string from, IEnumerable<NamedZone> named)
@@ -262,6 +266,13 @@ public sealed class TemperatureChain
     }
 
     static double? Sane(double? celsius) => celsius is { } c && TemperatureMath.IsSane(c) ? c : null;
+}
+
+// One round's reading and the source of each of its values (TemperatureChain.FromBattery, a maker's
+// VendorSource.Name...), each null when that value is null.
+public readonly record struct TemperatureRound(TemperatureReading Reading, string? BatteryFrom = null, string? ZoneFrom = null)
+{
+    public static readonly TemperatureRound None = new(TemperatureReading.None);
 }
 
 // One vendor's sensor class: where it is, and how one of its objects reads (null: not a

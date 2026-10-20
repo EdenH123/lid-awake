@@ -222,6 +222,40 @@ public sealed class CameraServiceTests : IDisposable
         Assert.Equal(new[] { "Camera and microphone opened from the phone · iPhone", "Camera and microphone closed · iPhone" }, LogLines());
     }
 
+    // The diagnostics log: one line for the capture when it ends, and a fallback when there is no encoder.
+    [Fact]
+    public void ACameraSessionWritesItsLineToTheDiagnosticsLogWhenItEnds()
+    {
+        var lines = new List<string>();
+        camera.Diag = lines.Add;
+        var phone = Watch();
+        var sink = hardware.Sink!;
+        sink.Frame(Frame(0, tag: 1));
+        sink.Frame(Frame(50_000, tag: 2));
+        Assert.Empty(lines);
+        Assert.True(Send(phone, "{\"camera\":false}"));
+        var line = Assert.Single(lines);
+        Assert.StartsWith("camera session: ", line);
+        Assert.Contains(", 2 frames (", line);
+        Assert.EndsWith(", 12 B, 1 keyframe, encoder H.264 encoder, 0 fallbacks", line);
+    }
+
+    [Fact]
+    public void NoCameraEncoderIsWrittenAsAFallback()
+    {
+        var lines = new List<string>();
+        using var service = Make(null);
+        service.Diag = lines.Add;
+        var phone = new FakeCameraSocket("session-a");
+        Assert.True(service.Receive(phone, Json($"{{\"camera\":true,\"ticket\":\"{tickets.Issue("session-a")}\"}}")));
+        hardware.Sink!.Frame(Frame(0));
+        Assert.Equal(new[] { "camera encoder fallback: no H.264 encoder works, sound only" }, lines);
+        service.StopAll();
+        Assert.Equal(2, lines.Count);
+        Assert.StartsWith("camera session: ", lines[1]);
+        Assert.EndsWith(", 0 frames (0.0 fps), 0 B, 0 keyframes, encoder none, 1 fallback", lines[1]);
+    }
+
     // The tray's camera icon: every phone with the camera open counts, until it closes it.
     [Fact]
     public void WatchersCountsThePhonesWithTheCameraOpen()
