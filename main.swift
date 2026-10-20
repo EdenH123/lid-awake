@@ -121,6 +121,14 @@ func spokenDuration(_ seconds: TimeInterval) -> String {
     return h == 0 ? "\(m) min" : m == 0 ? "\(h) h" : "\(h) h \(m) min"
 }
 
+// "1h40m", "35m", "<1m": short enough for the menu bar.
+func shortDuration(_ seconds: TimeInterval) -> String {
+    let minutes = Int(seconds / 60)
+    if minutes < 1 { return "<1m" }
+    let h = minutes / 60, m = minutes % 60
+    return h == 0 ? "\(m)m" : String(format: "%dh%02dm", h, m)
+}
+
 func sleepDisabled() -> Bool {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
@@ -159,6 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let batteryItem = NSMenuItem(title: "Turn off below \(batteryLimit)% battery", action: nil, keyEquivalent: "")
     let heatItem = NSMenuItem(title: "Turn off if battery is hotter than \(Int(maxBatteryTemp))°C", action: nil, keyEquivalent: "")
     let infoLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    let claudeLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    let claudeBarItem = NSMenuItem(title: "Show Claude usage in menu bar", action: nil, keyEquivalent: "")
+    var claudeBarText: String?  // "59% · 1h40m" next to the icon, nil = nothing to show
+    var baseToolTip = "Lid Awake"
     let remoteItem = NSMenuItem(title: "Allow screen from phone", action: nil, keyEquivalent: "")
     let controlItem = NSMenuItem(title: "Allow control from phone", action: nil, keyEquivalent: "")
     let cameraItem = NSMenuItem(title: "Allow camera & microphone from phone", action: nil, keyEquivalent: "")
@@ -209,6 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         get { defaults.object(forKey: "heatGuard") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "heatGuard") }
     }
+    var claudeInBar: Bool {
+        get { defaults.object(forKey: "claudeInBar") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "claudeInBar") }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -244,6 +260,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         heatItem.action = #selector(toggleHeatGuard)
         statusLine.isEnabled = false
         infoLine.isEnabled = false
+        claudeLine.isEnabled = false
+        claudeBarItem.target = self
+        claudeBarItem.action = #selector(toggleClaudeInBar)
 
         let menu = NSMenu()
         menu.delegate = self
@@ -253,6 +272,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(timerItem)
         menu.addItem(batteryItem)
         menu.addItem(heatItem)
+        menu.addItem(.separator())
+        menu.addItem(claudeLine)
+        menu.addItem(claudeBarItem)
         menu.addItem(.separator())
         menu.addItem(infoLine)
         let pageItem = NSMenuItem(title: "Open live page", action: #selector(openLivePage), keyEquivalent: "")
@@ -350,6 +372,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         RunLoop.main.add(check, forMode: .common)
         RunLoop.main.add(countdown, forMode: .common)
+        // Claude usage next to the icon: re-read the saved numbers every 30 seconds (Claude Code's
+        // status line keeps them fresh while a terminal session runs) and ask Claude for them at
+        // most every 5 minutes otherwise (no message is sent and it uses none of the plan).
+        let claude = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self, self.claudeInBar else { return }
+            SystemInfo.shared.refreshClaudeUsage(every: 300)
+            self.updateClaudeUsage()
+            self.updateBarTitle()
+        }
+        RunLoop.main.add(claude, forMode: .common)
+        if claudeInBar { SystemInfo.shared.refreshClaudeUsage(every: 0) }
         // Lid closed while on: keep the screen available to the phone, dimmed (LidScreen).
         let lid = Timer(timeInterval: 2, repeats: true) { [weak self] _ in LidScreen.update(awake: self?.isOn ?? false) }
         RunLoop.main.add(lid, forMode: .common)
@@ -363,11 +396,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             tick()
             return
         }
-        statusItem.button?.title = " " + formatRemaining(r)
+        updateBarTitle()
         statusLine.title = "Turns off in \(formatRemaining(r))"
     }
 
+    // Icon, then the timer countdown (if any), then Claude usage.
+    func updateBarTitle() {
+        var parts: [String] = []
+        if isOn, let r = endDate?.timeIntervalSinceNow, r > 0 { parts.append(formatRemaining(r)) }
+        if let c = claudeBarText { parts.append(c) }
+        let title = parts.isEmpty ? "" : " " + parts.joined(separator: "  |  ")
+        if statusItem.button?.title != title { statusItem.button?.title = title }
+    }
+
+    // Reads the saved Claude numbers into the bar text and the menu line.
+    func updateClaudeUsage() {
+        let now = Date().timeIntervalSince1970
+        let usage = SystemInfo.shared.claudeUsage()
+        func window(_ key: String) -> (pct: Int, resets: Date?)? {
+            guard let w = usage?[key] as? [String: Any], let pct = w["pct"] as? Double else { return nil }
+            let at = Double(w["resetsAt"] as? Int ?? 0)
+            // Past its reset time the number is old news: hide it until fresh numbers arrive.
+            if at > 0 && at <= now { return nil }
+            return (Int(pct.rounded()), at > 0 ? Date(timeIntervalSince1970: at) : nil)
+        }
+        let session = window("fiveHour"), week = window("sevenDay")
+        if let s = session {
+            claudeBarText = claudeInBar ? "\(s.pct)%" + (s.resets.map { " · " + shortDuration($0.timeIntervalSinceNow) } ?? "") : nil
+        } else {
+            claudeBarText = nil
+        }
+        func when(_ d: Date) -> String {
+            let time = DateFormatter.localizedString(from: d, dateStyle: .none, timeStyle: .short)
+            return Calendar.current.isDateInToday(d) ? time : d.formatted(.dateTime.weekday(.abbreviated)) + " " + time
+        }
+        var lines: [String] = []
+        if let s = session { lines.append("Session \(s.pct)%" + (s.resets.map { ", resets \(when($0))" } ?? "")) }
+        if let w = week { lines.append("Week \(w.pct)%" + (w.resets.map { ", resets \(when($0))" } ?? "")) }
+        claudeLine.title = lines.isEmpty ? "Claude usage: checking…" : "Claude: " + lines.joined(separator: " · ")
+        statusItem.button?.toolTip = baseToolTip + (session.map { "\nClaude session: \($0.pct)% used" + ($0.resets.map { ", resets \(when($0))" } ?? "") } ?? "")
+    }
+
+    @objc func toggleClaudeInBar() {
+        claudeInBar.toggle()
+        if claudeInBar { SystemInfo.shared.refreshClaudeUsage(every: 60) }
+        refresh()
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        SystemInfo.shared.refreshClaudeUsage(every: 60)
         refresh()
         rebuildAppsMenu()
         rebuildDevicesMenu()
@@ -603,13 +680,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let remaining = endDate.map { $0.timeIntervalSinceNow }
         if isOn, let r = remaining, r > 0 {
-            statusItem.button?.title = " " + formatRemaining(r)
             statusLine.title = "Turns off in \(formatRemaining(r))"
         } else {
-            statusItem.button?.title = ""
             statusLine.title = isOn ? "On, no timer" : "Off"
         }
-        statusItem.button?.toolTip = activity.viewers > 0 ? label : isOn ? "Lid Awake: ON" : "Lid Awake: OFF"
+        baseToolTip = activity.viewers > 0 ? label : isOn ? "Lid Awake: ON" : "Lid Awake: OFF"
+        updateClaudeUsage()
+        updateBarTitle()
+        claudeBarItem.state = claudeInBar ? .on : .off
         if activity.viewers > 0 { statusLine.title = activity.controlling ? "Being controlled from your phone" : "Screen being viewed from your phone" }
         if liveServer?.cameraWatched == true { statusLine.title = "Camera being watched from your phone" }
 
