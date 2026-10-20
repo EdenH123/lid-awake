@@ -24,6 +24,8 @@ public static class KeepAwake
     const string LidAction = "5ca83367-6e45-459f-a27b-476b1d01c936"; // LIDACTION
     const string CurrentScheme = "SCHEME_CURRENT";
     const string SchemeKey = "savedLidScheme";
+    // What Lid Awake says (to the activity log) when the plan it changed has been deleted since.
+    public const string PlanGoneNote = "The power plan Lid Awake changed no longer exists; nothing to put back";
     // A power plan's GUID. Matching the GUID rather than the label keeps this independent of the
     // Windows display language.
     const string GuidPattern = @"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}";
@@ -51,6 +53,15 @@ public static class KeepAwake
     // Whether this PC has a lid (null: Windows can't tell). Only asked when the lid action could
     // not be changed, to tell a desktop PC from a laptop. Tests swap this too.
     public static Func<bool?> HasLid { get; set; } = ReadLidPresent;
+
+    // Told things worth a line in the activity log (the tray sets this to the log's Write).
+    public static Action<string>? Log { get; set; }
+
+    static void Note(string text)
+    {
+        try { Log?.Invoke(text); }
+        catch (Exception) { }
+    }
 
     internal static bool IsHolding { get { lock (gate) return holder != null; } }
 
@@ -130,11 +141,25 @@ public static class KeepAwake
     }
 
     // Remember the current lid action (and which power plan it is in) once, then set it to "do
-    // nothing". If powercfg shows no lid action, change nothing and save nothing, so Off() never
-    // "restores" a guessed value. Throws when powercfg fails; Failed when the lid action does not
-    // read back as "do nothing".
+    // nothing" in that plan. If powercfg shows no lid action, change nothing and save nothing, so
+    // Off() never "restores" a guessed value. Throws when powercfg fails; Failed when the current
+    // plan's lid action does not read back as "do nothing".
     static LidResult SetLidToDoNothing(Settings settings)
     {
+        // The plan that gets changed is always the plan that gets restored: when values are
+        // already saved (On twice, or after a crash) that is the plan saved with them.
+        var scheme = CurrentScheme;
+        if (settings.Get<int?>("savedLidAc") is not null && settings.Get<int?>("savedLidDc") is not null)
+        {
+            var saved = SchemeToRestore(settings);
+            if (saved is null)
+            {
+                // That plan is gone, so the old values are of no use: start again from now.
+                ForgetSaved(settings);
+                Note(PlanGoneNote);
+            }
+            else scheme = saved;
+        }
         // Both values must be saved to count: a crash between the two writes leaves only one,
         // and then the lid action has not been changed yet, so read it fresh.
         if (settings.Get<int?>("savedLidAc") is null || settings.Get<int?>("savedLidDc") is null)
@@ -147,9 +172,19 @@ public static class KeepAwake
             settings.Set("savedLidAc", current.Value.ac);
             settings.Set("savedLidDc", current.Value.dc);
         }
-        SetLidAction(CurrentScheme, 0, 0);  // 0 = do nothing
+        SetLidAction(scheme, 0, 0);  // 0 = do nothing
+        // Whether closing the lid now does nothing is a question about the plan in use.
         var now = QueryLidAction(CurrentScheme);
         return now is { } n && n.ac == 0 && n.dc == 0 ? LidResult.Changed : LidResult.Failed;
+    }
+
+    // Forget the saved values and their plan. The plan goes last: values without their plan
+    // would be restored elsewhere.
+    static void ForgetSaved(Settings settings)
+    {
+        settings.Set<int?>("savedLidAc", null);
+        settings.Set<int?>("savedLidDc", null);
+        settings.Set<string?>(SchemeKey, null);
     }
 
     public static void Off(Settings settings)
@@ -162,15 +197,19 @@ public static class KeepAwake
                 if (settings.Get<int?>("savedLidAc") is int ac && settings.Get<int?>("savedLidDc") is int dc)
                 {
                     var scheme = SchemeToRestore(settings);
-                    SetLidAction(scheme, ac, dc);
-                    // Forget the saved values only once the restore is confirmed, in that plan.
-                    // The plan goes last: values without their plan would be restored elsewhere.
-                    var now = ReadLidAction(scheme);
-                    if (now is { } n && n.ac == ac && n.dc == dc)
+                    if (scheme is null)
                     {
-                        settings.Set<int?>("savedLidAc", null);
-                        settings.Set<int?>("savedLidDc", null);
-                        settings.Set<string?>(SchemeKey, null);
+                        // The plan Lid Awake changed was deleted since: nothing to put back, and
+                        // no other plan may be changed for it.
+                        ForgetSaved(settings);
+                        Note(PlanGoneNote);
+                    }
+                    else
+                    {
+                        SetLidAction(scheme, ac, dc);
+                        // Forget the saved values only once the restore is confirmed, in that plan.
+                        var now = ReadLidAction(scheme);
+                        if (now is { } n && n.ac == ac && n.dc == dc) ForgetSaved(settings);
                     }
                 }
             }
@@ -215,21 +254,20 @@ public static class KeepAwake
         catch (Exception) { return null; }
     }
 
-    // The plan the saved values go back into: the one saved with them. The current plan when none
-    // was saved (an older version, or Windows would not say) or when that plan is gone since.
-    static string SchemeToRestore(Settings settings)
+    static bool IsGuid(string text) => Guid.TryParseExact(text, "D", out _);
+
+    // The plan the saved values go back into: the one saved with them; the current plan when none
+    // was saved (an older version, or Windows would not say). null when powercfg lists the plans
+    // and the saved one is not among them: it was deleted, so nothing may be written for it. When
+    // powercfg cannot list them, the saved plan is tried (a failure keeps the saved values).
+    static string? SchemeToRestore(Settings settings)
     {
         var saved = settings.Get<string>(SchemeKey);
-        if (saved is null || !Regex.IsMatch(saved, "^" + GuidPattern + "$")) return CurrentScheme;
-        try
-        {
-            if (!Powercfg("/list").Contains(saved, StringComparison.OrdinalIgnoreCase)) return CurrentScheme;
-        }
-        catch (Exception)
-        {
-            // Cannot tell whether it still exists: try it. A failure keeps the saved values.
-        }
-        return saved;
+        if (saved is null || !IsGuid(saved)) return CurrentScheme;
+        string plans;
+        try { plans = Powercfg("/list"); }
+        catch (Exception) { return saved; }
+        return plans.Contains(saved, StringComparison.OrdinalIgnoreCase) ? saved : null;
     }
 
     // The last two hex values in the output are the current AC and DC settings. Matching hex

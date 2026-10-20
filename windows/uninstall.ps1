@@ -35,6 +35,10 @@ $subButtons = '4f971e89-eebd-4455-a8de-9e59040e7347'
 $lidAction = '5ca83367-6e45-459f-a27b-476b1d01c936'
 
 $problems = 0
+# Set when the lid setting could not be put back: the saved values are then the only copy, so
+# they are not deleted with the app (machine.json stays; so does the old settings.json).
+$keepSavedLid = $false
+$lidSource = $null
 
 function Show-Step([string]$text) { Write-Host ''; Write-Host $text }
 function Show-Ok([string]$text) { Write-Host "  [OK] $text" -ForegroundColor Green }
@@ -52,6 +56,29 @@ function Invoke-Quietly([scriptblock]$command) {
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { & $command } finally { $ErrorActionPreference = $saved }
+}
+
+# A power plan's GUID, exactly: 8-4-4-4-12 hex digits, nothing around it.
+function Test-PlanGuid($value) {
+    if ($value -isnot [string]) { return $false }
+    $parsed = [guid]::Empty
+    return [guid]::TryParseExact($value, 'D', [ref]$parsed)
+}
+
+# Blank the saved lid values (and their plan) in every file that holds them, so installing again
+# later never "restores" an old one.
+function Clear-SavedLidValues([string[]]$files) {
+    foreach ($file in $files) {
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        $raw = [IO.File]::ReadAllText($file)
+        $cleared = [regex]::Replace($raw, '("savedLid(?:Ac|Dc)"\s*:\s*)-?\d+', '${1}null')
+        $cleared = [regex]::Replace($cleared, '("savedLidScheme"\s*:\s*)"[^"]*"', '${1}null')
+        if ($cleared -ne $raw) {
+            $tmp = $file + '.tmp'
+            [IO.File]::WriteAllText($tmp, $cleared)
+            Move-Item -LiteralPath $tmp -Destination $file -Force
+        }
+    }
 }
 
 Write-Host ''
@@ -115,22 +142,22 @@ try {
 Show-Step '3/5  Putting your lid setting back'
 try {
     $restored = $false
+    $planGone = $false
     $skipped = $false
     # This PC's own file first, then the roaming settings an older version kept the values in.
     $lidFiles = @($machineFile, $settingsFile)
-    $source = $null
     $s = $null
     foreach ($file in $lidFiles) {
-        if ($null -ne $source) { break }
+        if ($null -ne $lidSource) { break }
         if (-not (Test-Path -LiteralPath $file)) { continue }
         $candidate = $null
         try { $candidate = [IO.File]::ReadAllText($file) | ConvertFrom-Json } catch { $candidate = $null }
         if ($null -ne $candidate -and $null -ne $candidate.savedLidAc -and $null -ne $candidate.savedLidDc) {
-            $source = $file
+            $lidSource = $file
             $s = $candidate
         }
     }
-    if ($null -ne $source) {
+    if ($null -ne $lidSource) {
         $savedAc = $s.savedLidAc
         $savedDc = $s.savedLidDc
         # The lid action is 0 (nothing), 1 (sleep), 2 (hibernate) or 3 (shut down). Anything
@@ -141,44 +168,47 @@ try {
         }
         if (-not $valid) {
             $skipped = $true
+            $keepSavedLid = $true
             Show-Problem 'The saved lid setting looks wrong; set the lid action by hand in Control Panel -> Power Options -> Choose what closing the lid does.'
         } else {
             $ac = [int]$savedAc
             $dc = [int]$savedDc
             # The power plan the values came from; the current plan when none was saved (an older
-            # version) or when that plan is gone since.
+            # version). When the plans can be listed and that one is not among them, it was
+            # deleted: nothing is written (no other plan may be changed for it). When they cannot
+            # be listed, the saved plan is tried, and a failure keeps the values.
             $scheme = 'SCHEME_CURRENT'
             $savedScheme = $s.savedLidScheme
-            if ($savedScheme -is [string] -and $savedScheme -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+            if (Test-PlanGuid $savedScheme) {
                 $plans = Invoke-Quietly { (& powercfg /list 2>$null) | Out-String }
-                if ($LASTEXITCODE -ne 0 -or $plans -match [regex]::Escape($savedScheme)) { $scheme = $savedScheme }
-            }
-            [void](Invoke-Quietly { (& powercfg /setacvalueindex $scheme $subButtons $lidAction $ac 2>&1) | Out-String })
-            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the plugged-in lid action.' }
-            [void](Invoke-Quietly { (& powercfg /setdcvalueindex $scheme $subButtons $lidAction $dc 2>&1) | Out-String })
-            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the on-battery lid action.' }
-            # Activating the current plan applies the change; it never switches to another plan.
-            [void](Invoke-Quietly { (& powercfg /setactive SCHEME_CURRENT 2>&1) | Out-String })
-            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not apply the power plan.' }
-            # Forget the saved values (in every file that holds them), so installing again later
-            # never "restores" an old one.
-            foreach ($file in $lidFiles) {
-                if (-not (Test-Path -LiteralPath $file)) { continue }
-                $raw = [IO.File]::ReadAllText($file)
-                $cleared = [regex]::Replace($raw, '("savedLid(?:Ac|Dc)"\s*:\s*)-?\d+', '${1}null')
-                $cleared = [regex]::Replace($cleared, '("savedLidScheme"\s*:\s*)"[^"]*"', '${1}null')
-                if ($cleared -ne $raw) {
-                    $tmp = $file + '.tmp'
-                    [IO.File]::WriteAllText($tmp, $cleared)
-                    Move-Item -LiteralPath $tmp -Destination $file -Force
+                if ($LASTEXITCODE -ne 0) {
+                    $scheme = $savedScheme
+                } elseif ($plans -match [regex]::Escape($savedScheme)) {
+                    $scheme = $savedScheme
+                } else {
+                    $planGone = $true
                 }
             }
-            $restored = $true
+            if ($planGone) {
+                Clear-SavedLidValues $lidFiles
+            } else {
+                [void](Invoke-Quietly { (& powercfg /setacvalueindex $scheme $subButtons $lidAction $ac 2>&1) | Out-String })
+                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the plugged-in lid action.' }
+                [void](Invoke-Quietly { (& powercfg /setdcvalueindex $scheme $subButtons $lidAction $dc 2>&1) | Out-String })
+                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the on-battery lid action.' }
+                # Activating the current plan applies the change; it never switches to another plan.
+                [void](Invoke-Quietly { (& powercfg /setactive SCHEME_CURRENT 2>&1) | Out-String })
+                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not apply the power plan.' }
+                Clear-SavedLidValues $lidFiles
+                $restored = $true
+            }
         }
     }
     if ($restored) { Show-Ok 'Lid setting back to what it was before Lid Awake' }
+    elseif ($planGone) { Show-Ok 'The power plan Lid Awake changed no longer exists; nothing to put back' }
     elseif (-not $skipped) { Show-Ok 'Nothing to put back (Lid Awake was off)' }
 } catch {
+    $keepSavedLid = $true
     Show-Problem ('Could not put the lid setting back: ' + $_.Exception.Message + ' Open Control Panel, Power Options, "Choose what closing the lid does" and check it.')
 }
 
@@ -189,7 +219,13 @@ try {
         $gone = $false
         for ($try = 1; $try -le 5 -and -not $gone; $try++) {
             try {
-                Remove-Item -LiteralPath $dest -Recurse -Force
+                if ($keepSavedLid) {
+                    # The saved lid setting could not be put back: everything goes except that file.
+                    Get-ChildItem -LiteralPath $dest -Force | Where-Object { $_.Name -ne 'machine.json' } | Remove-Item -Recurse -Force
+                    if (@(Get-ChildItem -LiteralPath $dest -Force).Count -eq 0) { Remove-Item -LiteralPath $dest -Force }
+                } else {
+                    Remove-Item -LiteralPath $dest -Recurse -Force
+                }
                 $gone = $true
             } catch {
                 if ($try -eq 5) { throw }
@@ -197,10 +233,21 @@ try {
             }
         }
     }
-    if (Test-Path -LiteralPath $dest) { throw 'the folder is still there.' }
+    if ($keepSavedLid) {
+        $left = @()
+        if (Test-Path -LiteralPath $dest) { $left = @(Get-ChildItem -LiteralPath $dest -Force | Where-Object { $_.Name -ne 'machine.json' }) }
+        if ($left.Count -gt 0) { throw 'the folder is still there.' }
+    } elseif (Test-Path -LiteralPath $dest) {
+        throw 'the folder is still there.'
+    }
     Show-Ok 'App removed'
 } catch {
     Show-Problem ('Could not remove ' + $dest + ': ' + $_.Exception.Message + ' Close any window showing it, then run this again.')
+}
+if ($keepSavedLid) {
+    $keptIn = $lidSource
+    if (-not $keptIn) { $keptIn = $machineFile }
+    Show-Problem ("Couldn't put the lid setting back. Lid Awake kept it in $keptIn; run Uninstall again, or set Control Panel -> Power Options -> Choose what closing the lid does.")
 }
 
 # ---- 5/5 Settings -----------------------------------------------------------------------
@@ -218,6 +265,11 @@ try {
             Write-Host '       Settings are your phone password and phone sign-ins.'
             $answer = Read-Host '       Also delete your settings and phone password? (y/N)'
             $delete = ($answer.Trim() -match '^(y|yes)$')
+        }
+        if ($delete -and $keepSavedLid -and $lidSource -eq $settingsFile) {
+            # An older version saved the lid setting in this file, and it could not be put back.
+            $delete = $false
+            Show-Problem ("Your settings were kept: they hold the lid setting that could not be put back (" + $settingsFile + ").")
         }
         if ($delete) {
             Remove-Item -LiteralPath $settingsDir -Recurse -Force

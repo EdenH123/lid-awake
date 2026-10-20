@@ -45,6 +45,7 @@ public class KeepAwakeTests : IDisposable
         public bool FailQueries;   // /query fails
         public bool IgnoreWrites;  // value-set commands succeed but change nothing
         public bool NoActiveScheme;  // /getactivescheme prints no plan
+        public bool FailList;        // /list fails
         public readonly List<string> Writes = new();       // /setacvalueindex and /setdcvalueindex
         public readonly List<string> Activations = new();  // /setactive
 
@@ -64,8 +65,11 @@ public class KeepAwakeTests : IDisposable
             var command = parts.Length > 0 ? parts[0] : "";
             if (command == "/getactivescheme") return NoActiveScheme ? "" : $"Power Scheme GUID: {Active}  (Balanced)\n";
             if (command == "/list")
+            {
+                if (FailList) throw new InvalidOperationException("powercfg failed (fake)");
                 return "Existing Power Schemes (* Active)\n-----------------------------------\n" +
                     string.Concat(Schemes.Keys.Select(g => $"Power Scheme GUID: {g}  (Plan){(g == Active ? " *" : "")}\n"));
+            }
             if (command == "/query")
             {
                 if (FailQueries) throw new InvalidOperationException("powercfg failed (fake)");
@@ -96,6 +100,8 @@ public class KeepAwakeTests : IDisposable
     readonly ITestOutputHelper output;
     readonly Func<string, string> originalPowercfg = KeepAwake.Powercfg;
     readonly Func<bool?> originalHasLid = KeepAwake.HasLid;
+    readonly Action<string>? originalLog = KeepAwake.Log;
+    readonly List<string> notes = new();  // what KeepAwake told the activity log
     readonly List<string> folders = new();
     readonly string machineFolder;
     readonly Settings settings;  // the machine-state settings (machine.json), which KeepAwake uses
@@ -110,6 +116,7 @@ public class KeepAwakeTests : IDisposable
         settings = new Settings(folder, Settings.MachineFileName);
         // Last, so a constructor that throws cannot leave the fake installed.
         KeepAwake.Powercfg = fake.Run;
+        KeepAwake.Log = notes.Add;
     }
 
     public void Dispose()
@@ -123,6 +130,7 @@ public class KeepAwakeTests : IDisposable
         {
             KeepAwake.Powercfg = originalPowercfg;
             KeepAwake.HasLid = originalHasLid;
+            KeepAwake.Log = originalLog;
         }
         foreach (var folder in folders)
         {
@@ -446,19 +454,113 @@ public class KeepAwakeTests : IDisposable
         Assert.All(fake.Writes, w => Assert.Contains("SCHEME_CURRENT", w));
     }
 
+    // The plan Lid Awake changed was deleted: nothing may be written (not even into the plan that
+    // is active now), the saved values are forgotten, and the log says so.
     [Fact]
-    public void APlanThatIsGoneSinceIsRestoredIntoTheCurrentPlan()
+    public void APlanThatIsGoneSinceIsNotWrittenToAndTheValuesAreForgotten()
     {
         fake.Schemes[PowerSaver] = (3, 3);
         KeepAwake.On(settings);
         fake.Active = PowerSaver;
         fake.Schemes.Remove(Balanced);
+        fake.Writes.Clear();
+        fake.Activations.Clear();
 
         KeepAwake.Off(settings);
 
-        Assert.Equal((1, 2), fake.Schemes[PowerSaver]);
+        Assert.Empty(fake.Writes);
+        Assert.Empty(fake.Activations);
+        Assert.Equal((3, 3), fake.Schemes[PowerSaver]);
         Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<int?>("savedLidDc"));
         Assert.Null(settings.Get<string>("savedLidScheme"));
+        Assert.Equal(new[] { KeepAwake.PlanGoneNote }, notes);
+        Assert.False(KeepAwake.IsHolding);
+    }
+
+    [Fact]
+    public void WhenThePlansCannotBeListedTheSavedPlanIsTried()
+    {
+        fake.Schemes[PowerSaver] = (3, 3);
+        KeepAwake.On(settings);
+        fake.Active = PowerSaver;
+        fake.FailList = true;
+        fake.Writes.Clear();
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), fake.Schemes[Balanced]);
+        Assert.Equal((3, 3), fake.Schemes[PowerSaver]);
+        Assert.All(fake.Writes, w => Assert.Contains(Balanced, w));
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void WhenThePlansCannotBeListedAndTheSavedPlanIsGoneTheValuesStay()
+    {
+        fake.Schemes[PowerSaver] = (3, 3);
+        KeepAwake.On(settings);
+        fake.Active = PowerSaver;
+        fake.Schemes.Remove(Balanced);
+        fake.FailList = true;
+
+        KeepAwake.Off(settings);
+
+        // The write into the missing plan failed: keep everything, change nothing else.
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
+        Assert.Equal(Balanced, settings.Get<string>("savedLidScheme"));
+        Assert.Equal((3, 3), fake.Schemes[PowerSaver]);
+    }
+
+    // The plan that gets changed is always the plan that gets restored.
+    [Fact]
+    public void OnWithValuesAlreadySavedWritesIntoTheSavedPlan()
+    {
+        fake.Schemes[PowerSaver] = (3, 3);
+        KeepAwake.HasLid = () => true;
+        KeepAwake.On(settings);  // Balanced, saved as (1, 2)
+        fake.Active = PowerSaver;
+        fake.Writes.Clear();
+
+        var result = KeepAwake.On(settings);
+
+        Assert.Equal(2, fake.Writes.Count);
+        Assert.All(fake.Writes, w => Assert.Contains(Balanced, w));
+        Assert.Equal((3, 3), fake.Schemes[PowerSaver]);
+        // The plan in use still closes the lid to sleep, which is told.
+        Assert.Equal(LidResult.Failed, result);
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal(Balanced, settings.Get<string>("savedLidScheme"));
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), fake.Schemes[Balanced]);
+        Assert.Equal((3, 3), fake.Schemes[PowerSaver]);
+    }
+
+    [Fact]
+    public void OnWithValuesSavedForAGonePlanStartsAgainFromTheCurrentPlan()
+    {
+        fake.Schemes[PowerSaver] = (5, 6);
+        fake.Active = PowerSaver;
+        fake.Schemes.Remove(Balanced);
+        settings.Set("savedLidAc", 1);
+        settings.Set("savedLidDc", 2);
+        settings.Set("savedLidScheme", Balanced);  // not in the list of plans
+
+        Assert.Equal(LidResult.Changed, KeepAwake.On(settings));
+
+        Assert.Equal(PowerSaver, settings.Get<string>("savedLidScheme"));
+        Assert.Equal<int?>(5, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(6, settings.Get<int?>("savedLidDc"));
+        Assert.Equal((0, 0), fake.Schemes[PowerSaver]);
+        Assert.Contains(KeepAwake.PlanGoneNote, notes);
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((5, 6), fake.Schemes[PowerSaver]);
     }
 
     [Fact]

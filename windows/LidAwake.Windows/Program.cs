@@ -18,6 +18,7 @@ static class Program
         var auth = new Auth(settings);
         var tailnet = new Tailnet(settings);
         var log = new AccessLog();
+        KeepAwake.Log = log.Write;
         // Put back what a crash or a forced stop left behind, before anything else (and before
         // any message could wait for a click): the lid action, and Serve if Lid Awake added it.
         KeepAwake.Off(machine);

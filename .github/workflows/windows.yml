@@ -172,6 +172,57 @@ jobs:
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone (second time)'
           Assert (-not (Test-Path -LiteralPath $startLink)) 'the Start menu shortcut is gone (second time)'
           Assert (-not (Test-Path -LiteralPath $settingsDir)) 'settings deleted by -DeleteSettings'
+
+          # Saved lid values the uninstaller must treat with care. It runs here with no app
+          # installed, only the saved values on disk; its output is read for what it told.
+          function Invoke-UninstallCaptured([string[]]$flags) {
+            Write-Host "---- windows\uninstall.ps1 $flags (captured)"
+            $text = (& powershell -NoProfile -ExecutionPolicy Bypass -File 'windows\uninstall.ps1' @flags | Out-String)
+            $code = $LASTEXITCODE
+            Write-Host $text
+            return [pscustomobject]@{ Code = $code; Text = $text }
+          }
+          $machineFile = Join-Path $dest 'machine.json'
+          $planGoneNote = '\[OK\] The power plan Lid Awake changed no longer exists; nothing to put back'
+          $missingPlan = '00000000-1111-2222-3333-444444444444'
+
+          # (a) Values saved for a power plan that does not exist: nothing is written, and the
+          # values are cleared, in this PC's machine.json and in an older install's settings.json.
+          & powercfg /list | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            [IO.File]::WriteAllText($machineFile, ('{"savedLidAc":1,"savedLidDc":2,"savedLidScheme":"' + $missingPlan + '"}'))
+            $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
+            Assert ($r.Code -eq 0) 'uninstall succeeds when the saved power plan no longer exists'
+            Assert ($r.Text -match $planGoneNote) 'uninstall says there is nothing to put back for a missing plan'
+            Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone (missing plan)'
+
+            New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+            [IO.File]::WriteAllText($settingsFile, ('{"tailnetHost":"ci-test.ts.net","savedLidAc":1,"savedLidDc":2,"savedLidScheme":"' + $missingPlan + '"}'))
+            $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
+            Assert ($r.Code -eq 0) 'uninstall succeeds for a missing plan saved in the old settings.json'
+            Assert ($r.Text -match $planGoneNote) 'uninstall says there is nothing to put back (old settings.json)'
+            $after = [IO.File]::ReadAllText($settingsFile)
+            Assert ($after -match '"savedLidAc"\s*:\s*null') 'the saved lid values are cleared in settings.json'
+            Assert ($after -match '"savedLidScheme"\s*:\s*null') 'the saved plan is cleared in settings.json'
+            Assert ($after -match 'ci-test\.ts\.net') 'the rest of settings.json is untouched'
+            Remove-Item -LiteralPath $settingsDir -Recurse -Force
+          } else {
+            Write-Host 'SKIP: powercfg /list does not work on this runner, so the missing-plan case is not run'
+          }
+
+          # (b) Values that are not a lid action cannot be put back: the app files go, but the
+          # saved values stay in machine.json, and the exit code says it was not complete.
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          [IO.File]::WriteAllText((Join-Path $dest 'app-file.txt'), 'x')
+          [IO.File]::WriteAllText($machineFile, '{"savedLidAc":9,"savedLidDc":2}')
+          $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
+          Assert ($r.Code -ne 0) 'uninstall fails when the lid setting cannot be put back'
+          Assert (Test-Path -LiteralPath $machineFile) 'machine.json is kept when the lid setting cannot be put back'
+          Assert ([IO.File]::ReadAllText($machineFile) -match '"savedLidAc":9') 'machine.json still holds the saved values'
+          Assert (-not (Test-Path -LiteralPath (Join-Path $dest 'app-file.txt'))) 'the other app files are removed anyway'
+          Assert ($r.Text -match 'kept it in') 'uninstall says where it kept the lid setting'
+          Remove-Item -LiteralPath $dest -Recurse -Force
           exit 0
 
   # Builds the ready-made ZIP for people whose PC has no .NET SDK. Run it by hand from the Actions
