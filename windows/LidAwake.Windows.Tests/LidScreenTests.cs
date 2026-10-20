@@ -188,7 +188,7 @@ public class LidScreenTests : IDisposable
     {
         screen.SetOn(true);
         screen.SetLid(true);
-        screen.SetOn(false).Wait();
+        Assert.True(screen.SetOn(false).IsCompletedSuccessfully);
         Assert.Equal(70, panel.Level);
         Assert.Null(SavedOnDisk());
         // Closing it again while off does nothing to the screen.
@@ -238,13 +238,13 @@ public class LidScreenTests : IDisposable
         var after = new FakeBrightness { Level = 1 };
         var restarted = new LidScreen(after, hold, new Settings(folder, Settings.MachineFileName), notes.Add,
             a => { a(); return Task.CompletedTask; });
-        restarted.Recover().Wait();
+        Assert.True(restarted.Recover().IsCompletedSuccessfully);
         Assert.Equal(new[] { 70 }, after.SetCalls);
         Assert.Equal(70, after.Level);
         Assert.Null(SavedOnDisk());
         // Once is enough: another start has nothing to put back.
         after.SetCalls.Clear();
-        restarted.Recover().Wait();
+        Assert.True(restarted.Recover().IsCompletedSuccessfully);
         Assert.Empty(after.SetCalls);
     }
 
