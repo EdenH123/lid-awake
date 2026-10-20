@@ -208,7 +208,7 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 
 The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits","heat"]`.
 
-Windows sends `"limits"`, `"history"`, `"passkeys"` (section 5.3), `"push"`, `"apps"`, `"control"` (`POST /input`, `POST /power` and input on the live socket; see 5.10 and 7.6), `"screen"` and `"camera"` always, in that order, and `"heat"` (after `"history"`) only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
+Windows sends `"limits"`, `"history"`, `"memory"` (section 5.8), `"passkeys"` (section 5.3), `"push"`, `"apps"`, `"control"` (`POST /input`, `POST /power` and input on the live socket; see 5.10 and 7.6), `"screen"` and `"camera"` always, in that order, and `"heat"` (after `"history"`, before `"memory"`) only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
 Windows also sends `"screen"`: `/screen.jpg` and the live socket, with the Mac's handshake, messages and flow control. It captures with DXGI Desktop Duplication (GDI when that fails) and sends H.264 from Media Foundation's encoder (the graphics card's when it works, else Microsoft's software one), or JPEG when there is no encoder. The screen and the camera share that choice: once a graphics card's encoder fails (for either), both use the software one until Lid Awake restarts (`MfH264Encoder.HardwareFailed`), and `"screenEncoder": "software"` in `settings.json` skips the graphics card's for both. `screenPermission` is always `true` (Windows asks no permission), and `remoteScreen` is the tray's "Allow screen from phone" switch (off until the owner turns it on, setting `remoteScreen`). Its sentences say PC: `Waking the PC's screen… This usually takes a few seconds.` and `Screen access is off. Turn on “Allow screen from phone” in the Lid Awake menu on your PC.` Input on the socket goes to the same control as `POST /input` (7.6), and camera messages to the camera (7.5). `{"video":…}` changes and `{"videoRestart":…}` count toward the socket's 240 messages a second, like input (each forces a keyframe), and past it they are dropped silently. A long poll whose `after` is not the latest id (also one from before a restart) gets the latest picture at once.
 
@@ -576,7 +576,7 @@ Query: `id` (required), `size` (optional integer; `512` or more gives 512, anyth
 | `200` `image/png`, square 256x256 or 512x512 | the id is on the list, or names any app that is running now. The Mac matches every running app that has a bundle location (`NSRunningApplication.bundleURL`), not only the windowed apps in `otherApps` |
 | `404` `No such app.` | otherwise |
 
-The page also uses this route for icons of the top apps in `/memory` (via their `id`). Such an app is on the list or open in nearly every case; when it is neither the answer is `404` and the page keeps the blank icon.
+The page also uses this route for icons of the top apps in `/memory` (via their `id`). Such an app is on the list or open in nearly every case; when it is neither the answer is `404` and the page keeps the blank icon. On Windows the route also answers for the programs of the last three `/memory` answers (5.8), so a background program gets its icon too.
 
 #### `POST /open-app`
 
@@ -622,7 +622,11 @@ All three history routes take an optional `hours` query (a number). It is clampe
 
 The Mac reads macOS's own power log (`/private/var/db/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL`, read only). Lid Awake records nothing itself. The format is Apple's and undocumented, so on any problem the Mac answers empty lists.
 
-**Windows records its own history.** Windows has no readable power log, so Lid Awake samples the PC once a minute, only while the app runs, and keeps 48 hours in `%LOCALAPPDATA%\LidAwake\history.json` (compact rows, trimmed and replaced atomically on every write; a file that can't be read starts empty). The graphs therefore only cover the time Lid Awake has been running on that PC, and a PC that slept shows gaps (the page draws them as sleep). `/battery-history` has points only on a PC with a battery. `/temp-history` has points only from the battery's own sensor (not the thermal zones). `/cpu-history` has the PC's overall processor use only (see below).
+**Windows records its own history.** Windows has no readable power log, so Lid Awake samples the PC once a minute, only while the app runs, and keeps 48 hours in `%LOCALAPPDATA%\LidAwake\history.json` (compact rows, trimmed and replaced atomically: a temp file of each write's own, flushed to disk, then renamed; a file that can't be read, or is over 16 MB, starts empty). The file is written at most every 5 minutes, when the battery backfill adds rows, and when Lid Awake stops, signs out or shuts down; the routes read the rows from memory, so they are always current. The graphs therefore only cover the time Lid Awake has been running on that PC, and a PC that slept shows gaps (the page draws them as sleep). `/battery-history` has points only on a PC with a battery. `/temp-history` has points only from the battery's own sensor (not the thermal zones). `/cpu-history` has the PC's overall processor use and the programs that used it (see below).
+
+**Windows battery backfill.** On a PC with a battery, Lid Awake reads Windows' battery report (`powercfg /batteryreport /xml`, no administrator needed) when it starts and then at most once a day, and adds the battery levels of its `RecentUsage` entries (one at each sleep, wake, plug-in and so on, with the charge and whether it was on AC) for the times `history.json` has no row: only the last 48 hours, none in the future, none within 90 seconds of a measured row and none at the second of a row already there (so two report entries a few seconds apart are both kept, and running it again adds nothing). `/battery-history` sends them like any other point (charging is "on AC and the next entry has more charge"); in the file they carry a mark, so they are not taken for readings of Lid Awake's own. Temperature and processor use can't be filled in. A PC with no battery never runs the report.
+
+**Windows `history.json`, version 2.** `{"v": 2, "apps": {"key": [name, kind, exe|null, color|null]}, "samples": [row, ...]}`. A row is `[t, percent|null, plugged 0/1, charging 0/1, temp|null, cpu|null, span]`, then optionally `{"key": processor-seconds, ...}` (or `null`), then optionally flags (`1`: backfilled from the battery report). Version 1 files (7 numbers a row, no `apps`) load as they are, with no programs listed. A program no row names any more is dropped from `apps`. An `exe` that is not on a local drive (`C:\...\x.exe`: no network share `\\server\...`, no device path `\\.\` or `\\?\`) is dropped when the file is read, and that program counts as `other`.
 
 #### `GET /temp-history`
 
@@ -654,7 +658,7 @@ The Mac reads macOS's own power log (`/private/var/db/powerlog/Library/BatteryLi
 | `apps[]` | who used processor time. `key` unique string, `name` shown text, `kind` is `app`, `macos` or `other`, `color` optional `#rrggbb` (the page uses grey if absent) |
 | `intervals[]` | `[start, end, perApp, other]`: Unix seconds start and end, an object from **index into `apps` (as a string)** to processor-seconds in that stretch, and processor-seconds not listed. Rounded to 0.01 |
 
-**Windows** sends `apps` as an empty list and every stretch as `[start, end, {}, other]`, where `other` is percent busy x `cores` x seconds of the stretch (about one minute each, none across a sleep). The page draws one grey bar per slot and a single "Everything else" row under "Who used it".
+**Windows** measures each stretch itself (about one minute each, none across a sleep): the PC's processor-seconds are percent busy x `cores` x seconds of the stretch, and the programs' share comes from the processor time of every process (`NtQuerySystemInformation`, all processes, no administrator), compared with the snapshot a minute before and added up by exe. A program is listed with the Mac's rule (at least 0.2 s or 0.5% of the stretch), at most 8 a stretch, and `other` is the rest. Programs are `kind: "app"` with `key` the exe's id from section 5.6 (12 hex characters, never a path), `name` its file description (else the exe's name) and `color` from its icon. Windows' own processes are `kind: "other"`, never `macos`: `other.core` "Windows core" (System, Registry, Memory Compression), `other.screen` "Screen & windows" (dwm.exe), `other.windows` "Windows (other)" (anything else in the Windows folder), and `other.<name>` for a process whose exe Windows won't name. Programs' seconds never add up to more than the stretch (they are scaled down when the two measurements disagree). Rows recorded before per-app history (version 1) are `[start, end, {}, other]`.
 
 The page needs both `apps` and `intervals` to be arrays; otherwise it shows the graph as failed. The Mac folds apps under 0.5% of a stretch and under 0.2 seconds into `other`.
 
@@ -662,7 +666,7 @@ The page needs both `apps` and `intervals` to be arrays; otherwise it shows the 
 
 #### `GET /cpu-icon`
 
-Query: `key` (an `apps[].key` with `kind: "app"` from a recent `/cpu-history`). `200` `image/png` (256x256), or `404` `No such app.` Only keys seen in the processor history are allowed, so the page cannot fetch any app's icon. Windows lists no apps, so it always answers `404` `No such app.`
+Query: `key` (an `apps[].key` with `kind: "app"` from a recent `/cpu-history`). `200` `image/png` (256x256), or `404` `No such app.` Only keys seen in the processor history are allowed, so the page cannot fetch any app's icon. Windows answers only for a `kind: "app"` key that `history.json` still names, from that exe's icon (kept, at most 64); a path, a system entry or any other key gets `404` `No such app.`
 
 ### 5.8 `memory`
 
@@ -689,7 +693,21 @@ Read fresh on every call. The page asks every 2 seconds while the Memory window 
 | `top` | list | up to 5 programs using the most. Each `{name, bytes, id?}`. `id` is present for every entry that is an app bundle (its path ends in `.app`), whether or not the owner listed it, and is the same hash of the path as in section 5.6; entries that are not part of an app (a `node` server, say) have none, and the page draws a blank icon. The page fetches `/app-icon.png?id=` for it, which answers `404` when that app is neither on the list nor open (for example a process whose app the system does not list as running), and the icon stays blank |
 | `otherPrograms` | integer bytes | memory of everything readable that is not in `top` |
 
-The page draws a line of `used / total` over the last 2 minutes and shows a row "macOS & system" for the part of `used` not explained by `top` and `otherPrograms` (its label is still Mac wording).
+The page draws a line of `used / total` over the last 2 minutes and shows a row for the part of `used` not explained by `top` and `otherPrograms`: "macOS & system" with the Apple logo on a Mac, "Windows & system" without it on a PC (`word("systemPart")`).
+
+**Windows** answers the same shape:
+
+| Field | Windows source |
+|---|---|
+| `total`, `used` | `GlobalMemoryStatusEx`: installed memory Windows can use, and that minus what is available |
+| `free`, `cached` | performance counters `Free & Zero Page List Bytes` and the three `Standby Cache * Bytes` (the standby list: files kept in spare memory). With one counter missing, the other is what is left of available memory; with both missing, `free` is all of it and `cached` 0 |
+| `app` | every process's private working set except Windows' kernel processes (System, Registry, Memory Compression, Secure System), as the Mac leaves compressed memory out; at most `used` |
+| `wired` | not sent (the page doesn't use it) |
+| `compressed` | the working set of the "Memory Compression" process (left out when there is none) |
+| `swapUsed` | the page files' use (`SystemPageFileInformation`), else 0 |
+| `pressure` | committed memory as a percent of the commit limit, both from `GlobalMemoryStatusEx` (`ullTotalPageFile` is the limit, minus `ullAvailPageFile` is what is committed) |
+| `level` | `critical` when Windows' low-memory signal is on (`QueryMemoryResourceNotification`), 90% of the commit limit is committed, or under 3% of memory is available; `warn` from 75% of the commit limit or under 10% available; else `normal` |
+| `top`, `otherPrograms` | private working sets from one `NtQuerySystemInformation` snapshot (every process, no administrator), added up by exe (Chrome's many processes are one entry). `name` is the exe's file description, else its name; when two entries would have the same name (the page keys its rows by name), each is shown by its exe's file name, and one still taken gets ` (2)`, ` (3)`. Every entry has `id` (the exe's id from 5.6). Windows' own processes (no exe Windows will name, or one in the Windows folder) are in neither, so they count toward "Windows & system". `/app-icon.png` answers for these too: after the Apps list and the open programs (5.6), it looks the `id` up among the entries of the last three `/memory` answers (the exe comes from the process table, never from the phone; at most 32 icons are kept, none over 1 MB). Any other id is still `404` |
 
 ### 5.9 `screen`
 

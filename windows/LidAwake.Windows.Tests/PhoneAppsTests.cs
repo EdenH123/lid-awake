@@ -445,7 +445,7 @@ public class PhoneAppsTests : IDisposable
     {
         var control = new RemoteControl(settings, () => true, new InputInjector(new FakeInput()), new FakePower());
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new StatusInfo(new FakeReadings(), apps: apps) { Control = control }.Build(true)));
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push", "apps", "control" },
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push", "apps", "control" },
             doc.RootElement.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
     }
 

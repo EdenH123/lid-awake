@@ -74,6 +74,9 @@ public sealed partial class WebServer : IDisposable
     // routes answer 404, as for a feature the PC doesn't have). Set before Start.
     public HistoryStore? History { get; set; }
 
+    // GET /memory, the phone's Memory window (none: 404, as for a feature the PC doesn't have). Set before Start.
+    public MemoryInfo? Memory { get; set; }
+
     // POST /camera/options and /camera/unlock (none: both answer 404, as for a feature the PC
     // doesn't have). Set only once the camera is wired to passkeys and the live socket. Set before Start.
     public CameraAccess? Camera { get; set; }
@@ -338,9 +341,18 @@ public sealed partial class WebServer : IDisposable
             case ("GET", "/cpu-history") when History is { } cpuHistory:
                 await SendJson(c, cpuHistory.Cpu(HistoryStore.ClampHours(req.Query["hours"].FirstOrDefault())));
                 return;
-            case ("GET", "/cpu-icon") when History != null:
-                // Windows sends no per-app processor use, so no app is ever listed to have an icon.
-                await SendText(c, 404, "No such app.");
+            case ("GET", "/cpu-icon") when History is { } iconHistory:
+            {
+                // Only programs the processor history names (by their key, never a path).
+                var png = iconHistory.IconPng(req.Query["key"].ToString());
+                if (png == null) { await SendText(c, 404, "No such app."); return; }
+                c.Response.ContentType = "image/png";
+                c.Response.ContentLength = png.Length;
+                await c.Response.Body.WriteAsync(png);
+                return;
+            }
+            case ("GET", "/memory") when Memory is { } memory:
+                await SendJson(c, memory.Snapshot());
                 return;
             // Face ID / fingerprint (passkeys): WebServer.Passkeys.cs.
             case ("GET", "/passkey/login-options"):

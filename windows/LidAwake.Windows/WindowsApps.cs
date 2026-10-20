@@ -140,7 +140,7 @@ public sealed class ProcessSource : IProcessSource
         "StartMenuExperienceHost.exe", "SearchHost.exe", "LockApp.exe",
     };
 
-    readonly ConcurrentDictionary<string, string> names = new(StringComparer.OrdinalIgnoreCase);
+    static readonly ConcurrentDictionary<string, string> names = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<RunningApp> Running()
     {
@@ -162,8 +162,9 @@ public sealed class ProcessSource : IProcessSource
         return result;
     }
 
-    // The name Windows shows for the program (its file description), else the exe's name.
-    string NameOf(string exe) => names.GetOrAdd(exe, path =>
+    // The name Windows shows for the program (its file description), else the exe's name. Also
+    // the names in the memory window and the processor history.
+    internal static string NameOf(string exe) => names.GetOrAdd(exe, path =>
     {
         try
         {

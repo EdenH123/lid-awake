@@ -127,7 +127,9 @@ static class Program
         // The graphs: a sample every minute while the app runs, off the UI thread.
         var history = new HistoryStore();
         server.History = history;
-        using var sampler = new HistorySampler(history, readings, () => heat.Latest.Battery);
+        using var sampler = new HistorySampler(history, readings, () => heat.Latest.Battery, processes: ProcessTable.Shared, report: new PowercfgReport())
+            { FlushAtSessionEnd = true };
+        server.Memory = new MemoryInfo(readings, ProcessTable.Shared);
         sampler.Start();
         server.Apps = phoneApps;
         string? startError = null;

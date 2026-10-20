@@ -24,7 +24,8 @@ public sealed partial class WebServer
         if (Apps is not { } apps) { await SendText(c, 404, "Not found"); return; }
         var id = c.Request.Query["id"].ToString();
         int size = int.TryParse(c.Request.Query["size"].ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var asked) ? asked : 256;
-        var png = apps.IconPng(id, size);
+        // Else a program of the memory window's last answers (MemoryInfo.IconPng: ids only).
+        var png = apps.IconPng(id, size) ?? Memory?.IconPng(id, size);
         if (png == null) { await SendText(c, 404, "No such app."); return; }
         c.Response.ContentType = "image/png";
         c.Response.ContentLength = png.Length;
