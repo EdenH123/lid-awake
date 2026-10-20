@@ -1789,6 +1789,47 @@ Windows has no readable power log, so Lid Awake records its own samples (ruling 
 
 **Tests:** sampling with fakes; trimming at 48 h; atomic write; the route shapes against the API.md examples; empty history.
 
+### Parallel group B (Tasks 21–22, alongside group A)
+
+Each task gets its own worktree and branch off `claude/windows-phase-3`: `claude/windows-phase-3-apps` and `claude/windows-phase-3-screen`. The shared rules are the same as group A.
+
+### Task 21: Apps on Windows (open, switch, quit)
+
+**Contract:** docs/API.md `/app-icon.png`, `/open-app`, `/focus-app`, `/quit-app`, `/apps-order`, and the `/status` `apps`/`otherApps` shapes (§6.3). Mac reference: PhoneApps.swift, the Server.swift cases, and the main.swift menu "Apps on phone".
+
+**Windows:**
+- **Owner's picks.** The owner picks apps in the tray: "Apps on phone…" opens a small checklist of Start menu apps, from the shortcuts in both the user and all-users Start Menu Programs folders. Each shortcut is resolved to its target `.exe` with IShellLink, or with WScript.Shell COM.
+- **Storage and ids.** The list is stored in roaming settings. Ids are a hash of the target path, as on the Mac. The phone only ever sends an id, never a path.
+- **`apps`.** The picked apps, with a running flag from Process by exe path.
+- **`otherApps`.** Running apps that have a visible main window and aren't in the list.
+- **Icons.** `Icon.ExtractAssociatedIcon` → PNG, cached by id.
+- **Open, focus, quit.**
+  - Open uses `Process.Start` with UseShellExecute.
+  - Focus uses `SetForegroundWindow`, with `ShowWindow(SW_RESTORE)` if minimized. Allow for Windows' foreground lock: use `AllowSetForegroundWindow`/`AttachThreadInput` or minimize-restore, and document what you use.
+  - Quit uses `CloseMainWindow`, never Kill, and returns the Mac's 409 when the app doesn't close.
+- **Feature `"apps"`.**
+
+**Tests:** the id hashing; the lists with fake process and shortcut sources; the routes end to end (404 for an unknown id, the 409 path); and a guarantee that a path is never accepted from the phone.
+
+### Task 22: Screen viewing on Windows (JPEG first)
+
+**Ruling P3-5:** screen viewing ships with JPEG frames. Hardware H.264 is a later task.
+
+**Contract:** docs/API.md `/screen.jpg` and §7, the live socket on port 8788: handshake checks, the JPEG frame message, setup and quality messages, flow control (`acks`, at most 2 unconfirmed JPEG frames), keepalive `ping`/`pong`, and the 8-socket cap. `/live` also has to be mapped by Tailscale Serve, which is in §9. Mac reference: LiveServer.swift, FrameStream.swift and ScreenControl.swift (capture only).
+
+**Windows:**
+- **Capture.** Capture the primary screen with GDI (`Graphics.CopyFromScreen` or BitBlt) on a background thread, only while someone is watching. Stop a few seconds after the last viewer leaves.
+- **Changes only.** Send a frame only when the picture changed, using a cheap hash or a sampled diff.
+- **Encoding.** JPEG through `System.Drawing` / WIC, at the Mac's quality presets (max/sharp/balanced/fast: size and quality per FrameStream.swift). The page's quality messages pick the preset.
+- **Socket.** Kestrel WebSockets on 127.0.0.1:8788 with the same handshake rules as the Mac: Host, Origin, session cookie, on, and screen allowed.
+- **Tailscale.** Serve maps `/live` → 8788.
+- **`/screen.jpg`.** A long poll with `after`, per API.md.
+- **Owner switch.** The tray gets "Allow screen from phone", off by default, stored in settings. `/status` reports `remoteScreen` true and `screenPermission` true; Windows needs no OS permission.
+- **Ignoring the rest.** Input and camera messages on the socket are ignored for now. Control and camera are later tasks.
+- **Feature `"screen"`.**
+
+**Tests:** the handshake refusals (no cookie, bad host or origin, off, screen not allowed); a connected test client receives a JPEG frame message (CI runners have a desktop session) and acks it; the flow-control cap; the socket cap; `/screen.jpg` long-poll behaviour; and capture starting and stopping with viewers.
+
 Remaining Phase 3 features, one task each, in this order:
 
 | Feature | Mac source to port | Windows technology |
