@@ -77,7 +77,7 @@ public class LiveServerTests
         Assert.NotNull(next);
         Assert.True(LiveClient.IsJpeg(next!.Value));
         var after = await c.Collect(TimeSpan.FromSeconds(0.8));
-        Assert.Empty(after.Where(m => !m.Text));
+        Assert.DoesNotContain(after, m => !m.Text);
         // A phone that stops confirming for 3 seconds starts afresh.
         var resumed = await c.WaitFor(m => !m.Text, TimeSpan.FromSeconds(5));
         Assert.NotNull(resumed);

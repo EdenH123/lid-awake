@@ -211,6 +211,8 @@ public sealed class LiveServer : IDisposable
             if (c.Response.HasStarted) return;
             c.Response.StatusCode = 400;
             c.Response.ContentType = "text/plain; charset=utf-8";
+            // The connection goes too: a refused phone doesn't keep one of the 8 places.
+            c.Response.Headers.Connection = "close";
             await c.Response.WriteAsync("Bad request");
         }
         catch (Exception) { }
