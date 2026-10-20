@@ -203,14 +203,18 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 | `memory` | `/memory` |
 | `screen` | `/screen.jpg`, the live socket and its screen frames |
 | `control` | `/input`, `/power`, input messages on the live socket |
-| `limits` | `/limits`, and the low-battery and too-hot safety switches (`batteryGuard`, `heatGuard`) |
+| `limits` | `/limits`, and the low-battery safety switch (`batteryGuard`) |
+| `heat` | the too-hot safety switch (`heatGuard`): the computer can read a temperature to protect against. Sent only while it can |
 
-The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits"]`.
+The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits","heat"]`.
+
+Windows sends `"limits"` always, and `"heat"` only while a temperature source works (the battery's own sensor, or else the ACPI thermal zones; see 6.4), re-checked with each status.
 
 Dependencies on the Mac side:
 
 - `camera` needs `passkeys` (the camera asks for a passkey every time) and `screen` (the live socket and the owner's screen switch).
 - `control` needs `screen`.
+- `heat` needs `limits` (its switch is posted to `/limits`).
 
 A route for a feature the computer does not implement should answer the default `404` `Not found`.
 
@@ -227,6 +231,7 @@ A route for a feature the computer does not implement should answer the default 
 | `memory` | the memory window: the memory reading stays but no longer opens |
 | `control` | clicking, typing, and the lock / screen-off buttons send nothing |
 | `limits` | the Safety limits section (the page never posts `/limits`) |
+| `heat` | the Too hot row in Safety limits, with its sub-text (the page never posts `/limits` with `heat`) |
 
 With only the Status page left, the tab bar goes too.
 
@@ -375,6 +380,8 @@ Body: `{"name": "battery" | "heat", "on": true | false}`.
 | `400` `Unknown limit.` | other name, or `on` missing or not a boolean |
 
 The limits the switches control, checked every 15 seconds while on: `battery` turns Lid Awake off when running on battery below `batteryLimit` percent; `heat` turns it off when the battery is at or above `maxBatteryTemp` degrees, or the system thermal state is `serious` or `critical`. Both can also stop a turn-on request.
+
+**Windows.** The same answers, and the switch applies at once (it is stored in the roaming settings as `batteryGuard` / `heatGuard`, both on by default). `heat` is accepted even on a PC with no temperature source, because the setting is stored; the page hides that row there anyway (no `"heat"` in `features`). The battery limit uses `GetSystemPowerStatus` (on battery and below `batteryLimit`). The heat limit uses the temperature in 6.4 (at or above `maxBatteryTemp`); Windows has no system thermal state. The check runs every 15 seconds while on, off the UI thread; a limit reached turns Lid Awake off with a tray balloon and an activity log line (`Turned off: battery below 10%`, `Turned off: too hot (41.2°C)`), and a turn-on from the tray is refused with a balloon (`Not turned on: …` in the log).
 
 #### `POST /timer`
 
@@ -723,11 +730,11 @@ A computer that cannot measure a field sends the **safe default** in the last co
 | `lidAwake` | boolean | Lid Awake is on | required |
 | `timerMinutes` | integer | chosen auto-off length; `0` = never; one of 0, 15, 30, 60, 120, 240, 480 | `0`; required |
 | `timerRemaining` | number, seconds | time left. Present only while on, with a timer, and in the future | omit |
-| `batteryGuard` | boolean | "turn off on low battery" switch (Mac default on) | `true` |
-| `heatGuard` | boolean | "turn off when hot" switch (Mac default on) | `true` |
+| `batteryGuard` | boolean | "turn off on low battery" switch (Mac and Windows default on) | `true` |
+| `heatGuard` | boolean | "turn off when hot" switch (Mac and Windows default on). On Windows it is the stored setting even when there is no temperature source (then `features` has no `"heat"` and the page hides the row) | `true` |
 | `batteryLimit` | integer, percent | battery level below which it turns off (Mac: `10`) | `10`; required (the page prints it) |
 | `maxBatteryTemp` | integer, degrees C | temperature at which it turns off (Mac: `40`) | `40`; required (the page uses it) |
-| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value. Windows measures no heat yet and sends `"unknown"`, so the page shows a dash rather than a "Normal" nothing measured | `"nominal"` |
+| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value. Windows has no system thermal state and sends `"unknown"`, so the page shows a dash rather than a "Normal" nothing measured (its temperature, when it has one, is `batteryTemp`) | `"nominal"` |
 
 ### 6.2 Remote access state
 
@@ -778,7 +785,7 @@ Every key except `batteryTemp` comes from `powerInfo()`. On the Mac, a computer 
 | `charged` | boolean | fully charged | `false` |
 | `minutesToEmpty` | integer | estimate; `-1` = unknown | `-1` |
 | `minutesToFull` | integer | estimate; `-1` = unknown | `-1` |
-| `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`) | omit |
+| `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`). Windows: the battery's own sensor (`IOCTL_BATTERY_QUERY_INFORMATION`, `BatteryTemperature`), or else the hottest ACPI thermal zone (WMI `root\WMI` `MSAcpi_ThermalZoneTemperature`, which usually needs admin rights); both are tenths of a kelvin, and a value outside -20 to 100 °C counts as none. Read at most every 15 seconds and cached, so `/status` never waits for it. Present exactly when `features` has `"heat"` | omit |
 
 ### 6.5 System info
 

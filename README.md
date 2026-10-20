@@ -164,7 +164,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - **Turn it on for a while only:** tray icon → **Turn off after** (for example 2 hours). When the time is up, Lid Awake turns itself off.
 - **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed.
 - **See what happened:** tray icon → **Show activity log**.
-- **Keep it plugged in, and don't leave it closed in a bag or a tight space;** on Windows Lid Awake doesn't watch the temperature yet. It doesn't turn itself off when the battery is low either.
+- **Safety limits:** Lid Awake turns itself off when the laptop is on battery below 10%, and won't turn on then (tray icon → **Turn off below 10% battery**). If the laptop reports its temperature, Lid Awake also turns off when it gets hotter than 40°C (tray icon → **Turn off if battery is hotter than 40°C**). Many laptops don't report it: then that item is greyed out with **(no temperature on this PC)** and nothing watches the heat, so **don't leave the laptop closed in a bag or a tight space**. Both limits are on to start with. You can also change them on your phone (the gear → **Safety limits**).
 - **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
 - **Wi-Fi signal bars need Location.** On Windows, the bars on your phone need Location to be on for Lid Awake. Windows asks once, when you turn Lid Awake on. If you say no, or Location is off, your phone shows "Connected" without bars. You can change it in **Settings → Privacy & security → Location**.
 - **After you choose Quit Lid Awake**, start it again from the Start menu (**Lid Awake**).
@@ -178,6 +178,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - Sign in with your phone password, with an alert at the tray for each new sign-in.
 - See your signed-in devices and sign one out.
 - The activity log.
+- The low-battery safety limit, and the too-hot one on laptops that report a temperature.
 
 ### Not on Windows yet
 
@@ -189,7 +190,6 @@ Don't rely on these on Windows. They work on the Mac only, for now.
 - Face ID or fingerprint sign-in (you use your password).
 - The camera and microphone.
 - Battery and temperature history graphs.
-- **The low-battery and too-hot safety switches.** Lid Awake will **not** turn itself off if the battery runs low or the laptop gets hot, so keep it plugged in.
 
 ### Update or remove it on Windows
 
