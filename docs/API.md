@@ -208,7 +208,7 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 
 The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits","heat"]`.
 
-Windows sends `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
+Windows sends `"limits"` and `"history"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
 Dependencies on the Mac side:
 
@@ -594,6 +594,8 @@ All three history routes take an optional `hours` query (a number). It is clampe
 
 The Mac reads macOS's own power log (`/private/var/db/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL`, read only). Lid Awake records nothing itself. The format is Apple's and undocumented, so on any problem the Mac answers empty lists.
 
+**Windows records its own history.** Windows has no readable power log, so Lid Awake samples the PC once a minute, only while the app runs, and keeps 48 hours in `%LOCALAPPDATA%\LidAwake\history.json` (compact rows, trimmed and replaced atomically on every write; a file that can't be read starts empty). The graphs therefore only cover the time Lid Awake has been running on that PC, and a PC that slept shows gaps (the page draws them as sleep). `/battery-history` has points only on a PC with a battery. `/temp-history` has points only from the battery's own sensor (not the thermal zones). `/cpu-history` has the PC's overall processor use only (see below).
+
 #### `GET /temp-history`
 
 ```json
@@ -624,13 +626,15 @@ The Mac reads macOS's own power log (`/private/var/db/powerlog/Library/BatteryLi
 | `apps[]` | who used processor time. `key` unique string, `name` shown text, `kind` is `app`, `macos` or `other`, `color` optional `#rrggbb` (the page uses grey if absent) |
 | `intervals[]` | `[start, end, perApp, other]`: Unix seconds start and end, an object from **index into `apps` (as a string)** to processor-seconds in that stretch, and processor-seconds not listed. Rounded to 0.01 |
 
+**Windows** sends `apps` as an empty list and every stretch as `[start, end, {}, other]`, where `other` is percent busy x `cores` x seconds of the stretch (about one minute each, none across a sleep). The page draws one grey bar per slot and a single "Everything else" row under "Who used it".
+
 The page needs both `apps` and `intervals` to be arrays; otherwise it shows the graph as failed. The Mac folds apps under 0.5% of a stretch and under 0.2 seconds into `other`.
 
 `kind` drives the row's icon in the "who used it" list: `app` fetches the icon from `/cpu-icon` (falling back to a square in `color`), `macos` draws a colored square with the Apple logo character, anything else is a plain colored square. A Windows agent should use `app` for real programs and `other` for system jobs (`macos` would show the Apple logo).
 
 #### `GET /cpu-icon`
 
-Query: `key` (an `apps[].key` with `kind: "app"` from a recent `/cpu-history`). `200` `image/png` (256x256), or `404` `No such app.` Only keys seen in the processor history are allowed, so the page cannot fetch any app's icon.
+Query: `key` (an `apps[].key` with `kind: "app"` from a recent `/cpu-history`). `200` `image/png` (256x256), or `404` `No such app.` Only keys seen in the processor history are allowed, so the page cannot fetch any app's icon. Windows lists no apps, so it always answers `404` `No such app.`
 
 ### 5.8 `memory`
 
