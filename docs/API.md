@@ -208,7 +208,7 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 
 The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits","heat"]`.
 
-Windows sends `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
+Windows sends `"push"` and `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
 Dependencies on the Mac side:
 
@@ -532,6 +532,17 @@ Body: `{"endpoint": "...", "enabled": false}` or `{"endpoint": "...", "off": ["w
 | `security` | a new password sign-in, or a passkey added |
 
 Sending (Mac behaviour): payload JSON `{"title": "...", "body": "...", "tag": "<kind>"}`, encrypted with RFC 8291 (`aes128gcm`), signed with VAPID (RFC 8292, ES256, JWT valid 12 hours, `aud` = the push service origin, `sub` = the remembered contact), posted with headers `TTL: 86400` and `Urgency: high`, 8-second timeout, no redirects. A `404` or `410` from the push service removes that phone.
+
+**Windows.** The same routes, checks, encryption and headers. The VAPID key (PKCS#8, as `pushKey`), the phones (`pushSubscriptions`) and the contact (`pushContact`) are kept in `%LOCALAPPDATA%\LidAwake\machine.json`, not the roaming settings, because a subscription only works with the key it was made for. Sending runs off the tray's thread and never blocks it. Windows sends four kinds, worded like the Mac with "PC" for "Mac":
+
+| Kind | Sent when (Windows) | Title, body |
+|---|---|---|
+| `turnedOff` | the timer ended, or a safety limit turned Lid Awake off. Sent first; Lid Awake turns off when the phones have answered (at most 8 seconds). Not sent for a turn-off from the tray, the phone, Quit or Windows signing out | `Lid Awake turned off`, `Timer finished after 2 h 5 min. Your PC can sleep now.` (or `Battery reached 9%`, `Battery got too hot (41.2°C)`, `Your PC got too hot (92.0°C)` in place of `Timer finished`) |
+| `lowBattery` | on battery at 20% or below (once; re-arms when plugged in or above 25%). Nothing when Windows can't tell whether it is plugged in | `PC battery at 20%`, `About 1 h 30 min left. Plug in to keep it running.` (the first sentence only when Windows estimates the time left) |
+| `warm` | the battery's own sensor within 3 degrees of `maxBatteryTemp` (once; re-arms below 5 degrees under it). Never from a thermal zone: a PC without a battery temperature never sends it | `PC is getting warm`, `Battery at 37.0°C. Lid Awake turns off at 40°C.` (the second sentence only while the heat switch is on) |
+| `security` | a new password sign-in (and passkey changes, once Windows has passkeys) | `New sign-in to Lid Awake`, `With the password, on an iPhone.` (as in `POST /login`) |
+
+The early warnings are checked with the safety limits, every 15 seconds while on. `claudeUsage` and `claudeSession` are never sent on Windows. A new password set at the PC removes every phone.
 
 ### 5.6 `apps`
 
