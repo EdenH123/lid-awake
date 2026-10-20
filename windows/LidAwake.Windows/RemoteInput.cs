@@ -107,16 +107,89 @@ public sealed class InputInjector
         }
     }
 
-    // Lets go of a button the phone was holding (it disconnected, or control was turned off).
-    // Modifier keys are never left held: each command releases its own before it returns.
+    // Lets go of a button the phone was holding (it disconnected, or control was turned off),
+    // and of any modifier key Windows still considers held. Each command releases its own keys,
+    // so that is only ever left over from a batch Windows cut short.
     public void ReleaseHeld()
     {
         lock (gate)
         {
-            if (!leftDown) return;
+            bool wasDown = leftDown;
             leftDown = false;
-            if (native.OnUserDesktop()) native.Send(new[] { Mouse(0, 0, 0, MOUSEEVENTF_LEFTUP) });
+            if (!native.OnUserDesktop()) return;
+            if (wasDown) Inject(new[] { Mouse(0, 0, 0, MOUSEEVENTF_LEFTUP) });
+            ReleaseStuckModifiers();
         }
+    }
+
+    // At start-up, as the Mac does: a modifier key an earlier run (or a crash mid-shortcut) left
+    // marked as held is let go, so later clicks aren't Ctrl- or Alt-clicks. Only keys Windows
+    // reports as down get a key-up.
+    public void ReleaseModifiers()
+    {
+        lock (gate)
+        {
+            if (native.OnUserDesktop()) ReleaseStuckModifiers();
+        }
+    }
+
+    // Left and right Ctrl, Shift, Alt and Windows keys.
+    public static readonly KeyCode[] ModifierKeys =
+    {
+        new(0xA2, 0x1D), new(0xA3, 0x1D, true), new(0xA0, 0x2A), new(0xA1, 0x36),
+        new(0xA4, 0x38), new(0xA5, 0x38, true), new(VK_LWIN, 0x5B, true), new(0x5C, 0x5C, true),
+    };
+
+    void ReleaseStuckModifiers()
+    {
+        var ups = ModifierKeys.Where(k => native.IsKeyDown(k.Vk)).Select(k => KeyInput(k, up: true)).ToArray();
+        if (ups.Length > 0) native.Send(ups);
+    }
+
+    // A pointer move to where the pointer already is: a display the phone turned off comes back
+    // on, and nothing visibly moves. Inside the same lock as the commands, so it can never land
+    // between a move's reading of the pointer and its move (and undo it). On another display the
+    // pointer is out of reach of an absolute move: a relative move of nothing still counts.
+    public void Nudge()
+    {
+        lock (gate)
+        {
+            if (!native.OnUserDesktop()) return;
+            var (w, h) = native.PrimaryScreen();
+            if (w <= 0 || h <= 0 || !native.TryGetCursor(out var x, out var y)) return;
+            bool onPrimary = x >= 0 && x < w && y >= 0 && y < h;
+            Inject(new[] { onPrimary ? MoveTo(x, y, w, h) : Mouse(0, 0, 0, MOUSEEVENTF_MOVE) });
+        }
+    }
+
+    // SendInput, checked: when Windows takes only part of a batch (UIPI blocked it, or the
+    // desktop switched), every key and button the batch presses is let go again, in reverse, so
+    // nothing stays held. False: not all of it was sent.
+    bool Inject(INPUT[] batch)
+    {
+        if (batch.Length == 0) return true;
+        uint sent = native.Send(batch);
+        if (sent >= batch.Length) return true;
+        var ups = new List<INPUT>();
+        var seen = new HashSet<(uint, ushort, ushort, uint)>();
+        for (int i = batch.Length - 1; i >= 0; i--)
+        {
+            var b = batch[i];
+            INPUT? up = null;
+            if (b.type == INPUT.KEYBOARD && (b.u.ki.dwFlags & (KEYEVENTF_KEYUP | KEYEVENTF_UNICODE)) == 0)
+                up = new INPUT
+                {
+                    type = INPUT.KEYBOARD,
+                    u = new InputUnion { ki = new KEYBDINPUT { wVk = b.u.ki.wVk, wScan = b.u.ki.wScan, dwFlags = (b.u.ki.dwFlags & (KEYEVENTF_EXTENDEDKEY | KEYEVENTF_SCANCODE)) | KEYEVENTF_KEYUP } },
+                };
+            else if (b.type == INPUT.MOUSE && (b.u.mi.dwFlags & MOUSEEVENTF_LEFTDOWN) != 0) up = Mouse(0, 0, 0, MOUSEEVENTF_LEFTUP);
+            else if (b.type == INPUT.MOUSE && (b.u.mi.dwFlags & MOUSEEVENTF_RIGHTDOWN) != 0) up = Mouse(0, 0, 0, MOUSEEVENTF_RIGHTUP);
+            if (up is { } release && seen.Add(release.type == INPUT.MOUSE ? (INPUT.MOUSE, (ushort)0, (ushort)0, release.u.mi.dwFlags)
+                                                                           : (INPUT.KEYBOARD, release.u.ki.wVk, release.u.ki.wScan, release.u.ki.dwFlags)))
+                ups.Add(release);
+        }
+        if (ups.Count > 0) native.Send(ups.ToArray());
+        return false;
     }
 
     public bool LeftDown { get { lock (gate) return leftDown; } }
@@ -133,14 +206,14 @@ public sealed class InputInjector
         var (cx, cy) = Pointer(w, h);
         int x = Math.Clamp(cx + (int)Math.Round(Number(cmd, "dx")), 0, w - 1);
         int y = Math.Clamp(cy + (int)Math.Round(Number(cmd, "dy")), 0, h - 1);
-        native.Send(new[] { MoveTo(x, y, w, h) });
+        Inject(new[] { MoveTo(x, y, w, h) });
     }
 
+    // A press Windows refused leaves the state as it was (a refused press was also let go).
     void LeftButton(bool down)
     {
         if (down == leftDown) return;  // ignored if already down (or up)
-        leftDown = down;
-        native.Send(new[] { Mouse(0, 0, 0, down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP) });
+        if (Inject(new[] { Mouse(0, 0, 0, down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP) })) leftDown = down;
     }
 
     // Windows tells a double-click from two clicks by their timing and place, and has no click
@@ -167,10 +240,10 @@ public sealed class InputInjector
             inputs.Add(Mouse(0, 0, 0, right ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP));
         }
         for (int i = mods.Count - 1; i >= 0; i--) inputs.Add(KeyInput(mods[i], up: true));
-        native.Send(inputs.ToArray());
+        bool all = Inject(inputs.ToArray());
 
         if (!right) leftDown = false;  // a left click leaves the button up
-        chain = continues ? chain + presses : presses;
+        chain = !all ? 0 : continues ? chain + presses : presses;
         lastRight = right;
         lastClickAt = now;
     }
@@ -186,7 +259,7 @@ public sealed class InputInjector
         int horizontal = -(int)Math.Round(Number(cmd, "dx") * WheelPerPixel);
         if (vertical != 0) inputs.Add(Mouse(0, 0, vertical, MOUSEEVENTF_WHEEL));
         if (horizontal != 0) inputs.Add(Mouse(0, 0, horizontal, MOUSEEVENTF_HWHEEL));
-        if (inputs.Count > 0) native.Send(inputs.ToArray());
+        if (inputs.Count > 0) Inject(inputs.ToArray());
     }
 
     // As Unicode, one character (grapheme cluster) at a time, whatever the keyboard layout: every
@@ -201,15 +274,15 @@ public sealed class InputInjector
         while (e.MoveNext())
         {
             var ch = e.GetTextElement();
-            if (ch is "\r\n" or "\n" or "\r") { native.Send(Press(Keys["return"])); continue; }
-            if (ch == "\t") { native.Send(Press(Keys["tab"])); continue; }
+            if (ch is "\r\n" or "\n" or "\r") { Inject(Press(Keys["return"])); continue; }
+            if (ch == "\t") { Inject(Press(Keys["tab"])); continue; }
             var inputs = new INPUT[ch.Length * 2];
             for (int i = 0; i < ch.Length; i++)
             {
                 inputs[i] = Unicode(ch[i], up: false);
                 inputs[ch.Length + i] = Unicode(ch[i], up: true);
             }
-            native.Send(inputs);
+            Inject(inputs);
         }
     }
 
@@ -223,7 +296,7 @@ public sealed class InputInjector
         if (name != null && Keys.TryGetValue(name, out var named))
         {
             code = named;
-            if (Gesture(cmd, name) is { } gesture) { native.Send(gesture); return; }
+            if (Gesture(cmd, name) is { } gesture) { Inject(gesture); return; }
         }
         else if (cmd.TryGetProperty("char", out var c) && c.ValueKind == JsonValueKind.String
                  && FirstCharacter(c.GetString() ?? "") is { Length: 1 } s)
@@ -234,7 +307,7 @@ public sealed class InputInjector
             code = new KeyCode(0, scan);
         }
         else return;
-        native.Send(WithModifiers(mods, code));
+        Inject(WithModifiers(mods, code));
     }
 
     // The page's desktop gestures send Control plus an arrow (Mac: switch desktop, Mission
@@ -374,16 +447,19 @@ public sealed class InputRateLimiter
 }
 
 // What the live socket needs to pass input on (docs/API.md 7.6), so it can be wired in when the
-// screen branch lands. The socket does, for each input message, after its own "Lid Awake is on"
-// check: Refusal() (an error sentence, or null), then its InputRateLimiter (drop silently),
-// then TooLong (error TooMuchText), then "ping" → {"pong": true}, else Perform. When a phone that
-// sent input leaves: ReleaseHeld().
+// screen branch lands. The socket does, for each input message: Refusal() (an error sentence, or
+// null; it covers "Lid Awake is on" too), then its InputRateLimiter (drop silently), then
+// TooLong (error TooMuchText), then "ping" → {"pong": true}, else Perform. When a phone that sent
+// input leaves: ReleaseHeld(). Perform checks Refusal() again itself, so a caller that forgets
+// can't type into a PC whose owner turned it off.
 public interface IInputSink
 {
-    // "Screen access is off." or the view-only sentence, or null when input is allowed.
+    // "Screen access is off." (also while Lid Awake is off, as the Mac's socket answers) or the
+    // view-only sentence, or null when input is allowed.
     string? Refusal();
     bool TooLong(JsonElement command);
-    // Wakes the screen and runs the command. Unknown types and bad values do nothing.
+    // Wakes the screen and runs the command. Refused (Refusal() not null), unknown types and bad
+    // values do nothing.
     void Perform(JsonElement command);
     void ReleaseHeld();
 }
@@ -397,21 +473,33 @@ public sealed class RemoteControl : IInputSink
     public const string ScreenOffText = "Screen access is off.";
     public const string ViewOnlyText = "View only: control from the phone is off in the Lid Awake menu on your PC.";
     public const string TooMuchText = "That's too much text to type at once.";
-    // Accepted input wakes the screen at most this often (the input itself also wakes it).
+    // POST /power displayoff with the lid closed (5.10; it names no computer, so it is the Mac's text).
+    public const string LidClosedText = "The lid is closed: the screen couldn't be turned back on from your phone until you open the lid, so it stays on (at the lowest brightness).";
+    // Accepted input restarts the display idle timer at most this often (the input itself also
+    // counts as someone being there).
     public const long WakeEvery = 2000;
+    // How long a wake waits for a display-off still being broadcast.
+    static readonly TimeSpan WaitForOff = TimeSpan.FromSeconds(3);
 
     readonly Settings settings;
+    readonly Func<bool> isOn;
     readonly InputInjector injector;
     readonly IPowerActions power;
     readonly Func<long> clock;
+    readonly Func<bool> lidClosed;
     readonly object gate = new();
     long lastWake = long.MinValue;
     volatile bool screenOff;
+    Task? displayOff;  // the display-off broadcast in flight, if any
 
-    public RemoteControl(Settings settings, InputInjector injector, IPowerActions power, Func<long>? clock = null)
+    // `isOn`: Lid Awake is on (the tray switch); while off nothing is accepted. `lidClosed`: the
+    // lid state from the lid-closed screen (none: open), for displayoff's 409.
+    public RemoteControl(Settings settings, Func<bool> isOn, InputInjector injector, IPowerActions power,
+                         Func<long>? clock = null, Func<bool>? lidClosed = null)
     {
-        (this.settings, this.injector, this.power) = (settings, injector, power);
+        (this.settings, this.isOn, this.injector, this.power) = (settings, isOn, injector, power);
         this.clock = clock ?? (() => Environment.TickCount64);
+        this.lidClosed = lidClosed ?? (() => false);
     }
 
     // The owner's screen switch (the screen feature adds its tray item; this only reads it).
@@ -424,6 +512,8 @@ public sealed class RemoteControl : IInputSink
     // The phone turned the display off and hasn't woken it (/status screenOff).
     public bool ScreenOff => screenOff;
 
+    public bool LidClosed => Safe(lidClosed);
+
     // From the tray. Turned off, a button the phone was holding is let go.
     public void SetControl(bool on)
     {
@@ -431,44 +521,75 @@ public sealed class RemoteControl : IInputSink
         if (!on) injector.ReleaseHeld();
     }
 
-    public string? Refusal() => !ScreenAllowed ? ScreenOffText : !ControlAllowed ? ViewOnlyText : null;
+    public string? Refusal() =>
+        !Safe(isOn) || !ScreenAllowed ? ScreenOffText : !ControlAllowed ? ViewOnlyText : null;
 
     public bool TooLong(JsonElement command) => InputInjector.TooLong(command);
 
     public void Perform(JsonElement command)
     {
+        if (Refusal() != null) return;
         WakeSoon();
         injector.Perform(command);
     }
 
     public void ReleaseHeld() => injector.ReleaseHeld();
 
+    // At start-up: a modifier key left marked as held is let go (main.swift does the same).
+    public void ReleaseModifiers() => injector.ReleaseModifiers();
+
     public void Lock() => power.Lock();
 
+    // In the background, one broadcast at a time: a repeat while one is still going is ignored.
     public void DisplayOff()
     {
         screenOff = true;
-        power.DisplayOff();
+        lock (gate)
+        {
+            if (displayOff is { IsCompleted: false }) return;
+            displayOff = Task.Run(() =>
+            {
+                try { power.DisplayOff(); }
+                catch (Exception) { }
+            });
+        }
     }
 
+    // Waits for a display-off still going (so it can't turn the display off again right after),
+    // then wakes the display.
     public void Wake()
     {
+        WaitForDisplayOff();
         lock (gate) lastWake = clock();
         screenOff = false;
         power.Wake();
+        injector.Nudge();
     }
 
-    // Any accepted input wakes the screen (7.6), right away after a display-off.
+    // Any accepted input wakes the screen (7.6). After a display-off at once, with the nudge
+    // (a ping or an unknown command sends no input of its own); otherwise the input itself is
+    // someone being there, and the idle timer restarts at most every WakeEvery.
     void WakeSoon()
     {
+        bool wasOff = screenOff;
         long now = clock();
         lock (gate)
         {
-            if (!screenOff && lastWake != long.MinValue && now - lastWake >= 0 && now - lastWake < WakeEvery) return;
+            if (!wasOff && lastWake != long.MinValue && now - lastWake >= 0 && now - lastWake < WakeEvery) return;
             lastWake = now;
         }
+        if (wasOff) WaitForDisplayOff();
         screenOff = false;
         power.Wake();
+        if (wasOff) injector.Nudge();
+    }
+
+    void WaitForDisplayOff()
+    {
+        Task? running;
+        lock (gate) running = displayOff;
+        try { running?.Wait(WaitForOff); }
+        catch (Exception) { }
     }
 
     // A stored switch; a value that isn't true or false counts as not set.
@@ -476,5 +597,11 @@ public sealed class RemoteControl : IInputSink
     {
         try { return settings.Get<bool?>(key); }
         catch (Exception) { return null; }
+    }
+
+    static bool Safe(Func<bool> f)
+    {
+        try { return f(); }
+        catch (Exception) { return false; }
     }
 }

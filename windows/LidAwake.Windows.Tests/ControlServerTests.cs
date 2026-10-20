@@ -30,6 +30,7 @@ public class ControlServerTests : IDisposable
     readonly WebServer server;
     readonly HttpClient http;
     readonly int port;
+    bool lid;  // the lid, as the lid-closed screen would report it
 
     public ControlServerTests()
     {
@@ -40,7 +41,8 @@ public class ControlServerTests : IDisposable
         settings.Set("tailnetOwner", Owner);
         auth = new Auth(settings, iterations: 1000);
         accessLog = new AccessLog(Path.Combine(folder, "logs"));
-        control = new RemoteControl(settings, new InputInjector(input), power);
+        // A clock that stands still: the first accepted input restarts the display timer, no other.
+        control = new RemoteControl(settings, () => true, new InputInjector(input), power, () => 0, () => lid);
         status = new StatusInfo(new FakeReadings()) { Control = control };
         port = FreePort();
         server = new WebServer(auth, new Tailnet(settings, _ => null), () => true, () => status.Build(true),
@@ -275,7 +277,7 @@ public class ControlServerTests : IDisposable
         ScreenOn();
         settings.Set("remoteControl", false);  // view only
         Assert.Equal((204, ""), await Send("/power", """{"action":"displayoff"}""", cookie));
-        Assert.Equal(1, power.Offs);
+        Assert.True(SpinWait.SpinUntil(() => power.Offs == 1, 5000));  // broadcast in the background
         Assert.True(control.ScreenOff);
         Assert.Contains(accessLog.Recent(5), l => l.EndsWith("  Display turned off from the phone · iPhone", StringComparison.Ordinal));
         Assert.True(JsonDocument.Parse(JsonSerializer.Serialize(status.Build(true))).RootElement.GetProperty("screenOff").GetBoolean());
@@ -283,6 +285,27 @@ public class ControlServerTests : IDisposable
         Assert.Equal((204, ""), await Send("/power", """{"action":"wake"}""", cookie));
         Assert.Equal(1, power.Wakes);
         Assert.False(control.ScreenOff);
+    }
+
+    // With the lid closed the screen couldn't be turned back on from the phone: refused, not logged.
+    [Fact]
+    public async Task DisplayOffWithTheLidClosedIs409()
+    {
+        var cookie = await SignIn();
+        ScreenOn();
+        lid = true;
+        var r = await Send("/power", """{"action":"displayoff"}""", cookie);
+        Assert.Equal((409, "The lid is closed: the screen couldn't be turned back on from your phone until you open the lid, so it stays on (at the lowest brightness)."), r);
+        Assert.False(control.ScreenOff);
+        await Task.Delay(100);
+        Assert.Equal(0, power.Offs);
+        Assert.DoesNotContain(accessLog.Recent(5), l => l.Contains("Display turned off", StringComparison.Ordinal));
+        // Lock and wake don't care about the lid.
+        Assert.Equal((204, ""), await Send("/power", """{"action":"wake"}""", cookie));
+        Assert.Equal((204, ""), await Send("/power", """{"action":"lock"}""", cookie));
+        lid = false;
+        Assert.Equal((204, ""), await Send("/power", """{"action":"displayoff"}""", cookie));
+        Assert.True(SpinWait.SpinUntil(() => power.Offs == 1, 5000));
     }
 
     [Fact]

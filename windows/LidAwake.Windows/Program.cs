@@ -41,8 +41,11 @@ static class Program
         var safety = new SafetyCheck(limits, heat, readings.Power);
         // The phone's mouse and keyboard on this PC, and lock / display off / wake (POST /input,
         // POST /power). Only through the owner's switches, which need the screen switch.
-        var nativeInput = new NativeInput();
-        var control = new RemoteControl(settings, new InputInjector(nativeInput), new NativePower(nativeInput));
+        // Nothing is accepted while Lid Awake is off (the sink checks it itself, for the socket).
+        var control = new RemoteControl(settings, () => tray?.IsOn == true, new InputInjector(new NativeInput()), new NativePower());
+        // A modifier key an earlier run left held is let go, as the Mac does at start-up.
+        try { control.ReleaseModifiers(); }
+        catch (Exception) { }
         var status = new StatusInfo(readings, limits, heat) { Control = control };
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),

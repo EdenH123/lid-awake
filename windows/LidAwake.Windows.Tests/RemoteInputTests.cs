@@ -15,8 +15,16 @@ public sealed class FakeInput : ISendInput
     public bool UserDesktop = true;
     public int DoubleClick = 500;
     public long Now = 10_000;
+    // How many of a batch Windows takes (all by default): to act out a batch cut short by UIPI.
+    public Func<INPUT[], uint>? Accept;
+    public readonly HashSet<ushort> KeysDown = new();
 
-    public void Send(INPUT[] inputs) { lock (Calls) Calls.Add(inputs); }
+    public uint Send(INPUT[] inputs)
+    {
+        lock (Calls) Calls.Add(inputs);
+        return Accept?.Invoke(inputs) ?? (uint)inputs.Length;
+    }
+    public bool IsKeyDown(ushort vk) => KeysDown.Contains(vk);
     public bool TryGetCursor(out int x, out int y) { x = CursorX; y = CursorY; return HasCursor; }
     public (int Width, int Height) PrimaryScreen() => (Width, Height);
     public int DoubleClickMilliseconds() => DoubleClick;
@@ -29,9 +37,22 @@ public sealed class FakeInput : ISendInput
 public sealed class FakePower : IPowerActions
 {
     public int Locks, Offs, Wakes;
+    // Set: DisplayOff waits for it, like a broadcast that takes a while.
+    public ManualResetEventSlim? HoldOff;
+    public readonly List<string> Events = new();
     public void Lock() => Interlocked.Increment(ref Locks);
-    public void DisplayOff() => Interlocked.Increment(ref Offs);
-    public void Wake() => Interlocked.Increment(ref Wakes);
+    public void DisplayOff()
+    {
+        Interlocked.Increment(ref Offs);
+        lock (Events) Events.Add("off start");
+        HoldOff?.Wait(TimeSpan.FromSeconds(10));
+        lock (Events) Events.Add("off end");
+    }
+    public void Wake()
+    {
+        Interlocked.Increment(ref Wakes);
+        lock (Events) Events.Add("wake");
+    }
 }
 
 public class RemoteInputTests
@@ -91,6 +112,7 @@ public class RemoteInputTests
         Assert.True(w >= 0 && h >= 0);
         Assert.True(native.DoubleClickMilliseconds() >= 0);
         native.OnUserDesktop();
+        native.IsKeyDown(VK_SHIFT);
     }
 
     // ---- Pointer ----
@@ -541,6 +563,94 @@ public class RemoteInputTests
         Assert.False(injector.LeftDown);
     }
 
+    // ---- A batch Windows cuts short ----
+
+    [Fact]
+    public void ACutShortShortcutLetsGoOfWhatItPressed()
+    {
+        fake.Accept = batch => batch.Length == 6 ? 2u : (uint)batch.Length;  // Ctrl and Shift went down, then UIPI
+        Run("""{"type":"key","char":"c","mods":["cmd","shift"]}""");
+        Assert.Equal(2, fake.Calls.Count);
+        Assert.Equal(new[] { Up(Char('c')), Up(Shift), Up(Ctrl) }, fake.Calls[1].Select(Show));
+    }
+
+    [Fact]
+    public void ACutShortClickLetsGoOfTheButtonAndModifiers()
+    {
+        fake.Accept = batch => batch.Length == 5 ? 3u : (uint)batch.Length;
+        Run("""{"type":"click","x":0,"y":0,"mods":["alt"]}""");
+        Assert.Equal(new[] { LeftUp, Up(Alt) }, fake.Calls[1].Select(Show));
+        Assert.False(injector.LeftDown);
+        // The double-click chain starts again: a count 2 next sends two presses of its own.
+        fake.Accept = null;
+        fake.Calls.Clear();
+        fake.Now += 100;
+        Run("""{"type":"click","count":2}""");
+        Assert.Equal(new[] { LeftDown, LeftUp, LeftDown, LeftUp }, Sent());
+    }
+
+    [Fact]
+    public void ARefusedMouseDownIsLetGoAndNotRemembered()
+    {
+        fake.Accept = _ => 0;
+        Run("""{"type":"mousedown"}""");
+        Assert.False(injector.LeftDown);
+        Assert.Equal(new[] { LeftDown, LeftUp }, Sent());
+        fake.Accept = null;
+        Run("""{"type":"mousedown"}""");  // tried again: not "already down"
+        Assert.True(injector.LeftDown);
+    }
+
+    [Fact]
+    public void ACutShortTextLeavesNoKeyToLetGo()
+    {
+        fake.Accept = _ => 1;
+        Run("""{"type":"text","text":"ab"}""");
+        Assert.Equal(2, fake.Calls.Count);  // one batch per character; Unicode keys hold nothing
+    }
+
+    [Fact]
+    public void ReleaseModifiersLetsGoOfOnlyTheKeysWindowsHolds()
+    {
+        injector.ReleaseModifiers();
+        Assert.Empty(fake.Calls);
+        fake.KeysDown.Add(0xA2);    // left Ctrl
+        fake.KeysDown.Add(VK_LWIN);
+        fake.KeysDown.Add(0x41);    // A is not a modifier
+        injector.ReleaseModifiers();
+        Assert.Equal(new[] { Up(new KeyCode(0xA2, 0x1D)), Up(new KeyCode(VK_LWIN, 0x5B, true)) }, Sent());
+        Assert.Equal(8, ModifierKeys.Length);
+        fake.Calls.Clear();
+        fake.UserDesktop = false;
+        injector.ReleaseModifiers();
+        Assert.Empty(fake.Calls);
+    }
+
+    [Fact]
+    public void ReleaseHeldAlsoLetsGoOfStuckModifiers()
+    {
+        fake.KeysDown.Add(0xA5);  // right Alt
+        Run("""{"type":"mousedown"}""");
+        injector.ReleaseHeld();
+        Assert.Equal(new[] { LeftDown, LeftUp, Up(new KeyCode(0xA5, 0x38, true)) }, Sent());
+    }
+
+    [Fact]
+    public void TheNudgeMovesThePointerToWhereItIs()
+    {
+        injector.Nudge();
+        fake.CursorX = -500;  // on a display left of the primary one
+        injector.Nudge();
+        fake.HasCursor = false;
+        injector.Nudge();
+        Assert.Equal(new[] { Show(MoveTo(100, 200, 1920, 1080)), M(0, 0, MOUSEEVENTF_MOVE) }, Sent());
+        fake.Calls.Clear();
+        fake.HasCursor = true;
+        fake.UserDesktop = false;
+        injector.Nudge();
+        Assert.Empty(fake.Calls);
+    }
+
     // ---- The socket's rate cap ----
 
     [Fact]
@@ -573,22 +683,27 @@ public class RemoteControlTests : IDisposable
     readonly FakeInput fake = new();
     readonly FakePower power = new();
     long now = 100_000;
+    bool on = true;
+    bool lid;
     readonly RemoteControl control;
 
     public RemoteControlTests()
     {
         settings = new Settings(folder);
-        control = new RemoteControl(settings, new InputInjector(fake), power, () => now);
+        control = new RemoteControl(settings, () => on, new InputInjector(fake), power, () => now, () => lid);
     }
 
     public void Dispose()
     {
+        power.HoldOff?.Set();
         try { Directory.Delete(folder, true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
 
     static JsonElement J(string json) => JsonDocument.Parse(json).RootElement.Clone();
+
+    void BothOn() => settings.Set("remoteScreen", true);
 
     [Fact]
     public void BothSwitchesAreOffToStartWith()
@@ -629,10 +744,68 @@ public class RemoteControlTests : IDisposable
         Assert.True(control.ControlAllowed);
     }
 
+    // The sink refuses on its own, whatever its caller checked.
+    [Fact]
+    public void WhileLidAwakeIsOffNothingIsSent()
+    {
+        BothOn();
+        on = false;
+        Assert.Equal("Screen access is off.", control.Refusal());
+        control.Perform(J("""{"type":"click"}"""));
+        control.Perform(J("""{"type":"text","text":"x"}"""));
+        Assert.Empty(fake.Calls);
+        Assert.Equal(0, power.Wakes);
+        on = true;
+        Assert.Null(control.Refusal());
+        control.Perform(J("""{"type":"click"}"""));
+        Assert.Equal(2, fake.All().Count);
+    }
+
+    [Fact]
+    public void WithTheScreenSwitchOffNothingIsSent()
+    {
+        settings.Set("remoteControl", true);
+        control.Perform(J("""{"type":"click"}"""));
+        control.Perform(J("""{"type":"key","key":"return"}"""));
+        Assert.Empty(fake.Calls);
+        Assert.Equal(0, power.Wakes);
+    }
+
+    [Fact]
+    public void ViewOnlyNothingIsSent()
+    {
+        BothOn();
+        settings.Set("remoteControl", false);
+        control.Perform(J("""{"type":"mousedown"}"""));
+        control.Perform(J("""{"type":"move","dx":5,"dy":5}"""));
+        Assert.Empty(fake.Calls);
+        Assert.Equal(0, power.Wakes);
+    }
+
+    [Fact]
+    public void AnIsOnThatThrowsCountsAsOff()
+    {
+        BothOn();
+        var throwing = new RemoteControl(settings, () => throw new InvalidOperationException("tray gone"), new InputInjector(fake), power);
+        Assert.Equal("Screen access is off.", throwing.Refusal());
+        throwing.Perform(J("""{"type":"click"}"""));
+        Assert.Empty(fake.Calls);
+    }
+
+    [Fact]
+    public void TheLidStateComesFromItsSource()
+    {
+        Assert.False(control.LidClosed);
+        lid = true;
+        Assert.True(control.LidClosed);
+        Assert.False(new RemoteControl(settings, () => true, new InputInjector(fake), power).LidClosed);  // none: open
+        Assert.False(new RemoteControl(settings, () => true, new InputInjector(fake), power, lidClosed: () => throw new IOException()).LidClosed);
+    }
+
     [Fact]
     public void TurningControlOffLetsGoOfAHeldButton()
     {
-        settings.Set("remoteScreen", true);
+        BothOn();
         control.Perform(J("""{"type":"mousedown"}"""));
         control.SetControl(false);
         Assert.Equal(2, fake.All().Count);
@@ -642,8 +815,10 @@ public class RemoteControlTests : IDisposable
     [Fact]
     public void AcceptedInputWakesTheScreenAtMostEveryTwoSeconds()
     {
+        BothOn();
         control.Perform(J("""{"type":"ping"}"""));
         Assert.Equal(1, power.Wakes);
+        Assert.Empty(fake.Calls);  // no nudge: the display wasn't turned off
         now += 500;
         control.Perform(J("""{"type":"move","dx":1,"dy":1}"""));
         Assert.Equal(1, power.Wakes);
@@ -653,16 +828,19 @@ public class RemoteControlTests : IDisposable
     }
 
     [Fact]
-    public void AfterDisplayOffTheNextInputWakesItAtOnce()
+    public void AfterDisplayOffTheNextInputWakesItAtOnceWithANudge()
     {
+        BothOn();
         control.Perform(J("""{"type":"ping"}"""));
         control.DisplayOff();
         Assert.True(control.ScreenOff);
-        Assert.Equal(1, power.Offs);
         now += 10;
-        control.Perform(J("""{"type":"ping"}"""));
+        control.Perform(J("""{"type":"ping"}"""));  // waits for the broadcast, then wakes
+        Assert.Equal(1, power.Offs);
         Assert.Equal(2, power.Wakes);
         Assert.False(control.ScreenOff);
+        Assert.Equal(new[] { RemoteInputTests.Show(InputInjector.MoveTo(100, 200, 1920, 1080)) }, fake.All().Select(RemoteInputTests.Show));
+        Assert.Equal(new[] { "wake", "off start", "off end", "wake" }, power.Events);
     }
 
     [Fact]
@@ -673,6 +851,27 @@ public class RemoteControlTests : IDisposable
         control.Lock();
         Assert.False(control.ScreenOff);
         Assert.Equal((1, 1, 1), (power.Offs, power.Wakes, power.Locks));
+        Assert.Single(fake.Calls);  // the wake's nudge
+    }
+
+    // One broadcast at a time; a wake waits for it, so it can't be turned off again after the wake.
+    [Fact]
+    public async Task OneDisplayOffAtATimeAndAWakeWaitsForIt()
+    {
+        power.HoldOff = new ManualResetEventSlim(false);
+        control.DisplayOff();
+        Assert.True(SpinWait.SpinUntil(() => power.Offs == 1, 5000));
+        control.DisplayOff();  // still going: ignored
+        var wake = Task.Run(control.Wake);
+        await Task.Delay(200);
+        Assert.False(wake.IsCompleted);
+        power.HoldOff.Set();
+        await wake.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(new[] { "off start", "off end", "wake" }, power.Events);
+        Assert.Equal(1, power.Offs);
+
+        control.DisplayOff();  // the first one is done: this one runs
+        Assert.True(SpinWait.SpinUntil(() => power.Offs == 2, 5000));
     }
 
     [Fact]

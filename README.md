@@ -179,7 +179,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - See your signed-in devices and sign one out.
 - The activity log.
 - The low-battery safety limit, and the too-hot one on laptops that report a temperature.
-- Using the phone as trackpad and keyboard, and locking the PC or turning its screen off, once screen viewing is on and **Allow control from phone** is ticked in the tray menu (off to start with). Windows doesn't let any program control a window that runs as administrator, the "Do you want to allow…" prompt, or the lock screen, so do those at the PC.
+- Using the phone as trackpad and keyboard, and locking the PC or turning its screen off, once screen viewing is on. Turning on screen viewing also allows control, until you change **Allow control from phone** in the tray menu yourself (as on the Mac): if you only want to watch, untick it. Windows doesn't let any program control a window that runs as administrator, the "Do you want to allow…" prompt, or the lock screen, so do those at the PC.
 
 ### Not on Windows yet
 

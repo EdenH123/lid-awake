@@ -330,7 +330,7 @@ public sealed class WebServer : IDisposable
     }
 
     // POST /power (5.10): all three need the screen switch, and lock the control switch too.
-    // Windows has no lid reading, so displayoff is never refused with 409.
+    // With the lid closed, displayoff is refused (409): the screen couldn't come back on.
     async Task Power(HttpContext c, RemoteControl control)
     {
         if (!control.ScreenAllowed) { await SendText(c, 403, RemoteControl.ScreenOffText); return; }
@@ -345,6 +345,7 @@ public sealed class WebServer : IDisposable
                 control.Lock();
                 break;
             case "displayoff":
+                if (control.LidClosed) { await SendText(c, 409, RemoteControl.LidClosedText); return; }
                 LogQuietly($"Display turned off from the phone · {device}");
                 control.DisplayOff();
                 break;

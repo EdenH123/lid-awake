@@ -59,7 +59,11 @@ public struct HARDWAREINPUT
 // the tests give a fake that records the INPUT structures, so nothing moves the real mouse.
 public interface ISendInput
 {
-    void Send(INPUT[] inputs);
+    // How many of the inputs Windows took (SendInput's answer); fewer than given: the rest were
+    // blocked (UIPI, a desktop switch) and are not sent.
+    uint Send(INPUT[] inputs);
+    // GetAsyncKeyState: Windows considers this virtual key held right now.
+    bool IsKeyDown(ushort vk);
     // The pointer, in the same coordinates as PrimaryScreen. false: not known.
     bool TryGetCursor(out int x, out int y);
     // The primary display's size in pixels; its top-left corner is always (0, 0).
@@ -74,6 +78,9 @@ public interface ISendInput
 }
 
 // Locking, and turning the display off and on (POST /power). The tests give a fake.
+// DisplayOff may take a while (it waits for the windows it tells); RemoteControl runs it in the
+// background, one at a time. Wake only restarts the display idle timer: the pointer nudge that
+// turns a display back on is the injector's (InputInjector.Nudge), in order with other input.
 public interface IPowerActions
 {
     void Lock();
@@ -113,11 +120,16 @@ public sealed class NativeInput : ISendInput
     const int SM_CXSCREEN = 0, SM_CYSCREEN = 1, UOI_NAME = 2;
     const uint DESKTOP_READOBJECTS = 0x0001;
 
-    public void Send(INPUT[] inputs)
+    [DllImport("user32.dll")]
+    static extern short GetAsyncKeyState(int vk);
+
+    public uint Send(INPUT[] inputs)
     {
-        if (inputs.Length == 0) return;
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (inputs.Length == 0) return 0;
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
+
+    public bool IsKeyDown(ushort vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
 
     public bool TryGetCursor(out int x, out int y)
     {
@@ -164,31 +176,13 @@ public sealed class NativePower : IPowerActions
     const int SC_MONITORPOWER = 0xF170;
     const uint ES_DISPLAY_REQUIRED = 0x00000002;
 
-    readonly ISendInput input;
-
-    public NativePower(ISendInput input) => this.input = input;
-
     public void Lock() => LockWorkStation();
 
     // SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2), as SendMessageTimeout so a hung
-    // window can't hold it up, and on a pool thread so the phone's request doesn't wait for it.
-    public void DisplayOff() => Task.Run(() =>
-    {
-        try { SendMessageTimeout(HWND_BROADCAST, WM_SYSCOMMAND, new IntPtr(SC_MONITORPOWER), new IntPtr(2), SMTO_ABORTIFHUNG, 1000, out _); }
-        catch (Exception) { }
-    });
+    // window can't hold it up for long. Called off the request thread (RemoteControl).
+    public void DisplayOff() =>
+        SendMessageTimeout(HWND_BROADCAST, WM_SYSCOMMAND, new IntPtr(SC_MONITORPOWER), new IntPtr(2), SMTO_ABORTIFHUNG, 1000, out _);
 
-    // "Someone is here": the display idle timer starts again, and a display that is off comes back
-    // on with a pointer move to where the pointer already is (nothing visibly moves).
-    public void Wake()
-    {
-        SetThreadExecutionState(ES_DISPLAY_REQUIRED);
-        if (!input.OnUserDesktop()) return;
-        var (w, h) = input.PrimaryScreen();
-        if (w <= 0 || h <= 0 || !input.TryGetCursor(out var x, out var y)) return;
-        // On another display the pointer is out of reach of an absolute move (they cover the
-        // primary display only): a relative move of nothing still counts as input.
-        bool onPrimary = x >= 0 && x < w && y >= 0 && y < h;
-        input.Send(new[] { onPrimary ? InputInjector.MoveTo(x, y, w, h) : InputInjector.Mouse(0, 0, 0, InputInjector.MOUSEEVENTF_MOVE) });
-    }
+    // "Someone is here": the display idle timer starts again.
+    public void Wake() => SetThreadExecutionState(ES_DISPLAY_REQUIRED);
 }
