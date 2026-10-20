@@ -1,8 +1,9 @@
 # Removes Lid Awake from this PC. Double-click "Uninstall Lid Awake (Windows).cmd" in the folder above.
-# It stops the app, closes the phone page on Tailscale (if Lid Awake opened it), removes the
-# Start menu entry, puts your lid setting back (and the screen brightness, if a crash left it
-# lowered), and asks before deleting your settings and phone password. Kept settings include this
-# PC's own file (machine.json: phone alerts, Tailscale's name); the app and its log always go.
+# It takes Lid Awake out of Claude Code's settings (if it was added), stops the app, closes the
+# phone page on Tailscale (if Lid Awake opened it), removes the Start menu entry, puts your lid
+# setting back (and the screen brightness, if a crash left it lowered), and asks before deleting
+# your settings and phone password. Kept settings include this PC's own file (machine.json: phone
+# alerts, Tailscale's name); the app and its log always go.
 #
 # The switches below are FOR AUTOMATED TESTS ONLY. A person never needs them; without them the
 # uninstaller asks the question and waits for Enter at the end.
@@ -60,6 +61,51 @@ function Wait-ForEnter {
     if (-not $NoPause) { Write-Host ''; [void](Read-Host 'Press Enter to close') }
 }
 
+# ---- Shared block: install.ps1 and uninstall.ps1 have it word for word (the Windows workflow checks) ----
+
+# Native programs write to stderr in normal use; Stop would turn that into an error.
+function Invoke-Quietly([scriptblock]$command) {
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $command } finally { $ErrorActionPreference = $saved }
+}
+
+# Every LidAwake.exe running. Helper: started with a --claude- flag, by Claude Code itself (its
+# hooks and status line, --claude-event and --claude-statusline) or by these scripts
+# (--claude-setup); short-lived, and not the tray app. Without WMI every one counts as the app.
+function Get-LidAwakeProcesses {
+    try {
+        return @(Get-CimInstance -ClassName Win32_Process -Filter "Name='LidAwake.exe'" -ErrorAction Stop |
+            ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; Helper = ([string]$_.CommandLine -like '*--claude-*') } })
+    } catch {
+        return @(Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue |
+            ForEach-Object { [pscustomobject]@{ Id = $_.Id; Helper = $false } })
+    }
+}
+
+# The Lid Awake tray app, never one of the helpers above.
+function Get-TrayApp { @(Get-LidAwakeProcesses | Where-Object { -not $_.Helper }) }
+
+# Stops the tray app and waits (at most 15 seconds) for it to end. True when one was running.
+function Stop-TrayApp {
+    $running = @(Get-TrayApp)
+    if ($running.Count -eq 0) { return $false }
+    foreach ($p in $running) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    $deadline = (Get-Date).AddSeconds(15)
+    while (@(Get-TrayApp).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    return $true
+}
+
+# Claude Code's hooks end by themselves within seconds, and Claude Code waits for them, so they
+# are never stopped: this waits for them (at most 5 seconds) before the app's files are replaced
+# or deleted. One still running after that may hold a file: the copy or delete is tried again.
+function Wait-ClaudeHelpers {
+    $deadline = (Get-Date).AddSeconds(5)
+    while (@(Get-LidAwakeProcesses | Where-Object { $_.Helper }).Count -gt 0 -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 # Runs the installed LidAwake.exe --claude-setup <on|off|status> (hidden, at most 30 seconds): the
 # same code as the tray item "Claude alerts and usage from Claude Code...". Returns its exit code
 # (-1 when it could not run) and what it printed. Status: 0 set up, 1 not set up, 2 no Claude
@@ -83,12 +129,7 @@ function Invoke-ClaudeSetup([string]$what) {
     }
 }
 
-# Native programs write to stderr in normal use; Stop would turn that into an error.
-function Invoke-Quietly([scriptblock]$command) {
-    $saved = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try { & $command } finally { $ErrorActionPreference = $saved }
-}
+# ---- End of the shared block ----
 
 # A power plan's GUID, exactly: 8-4-4-4-12 hex digits, nothing around it.
 function Test-PlanGuid($value) {
@@ -155,13 +196,22 @@ Write-Host 'Removing Lid Awake'
 
 # ---- 1/5 Stop ---------------------------------------------------------------------------
 Show-Step '1/5  Stopping the app'
-try {
-    $running = @(Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)
-    if ($running.Count -gt 0) {
-        $running | Stop-Process -Force -ErrorAction SilentlyContinue
-        $running | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
+# First Lid Awake's hooks and status line in Claude Code's settings, if the owner added them:
+# taken out by the app itself (--claude-setup off, the tray item's own rule), before anything
+# else, while LidAwake.exe is certainly still there.
+if (Test-Path -LiteralPath $exe) {
+    $claudeOff = Invoke-ClaudeSetup 'off'
+    if ($claudeOff.Code -eq 0) {
+        if ($claudeOff.Text -match '^Removed') { Show-Ok "Lid Awake taken out of Claude Code's settings (restart open Claude Code sessions)" }
+    } else {
+        Show-Problem ("Could not take Lid Awake out of Claude Code's settings: " + $claudeOff.Text + ' Remove the hooks that run LidAwake.exe from .claude\settings.json in your user folder, or run this again.')
     }
-    if (Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue) { throw 'it is still running.' }
+}
+try {
+    # Only the tray app: Claude Code's hooks (LidAwake.exe with a --claude- flag) end on their
+    # own, and step 4 waits for them.
+    [void](Stop-TrayApp)
+    if (@(Get-TrayApp).Count -gt 0) { throw 'it is still running.' }
     Show-Ok 'Stopped'
 } catch {
     Show-Problem ('Could not stop Lid Awake: ' + $_.Exception.Message + ' Right-click its icon by the clock and choose Quit, then run this again.')
@@ -219,17 +269,6 @@ try {
     Show-Ok 'Start menu entry removed, and it will not start when you sign in'
 } catch {
     Show-Problem ('Could not finish this step: ' + $_.Exception.Message + ' Run this again.')
-}
-
-# Lid Awake's hooks and status line in Claude Code's settings, if the owner added them: taken out
-# by the app itself (--claude-setup off, the tray item's own rule), while it is still installed.
-if (Test-Path -LiteralPath $exe) {
-    $claudeOff = Invoke-ClaudeSetup 'off'
-    if ($claudeOff.Code -eq 0) {
-        if ($claudeOff.Text -match '^Removed') { Show-Ok "Lid Awake taken out of Claude Code's settings" }
-    } else {
-        Show-Problem ("Could not take Lid Awake out of Claude Code's settings: " + $claudeOff.Text + ' Remove the hooks that run LidAwake.exe from .claude\settings.json in your user folder, or run this again.')
-    }
 }
 
 # ---- 3/5 Lid action ---------------------------------------------------------------------
@@ -340,7 +379,9 @@ $keepMachineFile = $keepSavedLid -or $keepSavedBrightness
 try {
     # Everything goes (the app, its log), except machine.json: it is one of this PC's settings
     # (the phone alerts, Tailscale's name), kept or deleted with the other settings in step 5.
+    # Claude Code's hooks still running (the same LidAwake.exe) finish first.
     if (Test-Path -LiteralPath $dest) {
+        Wait-ClaudeHelpers
         $gone = $false
         for ($try = 1; $try -le 5 -and -not $gone; $try++) {
             try {

@@ -149,10 +149,21 @@ public static class ClaudeHook
         }
     }
 
+    // Claude Code's home folder, found the way Claude Code finds it (Node's os.homedir): the
+    // USERPROFILE variable when it holds a full path, else this user's profile folder. Its
+    // .claude folder holds Claude Code's settings and transcripts.
+    public static string ClaudeHome()
+    {
+        var home = Environment.GetEnvironmentVariable("USERPROFILE");
+        return !string.IsNullOrEmpty(home) && Path.IsPathFullyQualified(home)
+            ? home
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    }
+
     // Claude Code is there: its program (ClaudeFinder's places) or its folder in the profile.
     public static bool ClaudeCodeInstalled()
     {
-        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var profile = ClaudeHome();
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         return ClaudeFinder.Candidates(profile, appData).Any(File.Exists) || Directory.Exists(Path.Combine(profile, ".claude"));
     }
@@ -209,7 +220,8 @@ public static class ClaudeHook
     // The status line: Claude Code's JSON on stdin. Its rate_limits (five_hour, seven_day; each a
     // used_percentage and a resets_at in Unix seconds or as an ISO date) are saved for Lid Awake,
     // checked like the reader checks them, but only when Lid Awake's folder is there (as on the
-    // Mac). Prints the model and the session's percent.
+    // Mac), and not when the file already has the same numbers from under a minute ago
+    // (ClaudeUsage.AlreadySaved). Prints the model and the session's percent.
     public static string StatusLine(byte[]? input, string usageFile, DateTimeOffset now)
     {
         string model = "Claude";
@@ -231,7 +243,8 @@ public static class ClaudeHook
                         kept[key] = window;
                         if (key == "five_hour") session = pct;
                     }
-                    if (kept.Count > 0) ClaudeUsage.Save(usageFile, kept, now);
+                    // The same numbers as the last run's, saved under a minute ago: not written again.
+                    if (kept.Count > 0 && !ClaudeUsage.AlreadySaved(usageFile, kept, now)) ClaudeUsage.Save(usageFile, kept, now);
                 }
             }
         }
@@ -297,7 +310,7 @@ public sealed class ClaudeSettingsFile
 
     public ClaudeSettingsFile(string? path = null, Func<DateTime>? clock = null)
     {
-        this.path = path ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "settings.json");
+        this.path = path ?? Path.Combine(ClaudeHook.ClaudeHome(), ".claude", "settings.json");
         this.clock = clock ?? (() => DateTime.Now);
     }
 

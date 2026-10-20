@@ -28,7 +28,7 @@ public sealed class ClaudeAlerts : IDisposable
 
     public static string DefaultFolder => Path.Combine(ClaudeUsage.DefaultFolder, "claude-events");
     public static string DefaultProjects =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "projects");
+        Path.Combine(ClaudeHook.ClaudeHome(), ".claude", "projects");
 
     readonly string folder;
     readonly string projects;
