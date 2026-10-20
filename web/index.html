@@ -90,6 +90,20 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     padding: max(10px, env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom));
   }
   body.apps-full #scroller, body.landscape-full #scroller { padding: 0; overflow: hidden; }
+  /* Glass at the top edge, as in iOS: once the page is scrolled, whatever slides under the clock
+     and the battery is blurred and fades out softly instead of being cut off under the status bar. */
+  #topGlass {
+    position: fixed; z-index: 8; left: 0; right: 0; top: 0; pointer-events: none;
+    height: calc(max(10px, env(safe-area-inset-top)) + 22px);
+    background: linear-gradient(to bottom, var(--bar), transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(180%); backdrop-filter: blur(14px) saturate(180%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent);
+    mask-image: linear-gradient(to bottom, #000 45%, transparent);
+    opacity: 0; transition: opacity .2s ease;
+  }
+  body.scrolled #topGlass { opacity: 1; }
+  body.apps-full #topGlass, body.landscape-full #topGlass { display: none; }
+  @media (prefers-reduced-motion: reduce) { #topGlass { transition: none; } }
   /* no grey scroll line on the side while scrolling (any scroll area) */
   * { scrollbar-width: none; }
   *::-webkit-scrollbar { display: none; }
@@ -1019,6 +1033,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 </head>
 <body>
 <div id="intro" aria-hidden="true"><div class="intro-mac"><div class="intro-lid"><div class="intro-screen" id="introSky"></div></div><div class="intro-base"></div></div></div>
+<div id="topGlass" aria-hidden="true"></div>
 <div id="scroller">
 <main id="main" class="waiting">
   <div class="topbar">
@@ -2068,6 +2083,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     addEventListener("click", swallow, true);
     setTimeout(() => removeEventListener("click", swallow, true), 400);
   }, true);
+  // The glass at the top edge shows once the page is scrolled (one class change per frame at most).
+  { const sc = $("scroller"); let frame = 0;
+    sc.addEventListener("scroll", () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; document.body.classList.toggle("scrolled", sc.scrollTop > 4); });
+    }, { passive: true }); }
   $("settingsBtn").addEventListener("click", () => { showTab("settings"); $("scroller").scrollTo(0, 0); loadDevices(); loadActivity(); syncFaceID(); });
   $("settingsBack").addEventListener("click", () => { showTab("status"); $("scroller").scrollTo(0, 0); });
   $("faceIdOn").addEventListener("click", faceIDSetup);
