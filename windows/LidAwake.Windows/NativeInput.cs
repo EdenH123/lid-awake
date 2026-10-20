@@ -75,6 +75,10 @@ public interface ISendInput
     // False while the input desktop is not the user's own (the UAC prompt's secure desktop, the
     // lock screen or the sign-in screen): then nothing is sent at all.
     bool OnUserDesktop();
+    // The primary display's pixels per point (DisplayScale): a move's dx and dy are the computer's
+    // points, as on the Mac (the trackpad's phone pixels times its speed gain). 1 unless the real
+    // one says otherwise.
+    double PixelsPerPoint() => 1.0;
 }
 
 // Locking, and turning the display off and on (POST /power). The tests give a fake.
@@ -139,6 +143,8 @@ public sealed class NativeInput : ISendInput
     }
 
     public (int Width, int Height) PrimaryScreen() => (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+
+    public double PixelsPerPoint() => DisplayScale.PixelsPerPoint();
 
     public int DoubleClickMilliseconds() => (int)Math.Min(GetDoubleClickTime(), 5000u);
 

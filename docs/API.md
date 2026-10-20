@@ -180,7 +180,7 @@ Answered before the "off" check and before sign-in, to any caller that passes st
 | `/apple-touch-icon.png`, `/apple-touch-icon-precomposed.png` | 180x180 app icon | `image/png` |
 | `/icon-512.png` | 512x512 app icon | `image/png` |
 | `/sky/sunrise.jpg`, `/sky/day.jpg`, `/sky/sunset.jpg`, `/sky/night.jpg` | the opening-animation photos (`assets/sky-*.jpg`). Any other name: `404` `Not found` | `image/jpeg` |
-| `/splash/<w>x<h>.png` | iPhone launch screens, only for the sizes `Splash.swift` lists (pixels = points x scale). Optional: Windows may answer `404` `Not found` | `image/png` |
+| `/splash/<w>x<h>.png` | iPhone launch screens, only for the sizes `Splash.swift` lists (pixels = points x scale): a closed laptop on black, where the page's opening animation starts. Any other size: `404` `Not found`. Windows draws the same sizes and colours (`Splash.cs`, System.Drawing) and keeps each in memory after the first request | `image/png` |
 
 The page and its service worker, manifest and icons are needed by iOS before any sign-in, so they never require a session.
 
@@ -760,7 +760,7 @@ A computer that cannot measure a field sends the **safe default** in the last co
 
 | Field | Type | Meaning | Safe default |
 |---|---|---|---|
-| `host` | string | the computer's display name (Mac: `Host.current().localizedName`, else `"Mac"`). The page shows it under the greeting | the computer's name |
+| `host` | string | the computer's display name (Mac: `Host.current().localizedName`, else `"Mac"`; Windows: the DNS host name, `GetComputerNameEx(ComputerNamePhysicalDnsHostname)`, which keeps the case it was typed in, else the NetBIOS name). The page shows it under the greeting | the computer's name |
 | `lidAwake` | boolean | Lid Awake is on | required |
 | `timerMinutes` | integer | chosen auto-off length; `0` = never; one of 0, 15, 30, 60, 120, 240, 480 | `0`; required |
 | `timerRemaining` | number, seconds | time left. Present only while on, with a timer, and in the future | omit |
@@ -768,7 +768,9 @@ A computer that cannot measure a field sends the **safe default** in the last co
 | `heatGuard` | boolean | "turn off when hot" switch (Mac and Windows default on). On Windows it is the stored setting even when there is no temperature source (then `features` has no `"heat"` and the page hides the row) | `true` |
 | `batteryLimit` | integer, percent | battery level below which it turns off (Mac: `10`) | `10`; required (the page prints it) |
 | `maxBatteryTemp` | integer, degrees C | temperature at which it turns off (Mac: `40`) | `40`; required (the page uses it) |
-| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value. Windows has no system thermal state and sends `"unknown"`, so the page shows a dash rather than a "Normal" nothing measured (its temperature, when it has one, is `batteryTemp`) | `"nominal"` |
+| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value. Windows has no system thermal state: it works one out from the ACPI thermal zones (below), and sends `"unknown"` when the PC has none, so the page shows a dash rather than a "Normal" nothing measured | `"nominal"` |
+
+Windows' `thermalState`: the hottest thermal zone, from `MSAcpi_ThermalZoneTemperature` (the heat limit's reading, which needs admin rights on most PCs) and the Thermal Zone Information performance counters (`Win32_PerfFormattedData_Counters_ThermalZoneInformation`, readable by any user), whichever is hotter, against the 90 °C limit at which Lid Awake turns off; and the counters' `PercentPassiveLimit`, under 100 while Windows slows the processor down to cool a zone. `"critical"` at 90 °C or more, or with the processor held to 50% or less; `"serious"` while held under 90% (lighter throttling comes and goes, so it doesn't count), or from 85 °C; `"fair"` from 75 °C; `"nominal"` below. The counters are read in the background at most every 15 seconds, so `/status` never waits for them.
 
 ### 6.2 Remote access state
 
@@ -779,7 +781,7 @@ A computer that cannot measure a field sends the **safe default** in the last co
 | `cameraAllowed` | boolean | screen **and** camera allowed (`remoteScreen && camera switch`). The current page does not read it | `false` |
 | `screenPermission` | boolean | the system allows capturing the screen | `false` |
 | `controlPermission` | boolean | the system allows sending clicks and keys | `false` |
-| `screenWidth` | number | width of the main display (Mac: points). The page divides it by the picture's width on the phone to turn finger movement into scroll distance; `0` or absent makes it use a factor of 2 | `0` |
+| `screenWidth` | number | width of the main display in points (Windows: the primary display's pixels divided by its scale, `GetDpiForMonitor`, so 1707 for 2560 pixels at 150%). The page divides it by the picture's width on the phone to turn a drag on the Screen tab into the computer's points for `scroll` (section 8). The trackpad's `move` does not use it: it sends the phone's pixels times a speed gain, which the Mac reads as points. `0` or absent makes it use a factor of 2 | `0` |
 | `screenOff` | boolean | the phone turned the display off (via `/power` `displayoff`) and has not woken it | `false` |
 | `lidClosed` | boolean | the lid is closed (Mac: `AppleClamshellState`) | `false` |
 | `displayAsleep` | boolean | the main display is asleep | `false` |
@@ -816,9 +818,9 @@ Every key except `batteryTemp` comes from `powerInfo()`. On the Mac, a computer 
 | `battery` | integer 0 to 100 | charge percent. The page shows the battery card only if present | omit (no battery) |
 | `onBattery` | boolean | running on battery | omit when the power source is unknown (the page then shows neither "On battery" nor "Plugged in"); never guess `false` |
 | `charging` | boolean | charging now | `false` |
-| `charged` | boolean | fully charged | `false` |
+| `charged` | boolean | fully charged (Mac: the power source's `IsCharged`). Windows: from the batteries' own drivers (`IOCTL_BATTERY_QUERY_STATUS`): every battery on the power line, neither charging nor discharging, and together at least 98% of their full charge capacity. A battery held below that by a charge limit is not charged (the page then says "holding charge"). When the drivers can't tell, plugged in at 100% | `false` |
 | `minutesToEmpty` | integer | estimate; `-1` = unknown | `-1` |
-| `minutesToFull` | integer | estimate; `-1` = unknown | `-1` |
+| `minutesToFull` | integer | estimate; `-1` = unknown. Windows gives no time to full: it is worked out while charging from the batteries' own drivers, what all batteries miss to their full charge capacity (`BATTERY_INFORMATION.FullChargedCapacity` minus `BATTERY_STATUS.Capacity`, mWh) at the rate the charging ones charge at now (`Rate`, mW), rounded to the minute. `-1` when a value is unknown, the driver counts in relative units, or it would be over 24 hours. The drivers are read in the background at most every 10 seconds | `-1` |
 | `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`). Windows: only the battery's own sensor (`IOCTL_BATTERY_QUERY_INFORMATION`, `BatteryTemperature`, tenths of a kelvin), never a thermal zone; read at most every 15 seconds and cached, so `/status` never waits for it. A PC whose only temperature is a thermal zone has `"heat"` in `features` but no `batteryTemp` | omit |
 
 ### 6.5 System info
@@ -832,7 +834,7 @@ These come from `SystemInfo.snapshot()`. Two objects, `mac` and `net` (the key i
 | `memTotal` | integer bytes | installed memory | always sent |
 | `uptime` | integer seconds | time since boot | always sent |
 | `cpu` | number 0 to 100 | processor load since the **previous status request** (so the first request after start has none) | omit |
-| `memUsed` | integer bytes | memory in use | omit |
+| `memUsed` | integer bytes | memory in use. The Mac counts app, wired and compressed memory; Windows sends the installed memory minus what is available (`GlobalMemoryStatusEx`), which also counts memory that is modified but not yet written to disk, so it reads a little higher than Task Manager's "In use" | omit |
 | `diskFree` | integer bytes | free space on the system disk | omit |
 | `diskTotal` | integer bytes | size of the system disk | omit |
 
@@ -855,7 +857,7 @@ These come from `SystemInfo.snapshot()`. Two objects, `mac` and `net` (the key i
 | `os` | string | `"mac"` or `"windows"` | required |
 | `features` | list of strings | feature names (section 4) | required |
 
-`link` values the Mac sends: `Direct · same Wi-Fi`, `Direct · iPhone hotspot`, `Direct · over the internet`, `Through a relay in <city>`, `Through a relay server`. It comes from `tailscale status --json` (the peer's `CurAddr`, `Relay`, `Active`), refreshed in the background at most every 10 seconds. The `·` is a middle dot.
+`link` values the Mac sends: `Direct · same Wi-Fi`, `Direct · iPhone hotspot`, `Direct · over the internet`, `Through a relay in <city>`, `Through a relay server`. It comes from `tailscale status --json` (the peer's `CurAddr`, `Relay`, `Active`), refreshed in the background at most every 10 seconds. The `·` is a middle dot. Windows sends the same values the same way; it matches the last address in `X-Forwarded-For` (the one Serve added) against each peer's `TailscaleIPs`, and a `/status` never waits for Tailscale, so the first one after a while has no `link` yet.
 
 ---
 
@@ -1062,7 +1064,7 @@ So an agent must map `"cmd"` to **the computer's main shortcut key** (Command on
 
 The page's gestures send `{"type":"key","key":"left"|"right"|"up"|"down","mods":["ctrl"]}`. On the Mac these are Control plus an arrow (switch desktop, Mission Control, App windows). What they should do on Windows is for that agent to decide. **(unverified: the page does not change these per computer)**
 
-**Windows (`SendInput`).** `move` reads the pointer (`GetCursorPos`) and sends an absolute move to the new place, kept on the primary display (a relative `MOUSEEVENTF_MOVE` would be scaled by the pointer speed and acceleration settings). `click` `x`/`y` become absolute positions 0..65535 of the primary display. Windows has no click count and tells a double-click by timing, while the page sends `count` 1 for the first tap and 2 for the second tap of a double-tap, so each `click` is **one** press and release: `count` only adds the clicks that did not come just before (within the double-click time, same button; a lone `count` 2 sends two), and a click that continues a double-click is made where the previous one was. `scroll` is `MOUSEEVENTF_WHEEL` = `dy` x 1.2 and `MOUSEEVENTF_HWHEEL` = -`dx` x 1.2 (120, one notch, per 100 pixels, as far as one notch scrolls in Chrome and Edge), so the content follows the finger. `text` is `KEYEVENTF_UNICODE`, one grapheme cluster at a time, every UTF-16 unit (both halves of a surrogate pair) pressed and then released; a line break is the Return key and a tab the Tab key. `key` names are virtual-key codes (`delete` is Backspace; the arrows are extended keys); `char` is sent by its US scan code (`KEYEVENTF_SCANCODE`), which Windows maps with the layout in use like a real key press. `mods` are pressed in the order given and released in reverse, each key once (`"cmd"` and `"ctrl"` are both Ctrl). The page's gestures (exactly `["ctrl"]` with an arrow) do the Windows jobs: left and right are Win+Ctrl+Left/Right (switch virtual desktop), up and down are Win+Tab (Task View).
+**Windows (`SendInput`).** `move` `dx`/`dy` are the computer's points, as on the Mac: they are multiplied by the primary display's scale (`GetDpiForMonitor`, 1.5 at 150%) to get pixels. It reads the pointer (`GetCursorPos`) and sends an absolute move to the new place, kept on the primary display (a relative `MOUSEEVENTF_MOVE` would be scaled by the pointer speed and acceleration settings). `click` `x`/`y` become absolute positions 0..65535 of the primary display. Windows has no click count and tells a double-click by timing, while the page sends `count` 1 for the first tap and 2 for the second tap of a double-tap, so each `click` is **one** press and release: `count` only adds the clicks that did not come just before (within the double-click time, same button; a lone `count` 2 sends two), and a click that continues a double-click is made where the previous one was. `scroll` is `MOUSEEVENTF_WHEEL` = `dy` x 1.2 and `MOUSEEVENTF_HWHEEL` = -`dx` x 1.2 (120, one notch, per 100 pixels, as far as one notch scrolls in Chrome and Edge), so the content follows the finger. `text` is `KEYEVENTF_UNICODE`, one grapheme cluster at a time, every UTF-16 unit (both halves of a surrogate pair) pressed and then released; a line break is the Return key and a tab the Tab key. `key` names are virtual-key codes (`delete` is Backspace; the arrows are extended keys); `char` is sent by its US scan code (`KEYEVENTF_SCANCODE`), which Windows maps with the layout in use like a real key press. `mods` are pressed in the order given and released in reverse, each key once (`"cmd"` and `"ctrl"` are both Ctrl). The page's gestures (exactly `["ctrl"]` with an arrow) do the Windows jobs: left and right are Win+Ctrl+Left/Right (switch virtual desktop), up and down are Win+Tab (Task View).
 
 Arrow keys on the Mac also carry the Fn and numeric-pad flags, as a real keyboard does. After a shortcut with modifiers the Mac explicitly releases every modifier key, because a stuck Control turns later clicks into right-clicks. An agent should do the equivalent.
 
@@ -1091,6 +1093,8 @@ While Lid Awake is **off** it removes everything so nothing on the tailnet can r
 ```
 tailscale serve --https=443 off
 ```
+
+After turning off, both keep the mapping 8 more seconds, so an open page hears `423` "Lid Awake is off" (2.4) instead of losing the address; turning on again within those seconds keeps it. On Windows, Quit and signing out or shutting down remove it at once (within their few seconds' wait).
 
 **Funnel is never allowed.** If `serve status --json` shows any `AllowFunnel` entry set to true, the agent runs `tailscale funnel --https=443 off`, logs it and notifies the owner. (Requests carrying `Tailscale-Funnel-Request` are refused in any case, 2.2 step 1.)
 

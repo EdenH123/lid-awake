@@ -124,7 +124,7 @@ public class StatusInfoTests
         Assert.True(s.GetProperty("heatGuard").GetBoolean());
         Assert.Equal(10, s.GetProperty("batteryLimit").GetInt32());
         Assert.Equal(40, s.GetProperty("maxBatteryTemp").GetInt32());
-        // No system thermal state on Windows: "unknown", which the page shows as a dash (not "Normal").
+        // No thermal zone to read: "unknown", which the page shows as a dash (not "Normal").
         Assert.Equal("unknown", s.GetProperty("thermalState").GetString());
         foreach (var key in new[] { "remoteScreen", "remoteControl", "cameraAllowed", "screenPermission", "controlPermission", "screenOff", "lidClosed", "displayAsleep" })
             Assert.False(s.GetProperty(key).GetBoolean(), key);

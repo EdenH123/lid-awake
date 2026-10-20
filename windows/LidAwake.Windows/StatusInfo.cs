@@ -138,6 +138,9 @@ public sealed class StatusInfo
     {
         // The cached reading only: /status never waits for the hardware.
         var temperature = heat?.Latest ?? TemperatureReading.None;
+        // The thermal zones' counters and the batteries' own drivers, also only as last read.
+        var slow = readings as ISlowReadings;
+        var zones = slow?.Zones();
         // One look at the running programs for both lists.
         var appLists = AppLists();
         var s = new Dictionary<string, object?>
@@ -152,9 +155,10 @@ public sealed class StatusInfo
             ["heatGuard"] = limits?.HeatGuard ?? true,
             ["batteryLimit"] = Limits.BatteryLimit,
             ["maxBatteryTemp"] = Limits.MaxBatteryTemp,
-            // "unknown", not the documented "nominal": Windows has no system thermal state like
-            // the Mac's, and the page shows a dash for a value it doesn't know, instead of "Normal".
-            ["thermalState"] = "unknown",
+            // From the thermal zones (ThermalState.Name): the hottest against the 90 °C limit, and
+            // whether Windows is slowing the processor to cool it. "unknown" with no zone (the page
+            // shows a dash for it, instead of a "Normal" nothing measured).
+            ["thermalState"] = ThermalState.Name(temperature.Zone, zones),
             // 6.2
             ["remoteScreen"] = false,
             // The control switch, which needs the screen switch. SendInput needs no permission
@@ -202,10 +206,14 @@ public sealed class StatusInfo
             s["battery"] = (int)p.BatteryLifePercent;
             if (acKnown) s["onBattery"] = onBattery;
             s["charging"] = charging;
-            s["charged"] = p.AcLineStatus == 1 && p.BatteryLifePercent == 100;
-            // Windows only estimates the time left on battery, and never the time to full.
+            // The batteries' drivers say whether they are full (BatteryCharge.Charged); when they
+            // can't, plugged in at 100%.
+            var charge = slow?.Charge();
+            s["charged"] = charge?.Charged() ?? (p.AcLineStatus == 1 && p.BatteryLifePercent == 100);
             s["minutesToEmpty"] = onBattery && p.LifeSeconds > 0 ? (int)(p.LifeSeconds / 60) : -1;
-            s["minutesToFull"] = -1;
+            // Windows only estimates the time left on battery: the time to full is worked out from
+            // the batteries' capacities and charge rate (BatteryCharge.MinutesToFull).
+            s["minutesToFull"] = charging && charge != null ? charge.MinutesToFull() : -1;
         }
         // 6.4: on its own, like the Mac, and only from the battery's own sensor (a thermal zone
         // measures the processor or the board, not the battery).

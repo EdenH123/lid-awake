@@ -169,6 +169,8 @@ public partial class WebServerTests : IDisposable
         }
         Assert.Contains("connect-src 'self' wss://pc.example.ts.net", csp);
         Assert.DoesNotContain("<!--SPLASH-->", r.Body);
+        // Filled with the launch-screen links, the file around them unchanged (tests/page_check.js).
+        Assert.Equal(raw.Replace("<!--SPLASH-->", Splash.LinkTags), r.Body);
         Assert.Contains("<script>", r.Body);
     }
 
@@ -206,13 +208,18 @@ public partial class WebServerTests : IDisposable
         Assert.Equal(404, evil.Code);
         Assert.Equal("Not found", evil.Body);
 
-        // Launch screens are optional on Windows (section 3), and never need a session.
-        foreach (var path in new[] { "/splash/x.png", "/splash/1179x2556.png" })
+        // Launch screens (section 3), only for the listed sizes, and never needing a session.
+        foreach (var path in new[] { "/splash/x.png", "/splash/1179x2557.png", "/splash/1179x2556.jpg" })
         {
             var splash = await Send("GET", path);
             Assert.Equal(404, splash.Code);
             Assert.Equal("Not found", splash.Body);
         }
+        var launch = await Send("GET", "/splash/1179x2556.png");
+        Assert.Equal(200, launch.Code);
+        Assert.Equal("image/png", launch.Header("Content-Type"));
+        Assert.Equal("no-store", launch.Header("Cache-Control"));
+        Assert.Equal(Splash.Png("/splash/1179x2556.png"), launch.Bytes);
 
         foreach (var path in new[] { "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png" })
         {
