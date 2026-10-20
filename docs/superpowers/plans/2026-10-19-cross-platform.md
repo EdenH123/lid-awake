@@ -1682,9 +1682,53 @@ Each part is its own dispatch and review. Build and tests run on GitHub Actions 
 
 ---
 
-# Phase 3 — Windows feature parity (separate plans)
+# Phase 3 — Windows feature parity
 
-Write one plan per row, in this order (each adds its name to `StatusInfo.Features`, so the page shows that part automatically):
+Branch `claude/windows-phase-3`, stacked on `claude/windows-phase-2`. Each task adds its feature name to the Windows `/status` `features` list, so the page shows that part automatically. Built and tested on GitHub Actions. Every task ends with a checklist of what the owner must try on a real laptop.
+
+### Task 17: Safety limits on Windows (battery and heat)
+
+**Contract:** docs/API.md `POST /limits`, `/status` §6.1 `batteryGuard`/`heatGuard`/`batteryLimit`/`maxBatteryTemp`, §6.4 `batteryTemp`. Mac reference: main.swift `safetyStop`, `safetyStopAlertReason`, the 15 s check, the menu items "Turn off below 10% battery" and "Turn off if battery is hotter than 40°C", and the defaults (both on).
+
+**Feature split (ruling P3-1):**
+- `"limits"` covers the battery limit and `POST /limits`.
+- A new feature `"heat"` covers the heat limit. The Mac sends both.
+- Windows always sends `"limits"`. It sends `"heat"` only while a temperature source works, re-checked with each status.
+- The page hides the heat row without `"heat"`, and hides both rows without `"limits"` (as today).
+- docs/API.md §4 gets the new name.
+
+**Windows behaviour:**
+- **Battery.** On battery (GetSystemPowerStatus) and below `batteryLimit` (10) percent:
+  - turn off;
+  - refuse a turn-on with a tray balloon saying why;
+  - log it.
+- **Heat temperature source, in order:**
+  1. The battery's own temperature: `IOCTL_BATTERY_QUERY_INFORMATION` with `BatteryTemperature`, in tenths of a kelvin. Find the battery device through SetupAPI with `GUID_DEVCLASS_BATTERY`.
+  2. ACPI thermal zones through WMI `root\WMI` `MSAcpi_ThermalZoneTemperature`. This often needs admin; access denied counts as "unavailable".
+- **No source.** `heat` is not in features, `heatGuard` is still the stored setting, and `batteryTemp` is omitted.
+- **Source present.** At or above `maxBatteryTemp` (40 °C): turn off and refuse a turn-on. `batteryTemp` is sent.
+- **Check rate.** Every 15 s while on, off the UI thread, as on the Mac.
+- **Tray.** Two checkable items with the Mac's wording. The heat item is greyed out with "(no temperature on this PC)" when there's no source. They are stored in roaming settings and default to on.
+- **`POST /limits`.** Same answers as the Mac; it applies at once. Sent from the phone, `heat` is accepted even without a source, because the setting is stored.
+- **`/status`.** Sends the real `batteryGuard`/`heatGuard`, which replaces Ruling P2-12's `false`. `thermalState` stays `"unknown"`.
+- **Activity log line.** For example `Turned off: battery below 10%`.
+- **README.** Replace "no low-battery or too-hot shutoff on Windows" with the real behaviour, and say that the heat limit appears only if the laptop reports a temperature.
+
+**Tests:**
+- Fake readings for the guard logic: both limits, refusal of a turn-on, guards off, heat with no source.
+- Parsing for the battery IOCTL temperature (tenths of a kelvin to °C) and the WMI value (tenths of a kelvin).
+- Real-machine calls never throw and return null or a sane value.
+- `/limits` end to end.
+- `/status` fields.
+
+**Owner checklist:**
+- Unplug at 11% and watch it turn off at 9%.
+- Check whether the tray's heat item is available.
+- Toggle both from the phone.
+
+
+
+Remaining Phase 3 features, one task each, in this order:
 
 | Feature | Mac source to port | Windows technology |
 |---|---|---|

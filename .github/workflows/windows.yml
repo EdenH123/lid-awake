@@ -4,7 +4,7 @@
 name: Windows
 on:
   push:
-    branches: [claude/windows-phase-2]
+    branches: [claude/windows-phase-2, claude/windows-phase-3]
     paths: ["windows/**", "web/**", "assets/sky-*.jpg", "*.cmd", ".github/workflows/windows.yml"]
   workflow_dispatch:
 concurrency:
