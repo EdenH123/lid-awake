@@ -47,7 +47,8 @@ public sealed class WebServer : IDisposable
         this.port = port;
         this.baseDir = baseDir ?? AppContext.BaseDirectory;
         web = Path.Combine(this.baseDir, "web");
-        rawHtml = File.ReadAllText(Path.Combine(web, "index.html"));
+        // Sent with LF line ends whatever the copy on disk has (a ZIP made on Windows may have CR LF).
+        rawHtml = PageHeaders.Lf(File.ReadAllText(Path.Combine(web, "index.html")));
         // Hashed before the launch-screen marker is replaced, once, so editing the page never needs a code change.
         scriptHashes = PageHeaders.ScriptHashes(rawHtml);
         html = rawHtml.Replace("<!--SPLASH-->", "");

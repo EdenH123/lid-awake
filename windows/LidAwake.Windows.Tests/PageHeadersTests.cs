@@ -29,6 +29,17 @@ public class PageHeadersTests
             PageHeaders.Csp("<script>a()</script>", "127.0.0.1"));
     }
 
+    // The browser hashes a script after turning CR LF (and a lone CR) into LF, so a page checked
+    // out with Windows line ends must give the same hashes as the LF page, or no script runs.
+    [Fact]
+    public void WindowsLineEndsHashAsTheBrowserSeesThem()
+    {
+        var lf = "<script>\n b();\n c();\n</script>";
+        Assert.Equal(PageHeaders.ScriptHashes(lf), PageHeaders.ScriptHashes(lf.Replace("\n", "\r\n")));
+        Assert.Equal(PageHeaders.ScriptHashes(lf), PageHeaders.ScriptHashes(lf.Replace("\n", "\r")));
+        Assert.Equal("a\nb\nc\n", PageHeaders.Lf("a\r\nb\rc\n"));
+    }
+
     [Fact]
     public void ScriptsWithAttributesAreNotHashed()
     {
