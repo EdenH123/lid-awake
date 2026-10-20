@@ -135,8 +135,8 @@ You don't need to install any programming tools.
 
 ### Install it
 
-1. On this page (the GitHub page for Lid Awake), open **Actions** → **Windows** → **Run workflow**. (Until this version is on the main branch, ask whoever maintains your copy for the ZIP.)
-2. When the run has finished, open it and download **LidAwake-Windows** from **Artifacts** at the bottom. It's kept for 3 days.
+1. Download the ZIP. On this page (the GitHub page for Lid Awake), open **Releases** on the right side, then the latest release, and download **LidAwake-Windows.zip**. Or use the direct link: [LidAwake-Windows.zip](https://github.com/EdenH123/lid-awake/releases/latest/download/LidAwake-Windows.zip).
+2. To test a branch that has no release yet, use Actions instead: open **Actions** → **Windows** → **Run workflow**, choose the branch, and when the run has finished, download **LidAwake-Windows** from **Artifacts** at the bottom of the run. It's kept for 3 days.
 3. Unpack the **whole** ZIP (right-click it → **Extract All**). Inside, **README-FIRST.txt** repeats these steps.
 4. Double-click **Install Lid Awake (Windows)**.
    - If Windows says **"Windows protected your PC"**, click **More info** → **Run anyway**.
@@ -209,8 +209,16 @@ Don't rely on these on Windows. They work on the Mac only, for now.
 
 ### Update or remove it on Windows
 
-- **Update:** download the new LidAwake-Windows ZIP (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are. If Lid Awake is on while you update, the update turns it off and puts the lid setting back. Turn it on again afterwards.
+- **Update:** download the new LidAwake-Windows.zip (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are. If Lid Awake is on while you update, the update turns it off and puts the lid setting back. Turn it on again afterwards.
 - **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was (and the screen brightness, if a crash left it lowered).
+
+### Make a new release (for the maintainer)
+
+1. Merge the changes to `master`.
+2. On GitHub, open **Releases** → **Draft a new release**, create a new tag such as `v1.1.0` on `master`, and click **Publish release**.
+3. After about 10 minutes, **LidAwake-Windows.zip** appears on the release. The **Windows release** workflow builds it, runs the tests and the installer test, and attaches it. If a test fails, nothing is attached. To build it again for a release that already exists, open **Actions** → **Windows release** → **Run workflow** and type its tag.
+
+While the repository is private, only people with access to it can download the ZIP.
 
 ---
 
