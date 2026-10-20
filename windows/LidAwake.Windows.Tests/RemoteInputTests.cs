@@ -691,7 +691,7 @@ public class RemoteControlTests : IDisposable
         Assert.False(s.GetProperty("remoteControl").GetBoolean());
         Assert.True(s.GetProperty("controlPermission").GetBoolean());
         Assert.Contains("control", s.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
-        Assert.Single(s.GetProperty("features").EnumerateArray().Where(f => f.GetString() == "control"));
+        Assert.Single(s.GetProperty("features").EnumerateArray(), f => f.GetString() == "control");
 
         settings.Set("remoteScreen", true);
         control.DisplayOff();
