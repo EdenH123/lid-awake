@@ -208,7 +208,7 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 
 The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits","heat"]`.
 
-Windows sends `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
+Windows sends `"control"` too (`POST /input` and `POST /power`; see 5.10). Windows sends `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
 Dependencies on the Mac side:
 
@@ -714,6 +714,8 @@ Success `204`. Any other `action`: `400` `Bad request`.
 
 Feature note: only `lock` needs the control switch; `displayoff` and `wake` need just the screen switch. All three are in the `control` feature.
 
+**Windows.** The same routes, checks (in the same order) and answers, with "PC" for "Mac": `View only: control from the phone is off in the Lid Awake menu on your PC.` The owner's switch is the tray item **Allow control from phone**, stored in the roaming settings as `remoteControl`; it needs the screen switch (`remoteScreen`), and while `remoteControl` was never set it follows the screen switch, as on the Mac (both are off to start with). `/status` sends `remoteControl` = screen switch and control switch, and `controlPermission` `true`: `SendInput` needs no permission for windows at Lid Awake's own integrity level. Windows itself drops input aimed at a window of a program running as administrator (UIPI), and no program can type into or click the UAC prompt's secure desktop or the lock screen; Lid Awake sends nothing at all while the input desktop is not the user's own. The command runs before the `204`. `lock` is `LockWorkStation` (log `PC locked from the phone · <device>`). `displayoff` is `SC_MONITORPOWER` 2, broadcast with `SendMessageTimeout` (log `Display turned off from the phone · <device>`); Windows has no lid reading, so it never answers `409`. `wake` (and any accepted input, at most every 2 seconds, and at once after `displayoff`) is `SetThreadExecutionState(ES_DISPLAY_REQUIRED)` plus a pointer move to where the pointer already is.
+
 ---
 
 ## 6. `/status` fields
@@ -985,6 +987,8 @@ More rules:
 - `{"type": "ping"}` is not a real command: it is answered `{"pong": true}` (after the checks above) and does nothing else.
 - If a phone leaves while a mouse button or modifier is held, the computer lets go of them.
 
+Windows: the input side is ready for the socket as `IInputSink` (`RemoteInput.cs`): `Refusal()` for the switch sentences, an `InputRateLimiter` per socket for the 240/s cap, `TooLong`, `Perform`, and `ReleaseHeld()` when a phone that sent input leaves.
+
 Messages with `quality`, `acks`, `video`, `camera` and the others in 7.3 are handled **before** these checks, so view-only phones can still change quality and open the camera (the camera has its own switch).
 
 ### 7.7 Keeping the screen available
@@ -1023,6 +1027,8 @@ One JSON object with a `type`. The same objects are sent as `POST /input` bodies
 So an agent must map `"cmd"` to **the computer's main shortcut key** (Command on a Mac, Ctrl on Windows) and `"alt"` to Option or Alt.
 
 The page's gestures send `{"type":"key","key":"left"|"right"|"up"|"down","mods":["ctrl"]}`. On the Mac these are Control plus an arrow (switch desktop, Mission Control, App windows). What they should do on Windows is for that agent to decide. **(unverified: the page does not change these per computer)**
+
+**Windows (`SendInput`).** `move` reads the pointer (`GetCursorPos`) and sends an absolute move to the new place, kept on the primary display (a relative `MOUSEEVENTF_MOVE` would be scaled by the pointer speed and acceleration settings). `click` `x`/`y` become absolute positions 0..65535 of the primary display. Windows has no click count and tells a double-click by timing, while the page sends `count` 1 for the first tap and 2 for the second tap of a double-tap, so each `click` is **one** press and release: `count` only adds the clicks that did not come just before (within the double-click time, same button; a lone `count` 2 sends two), and a click that continues a double-click is made where the previous one was. `scroll` is `MOUSEEVENTF_WHEEL` = `dy` x 1.2 and `MOUSEEVENTF_HWHEEL` = -`dx` x 1.2 (120, one notch, per 100 pixels, as far as one notch scrolls in Chrome and Edge), so the content follows the finger. `text` is `KEYEVENTF_UNICODE`, one grapheme cluster at a time, every UTF-16 unit (both halves of a surrogate pair) pressed and then released; a line break is the Return key and a tab the Tab key. `key` names are virtual-key codes (`delete` is Backspace; the arrows are extended keys); `char` is sent by its US scan code (`KEYEVENTF_SCANCODE`), which Windows maps with the layout in use like a real key press. `mods` are pressed in the order given and released in reverse, each key once (`"cmd"` and `"ctrl"` are both Ctrl). The page's gestures (exactly `["ctrl"]` with an arrow) do the Windows jobs: left and right are Win+Ctrl+Left/Right (switch virtual desktop), up and down are Win+Tab (Task View).
 
 Arrow keys on the Mac also carry the Fn and numeric-pad flags, as a real keyboard does. After a shortcut with modifiers the Mac explicitly releases every modifier key, because a stuck Control turns later clicks into right-clicks. An agent should do the equivalent.
 
