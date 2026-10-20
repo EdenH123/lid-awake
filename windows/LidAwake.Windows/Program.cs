@@ -43,9 +43,18 @@ static class Program
         var phoneApps = new PhoneApps(settings, new ProcessSource(), new WindowActions(), new WindowsIcons(), log);
         var startMenu = new StartMenuScanner(new ShortcutResolver());
         var status = new StatusInfo(readings, limits, heat, phoneApps);
+        // Phone alerts (Web Push). The key and the phones are this PC's own (machine.json); a new
+        // password forgets the phones. Sign-ins are announced to them as `security` alerts.
+        using var push = new WebPush(machine);
+        auth.PasswordSet += push.RemoveAll;
+        var alerts = new PhoneAlerts(push.Send, readings.Power, () => heat.Latest.Battery, () => limits.HeatGuard);
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
-            () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body),
+            () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) =>
+            {
+                tray?.Announce(title, body);
+                _ = push.SendSecurity(title, body);
+            },
             log: log, setTimer: minutes => tray?.SetTimer(minutes),
             setLimit: (name, on) =>
             {
@@ -53,7 +62,8 @@ static class Program
                 // next /status already shows it; then applied at the tray.
                 limits.Set(name, on);
                 tray?.LimitsChanged();
-            });
+            },
+            push: push);
         // The graphs: a sample every minute while the app runs, off the UI thread.
         var history = new HistoryStore();
         server.History = history;
@@ -64,7 +74,7 @@ static class Program
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, phoneApps, startMenu);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, alerts, phoneApps, startMenu);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
@@ -92,6 +102,12 @@ sealed class TrayApp : ApplicationContext
     readonly SafetyCheck safety;
     readonly PhoneApps? phoneApps;
     readonly IStartMenuSource? startMenu;
+    // The phone alerts about Lid Awake itself: turned off (timer, safety limit), battery low, warm.
+    readonly PhoneAlerts alerts;
+    // While a turned-off alert is on its way (StopWithAlert): read by the safety check's thread.
+    volatile bool stopping;
+    // Changed by every SetAwake, so a turn-off that waited for the phones can tell it was overtaken.
+    int generation;
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
@@ -115,7 +131,8 @@ sealed class TrayApp : ApplicationContext
     public AutoOff Countdown { get; }
 
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
-                   Limits limits, HeatSensor heat, SafetyCheck safety, PhoneApps? apps = null, IStartMenuSource? startMenu = null)
+                   Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts,
+                   PhoneApps? apps = null, IStartMenuSource? startMenu = null)
     {
         phoneApps = apps;
         this.startMenu = startMenu;
@@ -126,15 +143,17 @@ sealed class TrayApp : ApplicationContext
         this.limits = limits;
         this.heat = heat;
         this.safety = safety;
+        this.alerts = alerts;
         Countdown = new AutoOff(settings);
         checks = new Coalescer(CheckSafety);
-        stopper = new SafetyStop(() => isOn, safety, why =>
+        // The phones are told first; StopWithAlert sets `stopping`, so isOn reads false from then on.
+        stopper = new SafetyStop(() => isOn && !stopping, safety, why => StopWithAlert(why.AlertReason, () =>
         {
             SetAwake(false);
             log.Write(why.LogOff);
             // icon is assigned below, before the timer starts or anything can post this.
             icon!.ShowBalloonTip(10000, "Lid Awake turned off", why.OffBody, ToolTipIcon.Warning);
-        });
+        }));
         safetyTimer = new System.Threading.Timer(_ => checks.Request(read: true), null, Timeout.Infinite, Timeout.Infinite);
         toggle.Click += (_, _) =>
         {
@@ -279,9 +298,27 @@ sealed class TrayApp : ApplicationContext
 
     void CheckTimer()
     {
-        if (!isOn || !Countdown.Expired()) return;
-        SetAwake(false);  // also ends the countdown, so this happens once
-        icon.ShowBalloonTip(5000, "Lid Awake turned off", "Timer finished. Your PC will sleep normally again.", ToolTipIcon.Info);
+        if (!isOn || stopping || !Countdown.Expired()) return;
+        StopWithAlert("Timer finished", () =>
+        {
+            SetAwake(false);  // also ends the countdown, so this happens once
+            icon.ShowBalloonTip(5000, "Lid Awake turned off", "Timer finished. Your PC will sleep normally again.", ToolTipIcon.Info);
+        });
+    }
+
+    // Tell the phones first (the PC may sleep right after), then turn off on the UI thread once
+    // they have answered (at most 8 seconds), as on the Mac. Meanwhile the timer and the safety
+    // check hold back. If Lid Awake was turned off or on again in the meantime, that wins.
+    void StopWithAlert(string reason, Action turnOff)
+    {
+        if (stopping) return;
+        stopping = true;
+        int at = generation;
+        _ = alerts.TurnedOff(reason).ContinueWith(_ => OnUi(() =>
+        {
+            stopping = false;
+            if (at == generation && isOn) turnOff();
+        }), TaskScheduler.Default);
     }
 
     // ---- Safety limits (main.swift safetyStop, the 15-second check, the two menu items) ----
@@ -314,7 +351,10 @@ sealed class TrayApp : ApplicationContext
     {
         bool on = isOn;
         if (read) heat.Refresh(on ? HeatSensor.Fresh : HeatSensor.WhileOff);
-        if (on && safety.Now() != null) OnUi(() => stopper.Run());
+        if (!on || stopping) return;
+        // A limit reached turns off; otherwise the early warnings to the phones (low battery, warm).
+        if (safety.Now() != null) OnUi(() => stopper.Run());
+        else alerts.Check();
     }
 
     // A switch ticked in the tray menu.
@@ -378,7 +418,8 @@ sealed class TrayApp : ApplicationContext
         var lid = LidResult.Changed;
         if (on) lid = KeepAwake.On(machine); else KeepAwake.Off(machine);
         // The countdown starts when it goes from off to on, and ends when it goes off.
-        if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; }
+        generation++;
+        if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; alerts.TurnedOn(); }
         else if (!on) Countdown.Stop();
         isOn = on;
         toggle.Checked = on;

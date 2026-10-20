@@ -63,7 +63,7 @@ public class StatusInfoTests
         "mac", "net", "link", "os", "features",
     };
 
-    public static void AssertEveryKeyWithItsKind(JsonElement s)
+    internal static void AssertEveryKeyWithItsKind(JsonElement s)
     {
         Assert.Equal(JsonValueKind.Object, s.ValueKind);
         // Nothing outside section 6 at the top level (memTotal and uptime belong inside "mac").
@@ -212,9 +212,9 @@ public class StatusInfoTests
     {
         var s = Run(new FakeReadings());
         Assert.Equal("windows", s.GetProperty("os").GetString());
-        // Always "limits", "history" and "passkeys": there is no /memory route (or any other optional one) yet,
+        // Always "limits", "history", "passkeys" and "push": there is no /memory route (or any other optional one) yet,
         // and without a temperature source there is no "heat".
-        Assert.Equal(new[] { "limits", "history", "passkeys" }, s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "passkeys", "push" }, s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(s.TryGetProperty("batteryTemp", out _));
     }
 

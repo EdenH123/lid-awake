@@ -26,6 +26,7 @@ public sealed partial class WebServer : IDisposable
     readonly AccessLog? log;
     readonly Action<int>? setTimer;
     readonly Action<string, bool>? setLimit;
+    readonly WebPush? push;
     readonly int port;
     readonly string baseDir;
     readonly string web;
@@ -40,13 +41,15 @@ public sealed partial class WebServer : IDisposable
     // is written and the list is empty). `setTimer(minutes)` applies a length already checked against
     // AutoOff.Choices to the "Turn off after" timer (none: the length is accepted and dropped).
     // `setLimit(name, on)` turns a safety switch ("battery" or "heat", already checked) on or off
-    // (none: accepted and dropped).
+    // (none: accepted and dropped). `push` keeps the phones that get alerts (none: /push/* is 404).
     public WebServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<object> status, Action turnOff,
                      Action<string, string> announce, int port = DefaultPort, string? baseDir = null,
-                     AccessLog? log = null, Action<int>? setTimer = null, Action<string, bool>? setLimit = null)
+                     AccessLog? log = null, Action<int>? setTimer = null, Action<string, bool>? setLimit = null,
+                     WebPush? push = null)
     {
         (this.auth, this.tailnet, this.isOn, this.status, this.turnOff, this.announce) = (auth, tailnet, isOn, status, turnOff, announce);
         (this.log, this.setTimer, this.setLimit) = (log, setTimer, setLimit);
+        this.push = push;
         this.port = port;
         this.baseDir = baseDir ?? AppContext.BaseDirectory;
         web = Path.Combine(this.baseDir, "web");
@@ -334,10 +337,62 @@ public sealed partial class WebServer : IDisposable
             case ("POST", "/focus-app"): await FocusApp(c); return;
             case ("POST", "/quit-app"): await QuitApp(c); return;
             case ("POST", "/apps-order"): await AppsOrder(c); return;
+            // Phone alerts (5.5): the PC's public key, subscribing, and which alerts.
+            case ("GET", "/push/key") when push != null:
+                await SendJson(c, new { key = push.PublicKey });
+                return;
+            case ("POST", "/push/subscribe") when push != null:
+                await PushSubscribe(c, push, host);
+                return;
+            case ("POST", "/push/settings") when push != null:
+                await PushSettings(c, push);
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
         }
+    }
+
+    // POST /push/subscribe: the browser's subscription and the alerts this phone turned off.
+    static async Task PushSubscribe(HttpContext c, WebPush push, string host)
+    {
+        var body = await ReadJson(c.Request);
+        string? endpoint = Text(body, "endpoint"), p256dh = null, secret = null;
+        if (body.TryGetValue("keys", out var keys) && keys.ValueKind == JsonValueKind.Object)
+        {
+            if (keys.TryGetProperty("p256dh", out var k) && k.ValueKind == JsonValueKind.String) p256dh = k.GetString();
+            if (keys.TryGetProperty("auth", out var a) && a.ValueKind == JsonValueKind.String) secret = a.GetString();
+        }
+        if (!push.Subscribe(endpoint, p256dh, secret, Names(body), host))
+        { await SendText(c, 400, "Couldn't turn on alerts."); return; }
+        Empty(c);
+    }
+
+    // POST /push/settings: `enabled: false` removes the phone; otherwise `off` replaces its list
+    // (no list, or not a list of strings: every alert back on). An unknown endpoint is ignored.
+    static async Task PushSettings(HttpContext c, WebPush push)
+    {
+        var body = await ReadJson(c.Request);
+        if (Text(body, "endpoint") is not { } endpoint) { await SendText(c, 400, "Missing phone."); return; }
+        if (body.TryGetValue("enabled", out var e) && e.ValueKind == JsonValueKind.False) push.Unsubscribe(endpoint);
+        else push.SetOff(endpoint, Names(body));
+        Empty(c);
+    }
+
+    static string? Text(Dictionary<string, JsonElement> body, string name) =>
+        body.TryGetValue(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    // `off`: a list of strings, or nothing (as on the Mac, a list with anything else in it counts as none).
+    static List<string> Names(Dictionary<string, JsonElement> body)
+    {
+        if (!body.TryGetValue("off", out var off) || off.ValueKind != JsonValueKind.Array) return new();
+        var names = new List<string>();
+        foreach (var item in off.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String) return new();
+            names.Add(item.GetString()!);
+        }
+        return names;
     }
 
     // POST /sessions/signout: `others: true` signs out every session but the caller's, `id` one

@@ -39,6 +39,10 @@ public partial class WebServerTests : IDisposable
     AutoOff? realTimer;  // set by a test that wants /timer to change a real timer
     readonly List<(string Name, bool On)> limitSets = new();
     Limits? realLimits;  // set by a test that wants /limits to change the real switches
+    // Phone alerts: the real WebPush, posting to a fake push service. Sign-ins are announced to the
+    // phones as security alerts, as Program does.
+    readonly FakePushService pushService = new();
+    readonly WebPush push;
 
     public WebServerTests()
     {
@@ -49,11 +53,13 @@ public partial class WebServerTests : IDisposable
         settings.Set("tailnetOwner", Owner);
         auth = new Auth(settings, iterations: 1000);
         port = FreePort();
+        push = new WebPush(Settings.ForMachine(Path.Combine(folder, "machine")), pushService);
         accessLog = new AccessLog(Path.Combine(folder, "logs"));
         server = new WebServer(auth, new Tailnet(settings, _ => null), () => on, () => statusAnswer(),
-            () => turnOffCalls++, (title, body) => announced.Add((title, body)), port, site,
+            () => turnOffCalls++, (title, body) => { announced.Add((title, body)); _ = push.SendSecurity(title, body); }, port, site,
             accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); },
-            setLimit: (name, value) => { lock (limitSets) limitSets.Add((name, value)); realLimits?.Set(name, value); });
+            setLimit: (name, value) => { lock (limitSets) limitSets.Add((name, value)); realLimits?.Set(name, value); },
+            push: push);
         WireApps();
         server.Start();
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
@@ -66,6 +72,7 @@ public partial class WebServerTests : IDisposable
     {
         http.Dispose();
         server.Dispose();
+        push.Dispose();
         try { Directory.Delete(folder, true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -1308,21 +1315,155 @@ public partial class WebServerTests : IDisposable
 
         heat.Refresh(TimeSpan.Zero);
         var noTemperature = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "passkeys" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "passkeys", "push" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(noTemperature.TryGetProperty("batteryTemp", out _));
 
         // Only a thermal zone: the heat switch shows, but batteryTemp is the battery's alone.
         source = new TemperatureReading(null, 55.0);
         heat.Refresh(TimeSpan.Zero);
         var zoneOnly = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "heat", "passkeys" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "heat", "passkeys", "push" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(zoneOnly.TryGetProperty("batteryTemp", out _));
 
         source = new TemperatureReading(36.66, 55.0);
         heat.Refresh(TimeSpan.Zero);
         var withHeat = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "heat", "passkeys" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "heat", "passkeys", "push" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.Equal(36.7, withHeat.GetProperty("batteryTemp").GetDouble());
         StatusInfoTests.AssertEveryKeyWithItsKind(withHeat);
+    }
+
+    // ---- 5.5 push ----
+
+    const string PushEndpoint = "https://web.push.apple.com/QGphone";
+
+    static string Subscription(FakePhone phone, string endpoint = PushEndpoint, string off = "[\"warm\"]") =>
+        $"{{\"endpoint\":\"{endpoint}\",\"expirationTime\":null,\"keys\":{{\"p256dh\":\"{phone.P256dh}\",\"auth\":\"{phone.AuthText}\"}},\"off\":{off}}}";
+
+    Task<Reply> PostPush(string path, string cookie, string json) => Send("POST", path, lid: true, cookie: cookie, json: json);
+
+    [Fact]
+    public async Task PushRoutesNeedASessionAndThePostHeader()
+    {
+        using var phone = new FakePhone();
+        Assert.Equal(401, (await Send("GET", "/push/key")).Code);
+        Assert.Equal(401, (await Send("POST", "/push/subscribe", lid: true, json: Subscription(phone))).Code);
+        var cookie = await SignIn();
+        Assert.Equal(403, (await Send("POST", "/push/subscribe", cookie: cookie, json: Subscription(phone))).Code);
+        Assert.Equal(403, (await Send("POST", "/push/settings", cookie: cookie, json: "{}")).Code);
+        Assert.Equal(404, (await Send("POST", "/push/key", lid: true, cookie: cookie)).Code);
+        Assert.Equal(404, (await Send("GET", "/push/subscribe", cookie: cookie)).Code);
+        Assert.Empty(push.Phones);
+    }
+
+    [Fact]
+    public async Task PushKeyIsTheSame65ByteKeyEveryTime()
+    {
+        var cookie = await SignIn();
+        var r = await Send("GET", "/push/key", cookie: cookie);
+        Assert.Equal(200, r.Code);
+        Assert.Equal("application/json", r.Header("Content-Type"));
+        var key = Json(r).GetProperty("key").GetString()!;
+        var bytes = WebPush.FromBase64Url(key)!;
+        Assert.Equal(65, bytes.Length);
+        Assert.Equal(4, bytes[0]);
+        Assert.DoesNotContain("=", key);
+        Assert.Equal(key, Json(await Send("GET", "/push/key", cookie: cookie)).GetProperty("key").GetString());
+        Assert.Equal(push.PublicKey, key);
+    }
+
+    [Fact]
+    public async Task PushSubscribeStoresThePhoneAndRemembersThePageAsTheContact()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        var r = await PostPush("/push/subscribe", cookie, Subscription(phone, off: "[\"warm\",\"bogus\",\"security\"]"));
+        Assert.Equal(204, r.Code);
+        Assert.Empty(r.Bytes);
+        var stored = Assert.Single(push.Phones);
+        Assert.Equal(PushEndpoint, stored.Endpoint);
+        Assert.Equal(phone.P256dh, stored.P256dh);
+        Assert.Equal(phone.AuthText, stored.Auth);
+        Assert.Equal(new[] { "warm", "security" }, stored.Off);
+        Assert.Equal("https://" + TailHost, push.Contact);
+
+        // The same endpoint again replaces it; an `off` with anything but strings counts as none.
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone, off: "[\"warm\", 3]"))).Code);
+        Assert.Empty(Assert.Single(push.Phones).Off);
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone, off: "\"warm\""))).Code);
+        Assert.Empty(Assert.Single(push.Phones).Off);
+    }
+
+    [Fact]
+    public async Task PushSubscribeRefusesAnythingButARealSubscription()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        foreach (var body in new[]
+        {
+            Subscription(phone, endpoint: "https://evil.example/push"),
+            Subscription(phone, endpoint: "http://web.push.apple.com/x"),
+            Subscription(phone, endpoint: "https://web.push.apple.com:8443/x"),
+            $"{{\"endpoint\":\"{PushEndpoint}\",\"keys\":{{\"p256dh\":\"{phone.P256dh}\"}}}}",
+            $"{{\"endpoint\":\"{PushEndpoint}\",\"keys\":{{\"p256dh\":\"AAAA\",\"auth\":\"{phone.AuthText}\"}}}}",
+            $"{{\"endpoint\":\"{PushEndpoint}\",\"keys\":\"nope\"}}",
+            $"{{\"keys\":{{\"p256dh\":\"{phone.P256dh}\",\"auth\":\"{phone.AuthText}\"}}}}",
+            "{}",
+            "not json",
+            "[1,2]",
+        })
+        {
+            var r = await PostPush("/push/subscribe", cookie, body);
+            Assert.Equal(400, r.Code);
+            Assert.Equal("Couldn't turn on alerts.", r.Body);
+        }
+        Assert.Empty(push.Phones);
+    }
+
+    [Fact]
+    public async Task PushSettingsChangesOrRemovesAPhone()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone))).Code);
+
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\",\"off\":[\"lowBattery\",\"nope\",\"turnedOff\"]}}")).Code);
+        Assert.Equal(new[] { "lowBattery", "turnedOff" }, Assert.Single(push.Phones).Off);
+        // Neither enabled:false nor a list: every alert back on.
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\"}}")).Code);
+        Assert.Empty(Assert.Single(push.Phones).Off);
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\",\"enabled\":true,\"off\":[\"warm\"]}}")).Code);
+        Assert.Equal(new[] { "warm" }, Assert.Single(push.Phones).Off);
+        // An unknown endpoint is ignored.
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, "{\"endpoint\":\"https://web.push.apple.com/other\",\"enabled\":false}")).Code);
+        Assert.Single(push.Phones);
+
+        var missing = await PostPush("/push/settings", cookie, "{\"off\":[]}");
+        Assert.Equal(400, missing.Code);
+        Assert.Equal("Missing phone.", missing.Body);
+        Assert.Equal(400, (await PostPush("/push/settings", cookie, "{\"endpoint\":5}")).Code);
+
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\",\"enabled\":false}}")).Code);
+        Assert.Empty(push.Phones);
+    }
+
+    [Fact]
+    public async Task ANewSignInIsASecurityAlertEvenForAPhoneThatTurnedEverythingOff()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        var everything = "[\"turnedOff\",\"lowBattery\",\"claudeUsage\",\"claudeSession\",\"warm\",\"security\"]";
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone, off: everything))).Code);
+        Assert.Empty(pushService.Seen);
+
+        await SignIn(ua: IPhone);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (pushService.Seen.Count == 0 && DateTime.UtcNow < deadline) await Task.Delay(50);
+        var seen = Assert.Single(pushService.Seen);
+        Assert.Equal(PushEndpoint, seen.Uri);
+        var alert = JsonDocument.Parse(PushReceiver.Decrypt(seen.Body, phone.Key, phone.Auth).Text).RootElement;
+        Assert.Equal("New sign-in to Lid Awake", alert.GetProperty("title").GetString());
+        Assert.Equal("With the password, on an iPhone.", alert.GetProperty("body").GetString());
+        Assert.Equal("security", alert.GetProperty("tag").GetString());
     }
 }
