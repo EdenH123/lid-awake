@@ -1212,7 +1212,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="section-head">Safety limits</div>
       <section class="alerts-card limits-card">
         <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Low battery<small id="batteryLimitText">Turns off below 10% on battery</small></span><button type="button" class="mini-switch" data-limit="battery" role="switch" aria-label="Turn off at low battery"></button></div>
-        <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the <span data-w="computer">Mac</span> overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
+        <div class="alert-row" data-feature="heat"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the <span data-w="computer">Mac</span> overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
       </section>
       <div class="section-foot">Lid Awake turns itself off so your <span data-w="computer">Mac</span> can sleep safely. These are the same switches as in the <span data-w="computer">Mac</span> menu.</div>
     </div>
@@ -4185,7 +4185,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // ---------- Safety limits (same as the Mac menu) ----------
   let limitSaving = false;
   document.querySelectorAll("[data-limit]").forEach(b => b.addEventListener("click", async () => {
-    if (!can("limits")) return;
+    if (!can("limits") || (b.dataset.limit === "heat" && !can("heat"))) return;
     const on = b.getAttribute("aria-checked") !== "true";
     b.setAttribute("aria-checked", on);
     tick();
