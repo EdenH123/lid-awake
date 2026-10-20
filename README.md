@@ -208,7 +208,7 @@ Many laptops switch the built-in screen off when you close the lid, and Windows 
 - open the lid a little (a small gap is enough on most laptops), or
 - plug in an external monitor, which stays on with the lid closed.
 
-What Lid Awake does for you: while someone watches the screen from the phone, it stops Windows from turning the display off after a while. With the lid closed it also turns the built-in screen's brightness down to the lowest level, and puts it back when you open the lid, turn Lid Awake off, quit it, or sign out. If Lid Awake is stopped by a crash with the lid closed, it puts the brightness back the next time it starts. Some laptops don't let Windows change the brightness; then Lid Awake leaves it alone and says so once in the activity log.
+What Lid Awake does for you: while someone watches the screen from the phone, and (as on the Mac) the whole time the lid is closed while Lid Awake is on, it stops Windows from turning the display off after a while. On a laptop that keeps its built-in screen on behind a closed lid, that means the screen is always there for your phone. With the lid closed it also turns the built-in screen's brightness down to the lowest level, and puts it back when you open the lid, turn Lid Awake off, quit it, or sign out. If Lid Awake is stopped by a crash with the lid closed, it puts the brightness back the next time it starts. Some laptops don't let Windows change the brightness; then Lid Awake leaves it alone and says so once in the activity log.
 
 ### Claude on Windows
 

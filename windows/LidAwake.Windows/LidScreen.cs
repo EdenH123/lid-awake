@@ -28,8 +28,10 @@ public interface IDisplayHold
 // panel (or the graphics driver) switches it off when the lid closes. What this does:
 //  - Reports the lid (GUID_LIDSWITCH_STATE_CHANGE) and the display (GUID_CONSOLE_DISPLAY_STATE)
 //    for /status: lidClosed, displayAsleep. The phone draws the PC dark for either.
-//  - While on and someone watches (ScreenWatch), holds ES_DISPLAY_REQUIRED, so the display does
-//    not time out.
+//  - While on and someone watches (ScreenWatch), or while on with the lid closed (as the Mac's
+//    LidScreen does), holds ES_DISPLAY_REQUIRED, so the display does not time out. Behind a closed
+//    lid nothing else would bring a timed-out panel back, so it stays on (dimmed) whether or not
+//    anyone is watching yet; on laptops that cut the panel off at the lid this changes nothing.
 //  - While on with the lid closed, sets the lowest brightness (WMI), after saving the old level
 //    in machine.json; puts it back when the lid opens, when Lid Awake turns off or quits, when
 //    the session ends, and at the next start after a crash.
@@ -221,7 +223,7 @@ public sealed class LidScreen
                 bool wantHold, wantLow;
                 lock (gate)
                 {
-                    wantHold = on && watching && !screenOff;
+                    wantHold = on && !screenOff && (watching || lidClosed);
                     wantLow = on && lidClosed;
                 }
                 ApplyHold(wantHold);

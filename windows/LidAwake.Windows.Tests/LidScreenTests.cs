@@ -398,6 +398,37 @@ public class LidScreenTests : IDisposable
     }
 
     [Fact]
+    public void WithTheLidClosedTheDisplayIsHeldEvenWithNobodyWatching()
+    {
+        screen.SetLid(true);
+        Assert.False(hold.Holding);          // off: no hold, lid or not
+        screen.SetOn(true);
+        Assert.True(hold.Holding);           // on, lid closed, nobody watching: held, as on the Mac
+        screen.SetWatching(true);
+        screen.SetWatching(false);
+        Assert.True(hold.Holding);           // still closed: still held
+        screen.SetLid(false);
+        Assert.False(hold.Holding);          // lid open and nobody watching: normal timeout
+        screen.SetLid(true);
+        Assert.True(hold.Holding);
+        screen.SetOn(false);
+        Assert.False(hold.Holding);          // off again
+        Assert.Equal(new[] { true, false, true, false }, hold.Calls);
+    }
+
+    [Fact]
+    public void WithTheLidClosedTheDisplayIsNotHeldAfterThePhoneTurnedItOff()
+    {
+        screen.SetOn(true);
+        screen.SetLid(true);
+        Assert.True(hold.Holding);
+        screen.SetScreenOff(true);
+        Assert.False(hold.Holding);          // the phone turned it off: let it go
+        screen.SetScreenOff(false);
+        Assert.True(hold.Holding);           // woken, lid still closed
+    }
+
+    [Fact]
     public void TheDisplayHoldIsNotAskedForTwice()
     {
         screen.SetOn(true);
