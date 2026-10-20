@@ -197,7 +197,8 @@ What Lid Awake does for you: while someone watches the screen from the phone, it
 
 Don't rely on these on Windows. They work on the Mac only, for now.
 
-- Watching the screen and using the phone as trackpad and keyboard.
+- Watching the screen.
+- Using the phone as trackpad and keyboard, and locking the PC or turning its screen off from the phone. These are already in Lid Awake for Windows, but they only work once screen viewing is on, and screen viewing isn't on Windows yet, so for now they can't be used (the tray's **Allow control from phone** stays greyed out). Once it is there, turning on screen viewing also allows control, until you change **Allow control from phone** in the tray menu yourself (as on the Mac): if you only want to watch, untick it. Windows doesn't let any program control a window that runs as administrator, the "Do you want to allow…" prompt, or the lock screen, so do those at the PC.
 - Claude alerts on your phone (usage and sessions).
 - The camera and microphone.
 

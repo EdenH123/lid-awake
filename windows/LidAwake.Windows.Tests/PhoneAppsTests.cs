@@ -441,6 +441,15 @@ public class PhoneAppsTests : IDisposable
     }
 
     [Fact]
+    public void ControlIsListedAfterApps()
+    {
+        var control = new RemoteControl(settings, () => true, new InputInjector(new FakeInput()), new FakePower());
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new StatusInfo(new FakeReadings(), apps: apps) { Control = control }.Build(true)));
+        Assert.Equal(new[] { "limits", "history", "passkeys", "push", "apps", "control" },
+            doc.RootElement.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+    }
+
+    [Fact]
     public void AFailingAppListNeverBreaksTheStatus()
     {
         settings.Set(PhoneApps.SettingsKey, "not a list");

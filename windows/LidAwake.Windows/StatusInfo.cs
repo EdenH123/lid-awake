@@ -106,6 +106,10 @@ public sealed class StatusInfo
     // The lid and the display, from Windows' power notifications (none: open, awake).
     public LidScreen? Screen { get; init; }
 
+    // The phone's control of this PC (feature "control"). None (the tests): no "control", and
+    // the control fields keep their defaults.
+    public RemoteControl? Control { get; init; }
+
     // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
     // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp). `apps` is
     // the owner's list for the phone's Apps page (none: empty lists, and no "apps" in features).
@@ -142,12 +146,14 @@ public sealed class StatusInfo
             ["thermalState"] = "unknown",
             // 6.2
             ["remoteScreen"] = false,
-            ["remoteControl"] = false,
+            // The control switch, which needs the screen switch. SendInput needs no permission
+            // (only windows of an elevated program are out of reach, by Windows' UIPI).
+            ["remoteControl"] = Control?.ControlAllowed ?? false,
             ["cameraAllowed"] = false,
             ["screenPermission"] = false,
-            ["controlPermission"] = false,
+            ["controlPermission"] = Control != null,
             ["screenWidth"] = Math.Max(0, readings.ScreenWidth()),
-            ["screenOff"] = false,
+            ["screenOff"] = Control?.ScreenOff ?? false,
             ["lidClosed"] = Screen?.LidClosed ?? false,
             ["displayAsleep"] = Screen?.DisplayAsleep ?? false,
             // 6.3
@@ -218,11 +224,14 @@ public sealed class StatusInfo
         return s;
     }
 
-    // "apps" is listed only when the apps routes exist (an app list was given).
+    // "apps" is listed only when the apps routes exist (an app list was given), and "control"
+    // after it only when the control routes do (a RemoteControl was given).
     string[] FeatureList(bool withHeat)
     {
-        var list = withHeat ? FeaturesWithHeat : Features;
-        return apps == null ? list : list.Append("apps").ToArray();
+        IEnumerable<string> list = withHeat ? FeaturesWithHeat : Features;
+        if (apps != null) list = list.Append("apps");
+        if (Control != null) list = list.Append("control");
+        return list.ToArray();
     }
 
     // Never lets a failing process or settings read take the whole status down: an empty list.

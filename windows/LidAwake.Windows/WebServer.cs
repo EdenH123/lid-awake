@@ -27,6 +27,7 @@ public sealed partial class WebServer : IDisposable
     readonly Action<int>? setTimer;
     readonly Action<string, bool>? setLimit;
     readonly WebPush? push;
+    readonly RemoteControl? control;
     readonly int port;
     readonly string baseDir;
     readonly string web;
@@ -42,14 +43,17 @@ public sealed partial class WebServer : IDisposable
     // AutoOff.Choices to the "Turn off after" timer (none: the length is accepted and dropped).
     // `setLimit(name, on)` turns a safety switch ("battery" or "heat", already checked) on or off
     // (none: accepted and dropped). `push` keeps the phones that get alerts (none: /push/* is 404).
+    // `control` is the phone's control of this PC, POST /input and POST /power (none: those routes
+    // don't exist, 404).
     public WebServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<object> status, Action turnOff,
                      Action<string, string> announce, int port = DefaultPort, string? baseDir = null,
                      AccessLog? log = null, Action<int>? setTimer = null, Action<string, bool>? setLimit = null,
-                     WebPush? push = null)
+                     WebPush? push = null, RemoteControl? control = null)
     {
         (this.auth, this.tailnet, this.isOn, this.status, this.turnOff, this.announce) = (auth, tailnet, isOn, status, turnOff, announce);
         (this.log, this.setTimer, this.setLimit) = (log, setTimer, setLimit);
         this.push = push;
+        this.control = control;
         this.port = port;
         this.baseDir = baseDir ?? AppContext.BaseDirectory;
         web = Path.Combine(this.baseDir, "web");
@@ -347,6 +351,12 @@ public sealed partial class WebServer : IDisposable
             case ("POST", "/push/settings") when push != null:
                 await PushSettings(c, push);
                 return;
+            case ("POST", "/input") when control is { } rc:
+                await Input(c, rc);
+                return;
+            case ("POST", "/power") when control is { } rc:
+                await Power(c, rc);
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
@@ -390,6 +400,60 @@ public sealed partial class WebServer : IDisposable
             names.Add(item.GetString()!);
         }
         return names;
+    }
+
+    // POST /input (5.10), checked in the Mac's order: the screen switch, the control switch (no
+    // system permission is needed on Windows), a JSON object, the text length. The command runs
+    // before the answer, so the page's next one (it sends them one at a time) comes after it.
+    async Task Input(HttpContext c, RemoteControl control)
+    {
+        if (!control.ScreenAllowed) { await SendText(c, 403, RemoteControl.ScreenOffText); return; }
+        if (!control.ControlAllowed) { await SendText(c, 403, RemoteControl.ViewOnlyText); return; }
+        if (await ReadObject(c.Request) is not { } command) { await SendText(c, 400, "Bad request"); return; }
+        if (control.TooLong(command)) { await SendText(c, 413, RemoteControl.TooMuchText); return; }
+        control.Perform(command);
+        Empty(c);
+    }
+
+    // POST /power (5.10): all three need the screen switch, and lock the control switch too.
+    // With the lid closed, displayoff is refused (409): the screen couldn't come back on.
+    async Task Power(HttpContext c, RemoteControl control)
+    {
+        if (!control.ScreenAllowed) { await SendText(c, 403, RemoteControl.ScreenOffText); return; }
+        var body = await ReadObject(c.Request);
+        var action = body is { } b && b.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.String ? a.GetString() : null;
+        var device = Auth.DeviceName(c.Request.Headers.UserAgent.ToString());
+        switch (action)
+        {
+            case "lock":
+                if (!control.ControlAllowed) { await SendText(c, 403, RemoteControl.ViewOnlyText); return; }
+                LogQuietly($"PC locked from the phone · {device}");
+                control.Lock();
+                break;
+            case "displayoff":
+                if (control.LidClosed) { await SendText(c, 409, RemoteControl.LidClosedText); return; }
+                LogQuietly($"Display turned off from the phone · {device}");
+                control.DisplayOff();
+                break;
+            case "wake":
+                control.Wake();
+                break;
+            default:
+                await SendText(c, 400, "Bad request");
+                return;
+        }
+        Empty(c);
+    }
+
+    // The body as a JSON object; anything else (not JSON, an array, nothing): null.
+    static async Task<JsonElement?> ReadObject(HttpRequest req)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(req.Body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object ? doc.RootElement.Clone() : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     // POST /sessions/signout: `others: true` signs out every session but the caller's, `id` one
