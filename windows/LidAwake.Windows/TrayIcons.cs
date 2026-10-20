@@ -106,16 +106,25 @@ static class TrayIcons
         Paint(bmp, color, (g, ink, _) => g.FillEllipse(ink, 6.25f, 6.25f, 3.5f, 3.5f));
     }
 
-    // The phone clicks or types ("hand.point.up.left.fill"): a hand pointing up. The pieces overlap
-    // and have the same colour, so they read as one shape.
-    static void Hand(Bitmap bmp, Color color) => Paint(bmp, color, (g, ink, _) =>
+    // The phone clicks or types ("hand.point.up.left.fill"): a hand pointing up, the index finger
+    // at its left edge and the other three curled beside it, each set apart by a thin gap.
+    static void Hand(Bitmap bmp, Color color)
     {
-        Fill(g, ink, 5.5f, 0.75f, 3.25f, 9.5f, 1.6f);   // the pointing finger
-        Fill(g, ink, 8.25f, 5.75f, 2.75f, 5f, 1.35f);   // the curled fingers
-        Fill(g, ink, 10.5f, 6.5f, 2.75f, 4.75f, 1.35f);
-        Fill(g, ink, 4f, 8f, 9.25f, 7.25f, 2.75f);      // the palm
-        Fill(g, ink, 1.75f, 8.25f, 3.5f, 5.5f, 1.75f);  // the thumb
-    });
+        Paint(bmp, color, (g, ink, _) =>
+        {
+            Fill(g, ink, 2.75f, 0.75f, 3.25f, 10f, 1.6f);     // the index finger
+            Fill(g, ink, 6.5f, 6f, 2.6f, 4.5f, 1.3f);         // the curled fingers
+            Fill(g, ink, 9.1f, 6.5f, 2.5f, 4f, 1.25f);
+            Fill(g, ink, 11.6f, 7.1f, 2.25f, 3.5f, 1.1f);
+            Fill(g, ink, 2.75f, 8.5f, 11.1f, 6.75f, 2.75f);   // the palm
+        });
+        Cut(bmp, (g, all) =>
+        {
+            g.FillRectangle(all, 6.05f, 5.5f, 0.6f, 4f);
+            g.FillRectangle(all, 8.85f, 6.25f, 0.55f, 3.5f);
+            g.FillRectangle(all, 11.35f, 6.9f, 0.5f, 2.9f);
+        });
+    }
 
     // The camera is watched ("video.fill"): a camera body and its lens.
     static void VideoCamera(Bitmap bmp, Color color) => Paint(bmp, color, (g, ink, _) =>
