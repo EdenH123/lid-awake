@@ -326,6 +326,27 @@ public class TailnetTests : IDisposable
         Assert.Contains("funnel --https=443 off", commands);
     }
 
+    // The tray says so (a balloon and a log line), as the Mac does; only when Funnel was on, and a
+    // handler that throws doesn't stop the page from being published.
+    [Fact]
+    public void FunnelTurnedOffIsToldOnlyWhenItWasOn()
+    {
+        var told = 0;
+        var off = NewTailnet(_ => Mapped(8787));
+        off.FunnelTurnedOff += () => told++;
+        off.Serve(8787);
+        Assert.Equal(0, told);
+
+        commands.Clear();
+        var on = NewTailnet(args => args.StartsWith("serve status", StringComparison.Ordinal) ? "{\"AllowFunnel\":{\"pc.ts.net:443\":true}}" : "");
+        on.FunnelTurnedOff += () => told++;
+        on.FunnelTurnedOff += () => throw new InvalidOperationException("tray gone");
+        on.Serve(8787);
+        Assert.Equal(1, told);
+        Assert.Contains("funnel --https=443 off", commands);
+        Assert.Contains("serve --bg 8787", commands);
+    }
+
     [Fact]
     public void UnserveRemovesEverything()
     {

@@ -164,10 +164,14 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 
 ### Every day on Windows
 
-- **Turn it on:** right-click the tray icon → **Lid Awake on**. You can turn it **off** from your phone too.
+- **Turn it on:** right-click the tray icon → **Lid Awake on**. You can turn it **off** from your phone too; the laptop then says **Turned off from your phone** at the tray.
+- **See how it is at a glance:** the tray icon is a moon while Lid Awake is off and a cup while it's on. It changes within a second when your phone uses the laptop: an **eye** while the screen is watched, a **hand** while the phone clicks or types, a **video camera** while the camera is watched. Point at the icon for the same in words, and for the time left on the timer. The menu's first (grey) line says it too, for example **Turns off in 1:23:45**, **On, no timer** or **Screen being viewed from your phone**, and the grey line below the safety limits shows the battery, for example **Battery 80% · charging · 31.2°C**.
 - **Turn it on for a while only:** tray icon → **Turn off after** (for example 2 hours). When the time is up, Lid Awake turns itself off.
+- **Open the phone page on the laptop:** tray icon → **Open live page** (it needs Tailscale's name for the laptop; until Tailscale has one, a message says so).
+- **Signed-in devices:** tray icon → **Signed-in devices** lists each phone or browser signed in, with the day and how (password, or Face ID or fingerprint). Click one to sign it out, or **Sign out all devices**. After too many wrong passwords, sign-in is locked for a while: **Allow password sign-in again** ends that at once. **Show activity log** is there too.
 - **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed. See **The screen with the lid closed** below.
 - **See what happened:** tray icon → **Show activity log**.
+- **Change the phone password:** tray icon → **Change phone password…** (it says **Set phone password…** until there is one). A new password signs out every device.
 - **Safety limits:** Lid Awake turns itself off when the laptop is on battery below 10%, and won't turn on then (tray icon → **Turn off below 10% battery**). If the laptop reports its temperature, Lid Awake also turns off when the battery gets hotter than 40°C, or the laptop itself (its processor or board) hotter than 90°C (tray icon → **Turn off if battery is hotter than 40°C**). Many laptops don't report either: then that item is greyed out with **(no temperature on this PC)** and nothing watches the heat, so **don't leave the laptop closed in a bag or a tight space**. Both limits are on to start with. You can also change them on your phone (the gear → **Safety limits**).
 - **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
 - **Wi-Fi signal bars need Location.** On Windows, the bars on your phone need Location to be on for Lid Awake. Windows asks once, when you turn Lid Awake on. If you say no, or Location is off, your phone shows "Connected" without bars. You can change it in **Settings → Privacy & security → Location**.
@@ -180,7 +184,9 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - Turn it off from your phone.
 - A **Turn off after** timer.
 - Sign in with your phone password, with an alert at the tray for each new sign-in.
-- See your signed-in devices and sign one out.
+- See your signed-in devices and sign one or all of them out, on the phone or from the tray (**Signed-in devices**), and allow password sign-in again after a lockout.
+- A tray icon that shows what is going on: off, on, screen watched, controlled from the phone, camera watched, with the status, the timer's countdown and the battery in the menu and the icon's tooltip.
+- Messages at the tray when the phone turns Lid Awake off, when every device is signed out, and when Tailscale Funnel was on (it would put the phone page on the open internet) and Lid Awake turned it off. Each is in the activity log too, like turning **Allow control from phone** on or off.
 - The activity log.
 - The low-battery safety limit, and the too-hot one on laptops that report a temperature.
 - Battery, temperature and processor history graphs. Windows has no power log to read, so Lid Awake records its own, once a minute, while it runs (the last 48 hours). The graphs only cover the time Lid Awake has been running on this PC, with gaps while the PC slept, and the processor graph shows overall use, not use per app.

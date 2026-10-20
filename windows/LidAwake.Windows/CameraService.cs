@@ -107,6 +107,10 @@ public sealed class CameraService : IDisposable
     // Running now (the webcam light is on).
     public bool Capturing { get { lock (gate) return capture != null; } }
 
+    // Phones that have the camera open right now (the tray icon shows a video camera meanwhile, as
+    // the Mac's menu bar does). One whose capture failed still counts until it closes the camera.
+    public int Watchers { get { lock (gate) return viewers.Count; } }
+
     // A message from the phone on its live socket (7.3). True when it was a camera message
     // (`camera`, `cameraKey`, `talk` as a string), which the socket then handles no further.
     public bool Receive(ICameraSocket socket, JsonElement message)

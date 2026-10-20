@@ -222,6 +222,24 @@ public sealed class CameraServiceTests : IDisposable
         Assert.Equal(new[] { "Camera and microphone opened from the phone · iPhone", "Camera and microphone closed · iPhone" }, LogLines());
     }
 
+    // The tray's camera icon: every phone with the camera open counts, until it closes it.
+    [Fact]
+    public void WatchersCountsThePhonesWithTheCameraOpen()
+    {
+        Assert.Equal(0, camera.Watchers);
+        var a = Watch("session-a", "iPhone");
+        Assert.Equal(1, camera.Watchers);
+        var b = Watch("session-b", "Android phone");
+        Assert.Equal(2, camera.Watchers);
+        Assert.True(Send(a, "{\"camera\":false}"));
+        Assert.Equal(1, camera.Watchers);
+        camera.Closed(b);
+        Assert.Equal(0, camera.Watchers);
+        Watch();
+        camera.StopAll();
+        Assert.Equal(0, camera.Watchers);
+    }
+
     [Fact]
     public void NoTicketNoSwitchNoCamera()
     {

@@ -97,7 +97,7 @@ static class Program
             new CameraHardware(() => screen.LidClosed), cameraEncoders, new TalkPlayer(WasapiTalkOutput.Open), log);
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
-            () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) =>
+            () => tray?.TurnOffFromPhone(), (title, body) =>
             {
                 tray?.Announce(title, body);
                 _ = push.SendSecurity(title, body);
@@ -140,7 +140,7 @@ static class Program
         // The page works but the screen's /live isn't published: only the activity log says so.
         tailnet.LiveNotPublished = said => log.Write("Screen viewing not published by Tailscale (the phone page works): " + said);
         tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, alerts, screen,
-            phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet);
+            phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet, readings.Power);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");
@@ -207,6 +207,34 @@ sealed class TrayApp : ApplicationContext
     // "The phone page isn't published yet" is shown once each time Lid Awake is turned on.
     bool warnedNotPublished;
 
+    readonly ContextMenuStrip menu = new();
+    // The greyed-out first line ("Turns off in 1:23:45", "Screen being viewed from your phone"…)
+    // and the battery line, as on the Mac. Kept current every second while the menu is open.
+    readonly ToolStripMenuItem statusLine = new(TrayText.Off) { Enabled = false };
+    readonly ToolStripMenuItem infoLine = new(TrayText.NoBattery) { Enabled = false };
+    // The line after the safety limits. Claude's items go right after it (InsertAfterLimits).
+    readonly ToolStripSeparator afterLimits = new();
+    // "Set phone password…", then "Change phone password…" once there is one.
+    readonly ToolStripMenuItem passwordItem = new(TrayText.SetPassword);
+    // "Signed-in devices" (rebuilt each time the menu opens).
+    readonly ToolStripMenuItem devicesMenu = new("Signed-in devices");
+    // GetSystemPowerStatus, for the battery line (none: "No battery info").
+    readonly Func<PowerReading?>? power;
+    // Balloons and activity-log lines with the Mac's texts.
+    readonly TrayNotices notices;
+    // Every second, as the Mac's countdown timer: the icon (a privacy signal: what the phone is
+    // doing shows within a second), the tooltip, and the two lines while the menu is open.
+    readonly System.Windows.Forms.Timer activityTick = new() { Interval = 1000 };
+    // The app's own icon, for the windows; the tray shows the drawn ones (TrayIcons), one per state,
+    // size and taskbar colour, each drawn once.
+    readonly Icon appIcon = LoadTrayIcon();
+    readonly Dictionary<(TrayIconState State, int Size, bool Light), Icon> drawn = new();
+    (TrayIconState State, int Size, bool Light)? shownIcon;
+
+    // More for the tooltip, after Lid Awake's own lines (Claude usage, "59% · 1h40m"), read every
+    // second on the UI thread. Null or empty: nothing. A getter that throws is ignored.
+    public Func<string?>? ExtraTooltip { get; set; }
+
     // Written on the UI thread, read by the web server's threads.
     volatile bool isOn;
     public bool IsOn => isOn;
@@ -218,9 +246,12 @@ sealed class TrayApp : ApplicationContext
                    Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts, LidScreen screen,
                    PhoneApps? apps = null, IStartMenuSource? startMenu = null, RemoteControl? control = null,
                    LiveServer? live = null, CameraSwitch? cameraSwitch = null, CameraService? camera = null,
-                   Tailnet? tailnet = null)
+                   Tailnet? tailnet = null, Func<PowerReading?>? power = null)
     {
         this.tailnet = tailnet;
+        this.power = power;
+        notices = new TrayNotices(log.Write, (title, text, warning) =>
+            icon!.ShowBalloonTip(warning ? 10000 : 5000, title, text, warning ? ToolTipIcon.Warning : ToolTipIcon.Info));
         setup = new SingleWindow<SetupWindow>(MakeSetupWindow, w => !w.IsDisposed, w =>
         {
             if (!w.Visible) w.Show();
@@ -275,12 +306,18 @@ sealed class TrayApp : ApplicationContext
         // In the background: the UI thread never waits for Tailscale.
         serveCheck.Tick += (_, _) => phone.Recheck();
         serveCheck.Start();
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Set up phone…", null, (_, _) => ShowSetup());
+        // The Mac's menu, in its order: the switch and its status line; the timer and the safety
+        // limits; (Claude's items); the battery line, the phone page and the phone's switches; the
+        // password, setup, devices and apps.
         menu.Items.Add(toggle);
+        menu.Items.Add(statusLine);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(timerMenu);
         menu.Items.Add(batteryItem);
         menu.Items.Add(heatItem);
+        menu.Items.Add(afterLimits);
+        menu.Items.Add(infoLine);
+        menu.Items.Add("Open live page", null, (_, _) => OpenLivePage());
         // "Allow screen from phone" (off to start with), then "Allow control from phone", which needs it.
         if (live != null)
         {
@@ -301,10 +338,15 @@ sealed class TrayApp : ApplicationContext
         // Shown as they are now, and read again in the background (the item follows by Changed).
         menu.Opening += (_, _) => { ShowLimits(); ShowScreen(); ShowControl(); ShowCamera(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
+        passwordItem.Click += (_, _) => ShowPasswordForm();
+        menu.Items.Add(passwordItem);
+        menu.Items.Add("Set up phone…", null, (_, _) => ShowSetup());
+        menu.Items.Add(devicesMenu);
         menu.Items.Add(passkeysMenu);
-        menu.Opening += (_, _) => ShowPasskeys();
+        menu.Opening += (_, _) => { ShowPasskeys(); ShowDevices(); ShowPassword(); ShowActivity(menuOpening: true); };
         ShowPasskeys();
+        ShowDevices();
+        ShowPassword();
         if (phoneApps != null && startMenu != null) menu.Items.Add("Apps on phone…", null, (_, _) => ShowAppsForm());
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
         menu.Items.Add(new ToolStripSeparator());
@@ -320,7 +362,7 @@ sealed class TrayApp : ApplicationContext
             CloseSetup();
             ExitThread();
         });
-        icon = new NotifyIcon { Icon = LoadTrayIcon(), Text = "Lid Awake", ContextMenuStrip = menu, Visible = true };
+        icon = new NotifyIcon { Icon = appIcon, Text = "Lid Awake", ContextMenuStrip = menu, Visible = true };
         // A lid action or Serve left over from a crash was put back in Main, before the tray.
         // Nothing is reachable from the phone until Lid Awake is turned on.
         // The tray may only be changed on its own thread, and the web server runs on others.
@@ -328,6 +370,12 @@ sealed class TrayApp : ApplicationContext
         if (SynchronizationContext.Current is null)
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         ui = SynchronizationContext.Current!;
+        // The drawn icon and the tooltip from now on, every second.
+        ShowActivity();
+        activityTick.Tick += (_, _) => ShowActivity();
+        activityTick.Start();
+        // Tailscale Funnel found on and turned off (on a background thread): said at the tray.
+        if (tailnet != null) tailnet.FunnelTurnedOff += () => OnUi(notices.FunnelTurnedOff);
         // Signing out or shutting down while on. Subscribed here, after the context above, so the
         // handler runs on this (the UI) thread. SystemEvents' handlers are static: removed again
         // in ExitThreadCore.
@@ -348,7 +396,7 @@ sealed class TrayApp : ApplicationContext
         new SetupModel(auth, log.Write,
             () => tailnet?.CheckSetup() ?? new Tailnet.SetupState(false, false, false),
             () => tailnet?.Host, () => isOn, () => ScreenSwitch.IsOn(settings)),
-        turnOn: TurnOn, allowScreen: () => SetScreenAllowed(true), screenFeature: live != null, icon: icon.Icon);
+        turnOn: TurnOn, allowScreen: () => SetScreenAllowed(true), screenFeature: live != null, icon: appIcon);
 
     // Opened again, the window there is comes to the front.
     void ShowSetup()
@@ -377,6 +425,7 @@ sealed class TrayApp : ApplicationContext
         catch (Exception) { }
         timerCheck.Stop();
         serveCheck.Stop();
+        activityTick.Stop();
         try { safetyTimer.Dispose(); }
         catch (Exception) { }
         try { control?.ReleaseHeld(); }
@@ -396,7 +445,7 @@ sealed class TrayApp : ApplicationContext
         try
         {
             toggle.Checked = false;
-            icon.Text = "Lid Awake: off";
+            ShowActivity();
         }
         catch (Exception) { }
         camera?.StopAll();
@@ -579,8 +628,11 @@ sealed class TrayApp : ApplicationContext
     void FlipControl()
     {
         if (control == null || !control.ScreenAllowed) return;
-        try { control.SetControl(!control.ControlAllowed); }
+        bool before = control.ControlAllowed;
+        try { control.SetControl(!before); }
         catch (Exception) { }  // the settings file couldn't be written: the switch stays as it was
+        // Logged as on the Mac (toggleControl), only when it really changed.
+        if (control.ControlAllowed != before) notices.ControlChanged(!before);
         ShowControl();
     }
 
@@ -630,7 +682,8 @@ sealed class TrayApp : ApplicationContext
     public void Announce(string title, string body) =>
         OnUi(() => icon.ShowBalloonTip(5000, title, body, ToolTipIcon.Info));
 
-    // The app icon, small enough for the tray; the plain application icon if the file is missing.
+    // The app icon, for the setup window (and the tray until its drawn icon is shown); the plain
+    // application icon if the file is missing.
     static Icon LoadTrayIcon()
     {
         try
@@ -658,7 +711,7 @@ sealed class TrayApp : ApplicationContext
         // after isOn is false, so a phone asking for the camera meanwhile is refused.
         if (!on) camera?.StopAll();
         toggle.Checked = on;
-        icon.Text = on ? "Lid Awake: on" : "Lid Awake: off";
+        ShowActivity();
         // Off: every live socket closes now, not only at the socket's 2-second check, and nothing
         // the phone was holding stays held.
         if (!on) CloseSockets();
@@ -681,6 +734,166 @@ sealed class TrayApp : ApplicationContext
         try { WlanReader.Read(null); }
         catch (Exception) { }
     });
+
+    // ---- The status line, the icon, the tooltip and the battery line (main.swift refresh) ----
+
+    // Claude (its usage line and its "show in tooltip" switch) goes here: right after the safety
+    // limits, followed by its own separator, as on the Mac. Call on the UI thread.
+    public void InsertAfterLimits(params ToolStripItem[] items)
+    {
+        if (items.Length == 0) return;
+        int at = menu.Items.IndexOf(afterLimits) + 1;
+        foreach (var item in items) menu.Items.Insert(at++, item);
+        menu.Items.Insert(at, new ToolStripSeparator());
+    }
+
+    // What the phone is doing on this PC now. A source that fails counts as idle.
+    TrayActivity Activity()
+    {
+        int viewers = 0;
+        bool controlling = false, cameraOn = false;
+        try { viewers = live?.Viewers ?? 0; }
+        catch (Exception) { }
+        try { controlling = control?.Controlling ?? false; }
+        catch (Exception) { }
+        try { cameraOn = (camera?.Watchers ?? 0) > 0; }
+        catch (Exception) { }
+        return new TrayActivity(viewers, controlling, cameraOn);
+    }
+
+    // Every second, on every turn on or off, and when the menu opens: the icon and the tooltip,
+    // and while the menu is open (or opening) its status and battery lines.
+    void ShowActivity(bool menuOpening = false)
+    {
+        var activity = Activity();
+        var remaining = isOn ? Countdown.Remaining() : null;
+        ShowIcon(TrayText.Icon(isOn, activity));
+        string? extra = null;
+        try { extra = ExtraTooltip?.Invoke(); }
+        catch (Exception) { }
+        ShowTooltip(TrayText.Tooltip(isOn, remaining, activity, extra));
+        if (!menuOpening && !menu.Visible) return;
+        SetText(statusLine, TrayText.StatusLine(isOn, remaining, activity));
+        // Task C's minutesToFull (time to a full battery) belongs in the third argument once
+        // Windows' estimate is read; until then the line says "charging".
+        SetText(infoLine, TrayText.InfoLine(SafePower(), heat.Latest.Battery));
+    }
+
+    PowerReading? SafePower()
+    {
+        try { return power?.Invoke(); }
+        catch (Exception) { return null; }
+    }
+
+    static void SetText(ToolStripItem item, string text)
+    {
+        if (item.Text != text) item.Text = text;
+    }
+
+    // The drawn icon for this state, at the tray's size and for the taskbar's colour. If drawing
+    // fails, the app's icon stays.
+    void ShowIcon(TrayIconState state)
+    {
+        var key = (State: state, Size: TrayIcons.SizeFor(SystemInformation.SmallIconSize.Width), Light: TrayIcons.LightTaskbar());
+        if (shownIcon == key) return;
+        if (!drawn.TryGetValue(key, out var picture))
+        {
+            try { picture = TrayIcons.Make(key.State, key.Size, key.Light); }
+            catch (Exception) { return; }
+            drawn[key] = picture;
+        }
+        icon.Icon = picture;
+        shownIcon = key;
+    }
+
+    void ShowTooltip(string text)
+    {
+        if (icon.Text == text) return;
+        try { icon.Text = text; }
+        // An older limit (63 characters): the start of it.
+        catch (ArgumentException) { icon.Text = text[..Math.Min(text.Length, 63)]; }
+    }
+
+    void ShowPassword()
+    {
+        bool has;
+        try { has = auth.HasPassword; }
+        catch (Exception) { has = false; }
+        SetText(passwordItem, TrayText.PasswordTitle(has));
+    }
+
+    // "Open live page": https://<pc>.ts.net/ in the default browser (the page isn't offered on
+    // 127.0.0.1), or a balloon while Tailscale hasn't given this PC its name.
+    void OpenLivePage()
+    {
+        var url = TrayText.LivePageUrl(tailnet?.Host);
+        if (url == null) { notices.NoLivePageAddress(); return; }
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception e) { log.Write("The phone page couldn't open in the browser: " + e.Message); }
+    }
+
+    // POST /awake from the phone (on the web server's thread; it wrote the activity-log line):
+    // off at the tray, with the Mac's "Turned off from your phone". Already off: nothing to say.
+    public void TurnOffFromPhone() => OnUi(() =>
+    {
+        if (!isOn) return;
+        SetAwake(false);
+        notices.TurnedOffFromPhone();
+    });
+
+    // ---- Signed-in devices (main.swift rebuildDevicesMenu) ----
+
+    void ShowDevices()
+    {
+        devicesMenu.DropDownItems.Clear();
+        List<Auth.SessionInfo> sessions;
+        bool locked;
+        try
+        {
+            sessions = auth.Sessions(Array.Empty<string>());
+            locked = auth.IsLockedOut;
+        }
+        catch (Exception) { sessions = new(); locked = false; }
+        foreach (var line in TrayText.Devices(sessions, locked))
+        {
+            if (line.SeparatorBefore) devicesMenu.DropDownItems.Add(new ToolStripSeparator());
+            var item = new ToolStripMenuItem(line.Text) { Enabled = line.Enabled };
+            var (id, action) = (line.SessionId, line.Action);  // the menu item keeps its own copy
+            if (id != null) item.Click += (_, _) => SignOutDevice(id);
+            else if (action != DeviceMenuAction.None) item.Click += (_, _) => DeviceAction(action);
+            devicesMenu.DropDownItems.Add(item);
+        }
+    }
+
+    // Signed out from the PC: its live socket closes at the socket's next 2-second check.
+    void SignOutDevice(string id)
+    {
+        try { auth.SignOut(id, Array.Empty<string>()); }
+        catch (Exception) { return; }  // the settings file couldn't be written: nothing changed
+        notices.SignedOutDevice();
+    }
+
+    void DeviceAction(DeviceMenuAction action)
+    {
+        try
+        {
+            switch (action)
+            {
+                case DeviceMenuAction.SignOutAll:
+                    auth.SignOutAll();
+                    notices.SignedOutAllDevices();
+                    break;
+                case DeviceMenuAction.ClearLockout:
+                    auth.ClearLockout();
+                    notices.LockoutCleared();
+                    break;
+                case DeviceMenuAction.ShowLog:
+                    ShowActivityLog();
+                    break;
+            }
+        }
+        catch (Exception) { }  // the settings file couldn't be written: nothing changed
+    }
 
     // ---- Face ID / fingerprint sign-ins (main.swift removeFaceID) ----
 
@@ -752,6 +965,7 @@ sealed class TrayApp : ApplicationContext
             using var form = new PasswordForm(auth, log.Write);
             if (form.ShowDialog() == DialogResult.OK)
             {
+                ShowPassword();
                 MessageBox.Show("Phone password saved. Every phone was signed out.", "Lid Awake");
             }
         }

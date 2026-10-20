@@ -79,6 +79,23 @@ public sealed class Auth
 
     double NowSeconds => now().ToUnixTimeMilliseconds() / 1000.0;
 
+    // Password sign-in is refused right now after wrong tries (the tray's "Allow password sign-in
+    // again" item is only shown then), as Auth.isLockedOut on the Mac.
+    public bool IsLockedOut
+    {
+        get { lock (gate) return LockedUntil > NowSeconds; }
+    }
+
+    // From the tray: the wrong tries are forgotten and the password works again at once.
+    public void ClearLockout()
+    {
+        lock (gate)
+        {
+            Failures = 0;
+            LockedUntil = 0;
+        }
+    }
+
     public LoginResult Login(string password, string device)
     {
         lock (gate)
@@ -194,6 +211,9 @@ public sealed class Auth
 
     // Signs out every device except the caller's own. Returns how many were removed.
     public int SignOutOthers(IEnumerable<string> callerTokens) => Remove(callerTokens, _ => true);
+
+    // From the PC (the tray's "Sign out all devices"): every device, with no caller to keep.
+    public int SignOutAll() => Remove(Array.Empty<string>(), _ => true);
 
     // Signs out every device that signed in with this passkey (it was removed on the PC).
     public int SignOutPasskey(string credentialId) =>
