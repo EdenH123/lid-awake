@@ -11,12 +11,16 @@ static class Program
         if (!first) return;
         ApplicationConfiguration.Initialize();
         var settings = new Settings();
+        // What is only true of this PC (the saved lid values and their power plan) is kept apart
+        // from the roaming settings. Values an older version saved in the roaming file move first.
+        var machine = Settings.ForMachine();
+        KeepAwake.MigrateSavedLid(settings, machine);
         var auth = new Auth(settings);
         var tailnet = new Tailnet(settings);
         var log = new AccessLog();
         // Put back what a crash or a forced stop left behind, before anything else (and before
         // any message could wait for a click): the lid action, and Serve if Lid Awake added it.
-        KeepAwake.Off(settings);
+        KeepAwake.Off(machine);
         _ = tailnet.SetServed(false, WebServer.DefaultPort);
         // Learn this PC's Tailscale name in the background; the page is refused until it is known.
         Task.Run(tailnet.Refresh);
@@ -35,7 +39,7 @@ static class Program
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, auth, new PhoneAccess(tailnet, server), log);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
@@ -44,7 +48,7 @@ static class Program
 
 sealed class TrayApp : ApplicationContext
 {
-    readonly Settings settings;
+    readonly Settings machine;  // the machine-state settings KeepAwake saves the lid values in
     readonly Auth auth;
     readonly PhoneAccess phone;
     readonly AccessLog log;
@@ -67,9 +71,9 @@ sealed class TrayApp : ApplicationContext
     // "Turn off after": its own lock makes it safe to read and change from the web server's threads.
     public AutoOff Countdown { get; }
 
-    public TrayApp(Settings settings, Auth auth, PhoneAccess phone, AccessLog log)
+    public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log)
     {
-        this.settings = settings;
+        this.machine = machine;
         this.auth = auth;
         this.phone = phone;
         this.log = log;
@@ -146,7 +150,7 @@ sealed class TrayApp : ApplicationContext
             icon.Text = "Lid Awake: off";
         }
         catch (Exception) { }
-        SessionEnd.TurnOff(settings, () => phone.Set(false), log);
+        SessionEnd.TurnOff(machine, () => phone.Set(false), log);
     }
 
     // The phone page's port was taken when Lid Awake started (Main).
@@ -231,7 +235,7 @@ sealed class TrayApp : ApplicationContext
     public Task SetAwake(bool on)
     {
         var lid = LidResult.Changed;
-        if (on) lid = KeepAwake.On(settings); else KeepAwake.Off(settings);
+        if (on) lid = KeepAwake.On(machine); else KeepAwake.Off(machine);
         // The countdown starts when it goes from off to on, and ends when it goes off.
         if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; }
         else if (!on) Countdown.Stop();

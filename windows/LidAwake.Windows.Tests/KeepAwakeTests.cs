@@ -29,36 +29,61 @@ public class KeepAwakeTests : IDisposable
         "    Current AC Power Setting Index: 0x00000001\n" +
         "    Current DC Power Setting Index: 0x00000002\n";
 
-    // A powercfg that remembers a lid action, answers queries like the real one and records
-    // the commands that change something. Commands are matched by their exact first word.
+    const string Balanced = "381b4222-f694-41f0-9685-ff5bb260df2e";
+    const string PowerSaver = "a1841308-3541-4fab-bc81-f71556f20b4a";
+
+    // A powercfg that remembers a lid action per power plan, answers queries like the real one
+    // and records the commands that change something. Commands are matched by their exact first
+    // word. Ac and Dc are the values of the active plan. A plan is named by its GUID or by
+    // SCHEME_CURRENT; naming one that does not exist fails, like the real powercfg.
     sealed class FakePowercfg
     {
-        public int Ac, Dc;
+        public string Active = Balanced;
+        public readonly Dictionary<string, (int ac, int dc)> Schemes = new() { [Balanced] = (0, 0) };
         public bool HasLid = true;
         public bool FailWrites;    // value-set commands fail, like a powercfg that exits non-zero
         public bool FailQueries;   // /query fails
         public bool IgnoreWrites;  // value-set commands succeed but change nothing
+        public bool NoActiveScheme;  // /getactivescheme prints no plan
         public readonly List<string> Writes = new();       // /setacvalueindex and /setdcvalueindex
         public readonly List<string> Activations = new();  // /setactive
+
+        public int Ac { get => Schemes[Active].ac; set => Schemes[Active] = (value, Schemes[Active].dc); }
+        public int Dc { get => Schemes[Active].dc; set => Schemes[Active] = (Schemes[Active].ac, value); }
+
+        string Resolve(string name)
+        {
+            if (name == "SCHEME_CURRENT") return Active;
+            if (!Schemes.ContainsKey(name)) throw new InvalidOperationException("powercfg: no such power plan (fake)");
+            return name;
+        }
 
         public string Run(string args)
         {
             var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var command = parts.Length > 0 ? parts[0] : "";
+            if (command == "/getactivescheme") return NoActiveScheme ? "" : $"Power Scheme GUID: {Active}  (Balanced)\n";
+            if (command == "/list")
+                return "Existing Power Schemes (* Active)\n-----------------------------------\n" +
+                    string.Concat(Schemes.Keys.Select(g => $"Power Scheme GUID: {g}  (Plan){(g == Active ? " *" : "")}\n"));
             if (command == "/query")
             {
                 if (FailQueries) throw new InvalidOperationException("powercfg failed (fake)");
+                var scheme = Resolve(parts[1]);
                 if (!HasLid) return SchemeLine;
+                var (ac, dc) = Schemes[scheme];
                 return RealLaptopOutput.Substring(0, RealLaptopOutput.IndexOf("    Current AC", StringComparison.Ordinal)) +
-                    $"    Current AC Power Setting Index: 0x{Ac:x8}\n" +
-                    $"    Current DC Power Setting Index: 0x{Dc:x8}\n";
+                    $"    Current AC Power Setting Index: 0x{ac:x8}\n" +
+                    $"    Current DC Power Setting Index: 0x{dc:x8}\n";
             }
             if ((command == "/setacvalueindex" || command == "/setdcvalueindex") && int.TryParse(parts[^1], out var value))
             {
                 if (FailWrites) throw new InvalidOperationException("powercfg failed (fake)");
+                var scheme = Resolve(parts[1]);
                 Writes.Add(args);
                 if (IgnoreWrites) return "";
-                if (command == "/setacvalueindex") Ac = value; else Dc = value;
+                var (ac, dc) = Schemes[scheme];
+                Schemes[scheme] = command == "/setacvalueindex" ? (value, dc) : (ac, value);
             }
             else if (command == "/setactive")
             {
@@ -72,7 +97,8 @@ public class KeepAwakeTests : IDisposable
     readonly Func<string, string> originalPowercfg = KeepAwake.Powercfg;
     readonly Func<bool?> originalHasLid = KeepAwake.HasLid;
     readonly List<string> folders = new();
-    readonly Settings settings;
+    readonly string machineFolder;
+    readonly Settings settings;  // the machine-state settings (machine.json), which KeepAwake uses
     readonly FakePowercfg fake = new() { Ac = 1, Dc = 2 };
 
     public KeepAwakeTests(ITestOutputHelper output)
@@ -80,7 +106,8 @@ public class KeepAwakeTests : IDisposable
         this.output = output;
         var folder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         folders.Add(folder);
-        settings = new Settings(folder);
+        machineFolder = folder;
+        settings = new Settings(folder, Settings.MachineFileName);
         // Last, so a constructor that throws cannot leave the fake installed.
         KeepAwake.Powercfg = fake.Run;
     }
@@ -112,6 +139,14 @@ public class KeepAwakeTests : IDisposable
         }
     }
 
+    // A roaming settings.json of its own, as the app's other settings use.
+    Settings NewRoaming()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        folders.Add(folder);
+        return new Settings(folder);
+    }
+
     [Fact]
     public void ParsesRealPowercfgOutput()
     {
@@ -134,6 +169,7 @@ public class KeepAwakeTests : IDisposable
         Assert.Equal((0, 0), (fake.Ac, fake.Dc));
         Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
         Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
+        Assert.Equal(Balanced, settings.Get<string>("savedLidScheme"));
 
         KeepAwake.Off(settings);
 
@@ -141,6 +177,7 @@ public class KeepAwakeTests : IDisposable
         Assert.Equal((1, 2), (fake.Ac, fake.Dc));
         Assert.Null(settings.Get<int?>("savedLidAc"));
         Assert.Null(settings.Get<int?>("savedLidDc"));
+        Assert.Null(settings.Get<string>("savedLidScheme"));
     }
 
     [Fact]
@@ -346,6 +383,160 @@ public class KeepAwakeTests : IDisposable
         // The lid part does not wait for Tailscale.
         Assert.False(KeepAwake.IsHolding);
         Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+    }
+
+    // The plan the values came from is where they go back, even if the owner (or a maker's power
+    // app) switched plans while Lid Awake was on. The restore is also read back in that plan: if
+    // it were read in the active one, the saved values would never be confirmed and cleared.
+    [Fact]
+    public void ValuesAreRestoredIntoTheSavedPlanWhileAnotherIsActive()
+    {
+        fake.Schemes[PowerSaver] = (3, 3);
+        KeepAwake.On(settings);
+        Assert.Equal(Balanced, settings.Get<string>("savedLidScheme"));
+        fake.Active = PowerSaver;
+        fake.Writes.Clear();
+        fake.Activations.Clear();
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), fake.Schemes[Balanced]);
+        Assert.Equal((3, 3), fake.Schemes[PowerSaver]);
+        Assert.Equal(PowerSaver, fake.Active);
+        Assert.Equal(2, fake.Writes.Count);
+        Assert.All(fake.Writes, w => Assert.Contains(Balanced, w));
+        // Activating the current plan re-applies it; it never switches to another one.
+        Assert.Equal(new[] { "/setactive SCHEME_CURRENT" }, fake.Activations);
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<int?>("savedLidDc"));
+        Assert.Null(settings.Get<string>("savedLidScheme"));
+    }
+
+    [Fact]
+    public void WithoutASavedPlanTheValuesGoBackIntoTheCurrentPlan()
+    {
+        // State from an older version, or from a PC that would not say which plan was active.
+        fake.Ac = 0;
+        fake.Dc = 0;
+        settings.Set("savedLidAc", 1);
+        settings.Set("savedLidDc", 2);
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+        Assert.Equal(2, fake.Writes.Count);
+        Assert.All(fake.Writes, w => Assert.Contains("SCHEME_CURRENT", w));
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<int?>("savedLidDc"));
+    }
+
+    [Fact]
+    public void WhenWindowsWontNameThePlanOnStillWorksAndOffUsesTheCurrentPlan()
+    {
+        fake.NoActiveScheme = true;
+
+        Assert.Equal(LidResult.Changed, KeepAwake.On(settings));
+        Assert.Null(settings.Get<string>("savedLidScheme"));
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+
+        fake.Writes.Clear();
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+        Assert.All(fake.Writes, w => Assert.Contains("SCHEME_CURRENT", w));
+    }
+
+    [Fact]
+    public void APlanThatIsGoneSinceIsRestoredIntoTheCurrentPlan()
+    {
+        fake.Schemes[PowerSaver] = (3, 3);
+        KeepAwake.On(settings);
+        fake.Active = PowerSaver;
+        fake.Schemes.Remove(Balanced);
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), fake.Schemes[PowerSaver]);
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<string>("savedLidScheme"));
+    }
+
+    [Fact]
+    public void ASavedPlanThatIsNotAGuidIsIgnored()
+    {
+        fake.Ac = 0;
+        fake.Dc = 0;
+        settings.Set("savedLidAc", 1);
+        settings.Set("savedLidDc", 2);
+        settings.Set("savedLidScheme", "SCHEME_MAX");
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+        Assert.All(fake.Writes, w => Assert.Contains("SCHEME_CURRENT", w));
+    }
+
+    // The saved values used to live in the roaming settings.json.
+    [Fact]
+    public void SavedValuesMoveFromTheRoamingSettingsToMachineJson()
+    {
+        var roaming = NewRoaming();
+        roaming.Set("savedLidAc", 1);
+        roaming.Set("savedLidDc", 2);
+        roaming.Set("tailnetHost", "pc.ts.net");
+        // A plan left in machine.json is not the plan of values that came with none.
+        settings.Set("savedLidScheme", PowerSaver);
+        fake.Ac = 0;
+        fake.Dc = 0;
+
+        KeepAwake.MigrateSavedLid(roaming, settings);
+
+        Assert.Null(roaming.Get<int?>("savedLidAc"));
+        Assert.Null(roaming.Get<int?>("savedLidDc"));
+        Assert.Equal("pc.ts.net", roaming.Get<string>("tailnetHost"));
+        var reread = new Settings(machineFolder, Settings.MachineFileName);
+        Assert.Equal<int?>(1, reread.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, reread.Get<int?>("savedLidDc"));
+        Assert.Null(reread.Get<string>("savedLidScheme"));
+
+        // And the moved values are what the next Off puts back.
+        KeepAwake.Off(settings);
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+    }
+
+    [Fact]
+    public void MigrationKeepsValuesAlreadyInMachineJson()
+    {
+        var roaming = NewRoaming();
+        roaming.Set("savedLidAc", 3);
+        roaming.Set("savedLidDc", 3);
+        settings.Set("savedLidAc", 1);
+        settings.Set("savedLidDc", 2);
+        settings.Set("savedLidScheme", Balanced);
+
+        KeepAwake.MigrateSavedLid(roaming, settings);
+
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
+        Assert.Equal(Balanced, settings.Get<string>("savedLidScheme"));
+        Assert.Null(roaming.Get<int?>("savedLidAc"));
+        Assert.Null(roaming.Get<int?>("savedLidDc"));
+    }
+
+    [Fact]
+    public void MigrationLeavesAHalfSavedPairAlone()
+    {
+        var roaming = NewRoaming();
+        roaming.Set("savedLidAc", 1);
+
+        KeepAwake.MigrateSavedLid(roaming, settings);
+
+        Assert.Equal<int?>(1, roaming.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<int?>("savedLidDc"));
+        // Nothing to move at all is fine too.
+        KeepAwake.MigrateSavedLid(NewRoaming(), settings);
     }
 
     [Fact]

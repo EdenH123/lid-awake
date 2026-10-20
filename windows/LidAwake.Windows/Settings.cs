@@ -4,21 +4,29 @@ using System.Text.Json.Nodes;
 namespace LidAwake;
 
 // Everything Lid Awake remembers, in %APPDATA%\LidAwake\settings.json (the Mac keeps the same
-// things in UserDefaults). Written whole on every change, to a temp file that then replaces it,
-// so a crash mid-write cannot leave a truncated file.
+// things in UserDefaults). A second instance, on machine.json, keeps what is only true of this PC.
+// Written whole on every change, to a temp file that then replaces it, so a crash mid-write
+// cannot leave a truncated file.
 public sealed class Settings
 {
     readonly string path;
     readonly object gate = new();
     JsonObject data;
 
-    public Settings(string? folder = null)
+    public const string MachineFileName = "machine.json";
+
+    public Settings(string? folder = null, string fileName = "settings.json")
     {
         folder ??= Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LidAwake");
         Directory.CreateDirectory(folder);
-        path = Path.Combine(folder, "settings.json");
+        path = Path.Combine(folder, fileName);
         data = Load(path);
     }
+
+    // What belongs to this PC and must not roam with the user's profile (the lid values Lid Awake
+    // saved, and the power plan they came from): %LOCALAPPDATA%\LidAwake\machine.json.
+    public static Settings ForMachine(string? folder = null) =>
+        new(folder ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LidAwake"), MachineFileName);
 
     // A damaged file must not stop the app from starting. A file that does not parse is moved
     // aside as settings.json.bad, and the app starts with nothing remembered.

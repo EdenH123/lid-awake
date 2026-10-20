@@ -9,10 +9,11 @@ public static class SessionEnd
     public const string LogLine = "Turned off: signing out or shutting down";
     public static readonly TimeSpan MaxWait = TimeSpan.FromSeconds(3);
 
-    // `unserve` starts removing Serve, e.g. PhoneAccess.Set(false). Never throws.
-    public static void TurnOff(Settings settings, Func<Task> unserve, AccessLog? log, TimeSpan? maxWait = null)
+    // `machine` is the machine-state settings (Settings.ForMachine) KeepAwake keeps its saved lid
+    // values in. `unserve` starts removing Serve, e.g. PhoneAccess.Set(false). Never throws.
+    public static void TurnOff(Settings machine, Func<Task> unserve, AccessLog? log, TimeSpan? maxWait = null)
     {
-        KeepAwake.Off(settings);
+        KeepAwake.Off(machine);
         // Written before the wait, so the line is there even if Windows ends the app during it.
         try { log?.Write(LogLine); }
         catch (Exception) { }

@@ -14,10 +14,19 @@ public enum LidResult { Changed, NoLidSetting, Failed }
 // On and Off never throw: a powercfg failure leaves the saved values in place, so a later Off
 // (or the next start) tries again, and the idle-sleep hold is always released by Off. On says
 // what happened to the lid action, so the tray can warn when it could not be changed.
+//
+// The saved values (savedLidAc, savedLidDc) and the power plan they came from (savedLidScheme,
+// its GUID) are facts about this PC, so they live in machine.json (Settings.ForMachine), not in
+// the roaming settings. Off puts them back into that plan, even if another plan is active by then.
 public static class KeepAwake
 {
     const string Sub = "4f971e89-eebd-4455-a8de-9e59040e7347";      // SUB_BUTTONS
     const string LidAction = "5ca83367-6e45-459f-a27b-476b1d01c936"; // LIDACTION
+    const string CurrentScheme = "SCHEME_CURRENT";
+    const string SchemeKey = "savedLidScheme";
+    // A power plan's GUID. Matching the GUID rather than the label keeps this independent of the
+    // Windows display language.
+    const string GuidPattern = @"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}";
     // No ES_AWAYMODE_REQUIRED: with it, Start -> Sleep only turns the screen and sound off and
     // the PC keeps running, which looks like sleep but is not.
     const uint ES_CONTINUOUS = 0x80000000, ES_SYSTEM_REQUIRED = 0x1;
@@ -93,22 +102,53 @@ public static class KeepAwake
         catch (Exception) { return null; }
     }
 
-    // Remember the current lid action once, then set it to "do nothing". If powercfg shows no
-    // lid action, change nothing and save nothing, so Off() never "restores" a guessed value.
-    // Throws when powercfg fails; Failed when the lid action does not read back as "do nothing".
+    // Older versions kept the saved lid values in the roaming settings. Move them to this PC's
+    // machine.json: copied first, removed from the roaming file after, so a crash in between
+    // cannot lose them. Values already in machine.json win. Never throws.
+    public static void MigrateSavedLid(Settings roaming, Settings machine)
+    {
+        lock (gate)
+        {
+            try
+            {
+                if (roaming.Get<int?>("savedLidAc") is not int ac || roaming.Get<int?>("savedLidDc") is not int dc) return;
+                if (machine.Get<int?>("savedLidAc") is null || machine.Get<int?>("savedLidDc") is null)
+                {
+                    // The old values come with no plan: a plan left over in machine.json is not theirs.
+                    machine.Set<string?>(SchemeKey, null);
+                    machine.Set("savedLidAc", ac);
+                    machine.Set("savedLidDc", dc);
+                }
+                roaming.Set<int?>("savedLidAc", null);
+                roaming.Set<int?>("savedLidDc", null);
+            }
+            catch (Exception)
+            {
+                // Whatever was not moved stays where it was, and is tried again at the next start.
+            }
+        }
+    }
+
+    // Remember the current lid action (and which power plan it is in) once, then set it to "do
+    // nothing". If powercfg shows no lid action, change nothing and save nothing, so Off() never
+    // "restores" a guessed value. Throws when powercfg fails; Failed when the lid action does not
+    // read back as "do nothing".
     static LidResult SetLidToDoNothing(Settings settings)
     {
         // Both values must be saved to count: a crash between the two writes leaves only one,
         // and then the lid action has not been changed yet, so read it fresh.
         if (settings.Get<int?>("savedLidAc") is null || settings.Get<int?>("savedLidDc") is null)
         {
-            var current = QueryLidAction();
+            var current = QueryLidAction(CurrentScheme);
             if (current is null) return LidResult.NoLidSetting;
+            // The plan goes first: values without their plan would be put back into whichever
+            // plan is active then. null (Windows would not say) means "the current plan" later.
+            settings.Set<string?>(SchemeKey, ActiveScheme());
             settings.Set("savedLidAc", current.Value.ac);
             settings.Set("savedLidDc", current.Value.dc);
         }
-        SetLidAction(0, 0);  // 0 = do nothing
-        var now = QueryLidAction();
+        SetLidAction(CurrentScheme, 0, 0);  // 0 = do nothing
+        var now = QueryLidAction(CurrentScheme);
         return now is { } n && n.ac == 0 && n.dc == 0 ? LidResult.Changed : LidResult.Failed;
     }
 
@@ -121,13 +161,16 @@ public static class KeepAwake
                 // Only put back what On() saved: never touch a lid setting Lid Awake didn't change.
                 if (settings.Get<int?>("savedLidAc") is int ac && settings.Get<int?>("savedLidDc") is int dc)
                 {
-                    SetLidAction(ac, dc);
-                    // Forget the saved values only once the restore is confirmed.
-                    var now = ReadLidAction();
+                    var scheme = SchemeToRestore(settings);
+                    SetLidAction(scheme, ac, dc);
+                    // Forget the saved values only once the restore is confirmed, in that plan.
+                    // The plan goes last: values without their plan would be restored elsewhere.
+                    var now = ReadLidAction(scheme);
                     if (now is { } n && n.ac == ac && n.dc == dc)
                     {
                         settings.Set<int?>("savedLidAc", null);
                         settings.Set<int?>("savedLidDc", null);
+                        settings.Set<string?>(SchemeKey, null);
                     }
                 }
             }
@@ -144,13 +187,13 @@ public static class KeepAwake
         }
     }
 
-    // The current plan's lid-close action for plugged in and on battery, or null when powercfg
-    // fails or does not print both values.
-    public static (int ac, int dc)? ReadLidAction()
+    // The lid-close action of a power plan (the current one by default) for plugged in and on
+    // battery, or null when powercfg fails or does not print both values.
+    public static (int ac, int dc)? ReadLidAction(string scheme = "SCHEME_CURRENT")
     {
         try
         {
-            return QueryLidAction();
+            return QueryLidAction(scheme);
         }
         catch (Exception)
         {
@@ -159,7 +202,35 @@ public static class KeepAwake
     }
 
     // Like ReadLidAction, but a powercfg failure throws, so On can tell it from "no lid action".
-    static (int ac, int dc)? QueryLidAction() => ParseLidAction(Powercfg($"/query SCHEME_CURRENT {Sub} {LidAction}"));
+    static (int ac, int dc)? QueryLidAction(string scheme) => ParseLidAction(Powercfg($"/query {scheme} {Sub} {LidAction}"));
+
+    // The GUID of the active power plan, or null when powercfg fails or prints none.
+    static string? ActiveScheme()
+    {
+        try
+        {
+            var m = Regex.Match(Powercfg("/getactivescheme"), GuidPattern);
+            return m.Success ? m.Value.ToLowerInvariant() : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    // The plan the saved values go back into: the one saved with them. The current plan when none
+    // was saved (an older version, or Windows would not say) or when that plan is gone since.
+    static string SchemeToRestore(Settings settings)
+    {
+        var saved = settings.Get<string>(SchemeKey);
+        if (saved is null || !Regex.IsMatch(saved, "^" + GuidPattern + "$")) return CurrentScheme;
+        try
+        {
+            if (!Powercfg("/list").Contains(saved, StringComparison.OrdinalIgnoreCase)) return CurrentScheme;
+        }
+        catch (Exception)
+        {
+            // Cannot tell whether it still exists: try it. A failure keeps the saved values.
+        }
+        return saved;
+    }
 
     // The last two hex values in the output are the current AC and DC settings. Matching hex
     // values rather than label text keeps this independent of the Windows display language.
@@ -170,11 +241,13 @@ public static class KeepAwake
         return (values[^2], values[^1]);
     }
 
-    static void SetLidAction(int ac, int dc)
+    // Sets the values in `scheme`, then activates the current plan, which is what makes Windows
+    // apply them. That never switches plans: it only re-applies the one that is active.
+    static void SetLidAction(string scheme, int ac, int dc)
     {
-        Powercfg($"/setacvalueindex SCHEME_CURRENT {Sub} {LidAction} {ac}");
-        Powercfg($"/setdcvalueindex SCHEME_CURRENT {Sub} {LidAction} {dc}");
-        Powercfg("/setactive SCHEME_CURRENT");
+        Powercfg($"/setacvalueindex {scheme} {Sub} {LidAction} {ac}");
+        Powercfg($"/setdcvalueindex {scheme} {Sub} {LidAction} {dc}");
+        Powercfg($"/setactive {CurrentScheme}");
     }
 
     // Runs powercfg and returns what it printed. Throws when it cannot start, does not finish
