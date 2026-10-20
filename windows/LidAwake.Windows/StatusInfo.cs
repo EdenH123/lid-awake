@@ -87,11 +87,12 @@ public sealed class NetMeter
 // all requests, because processor load and network speed are measured between two requests.
 public sealed class StatusInfo
 {
-    // Section 4. "limits" (POST /limits and the low-battery switch) always; "heat" (the too-hot
-    // switch) only while a temperature source works, re-checked with each status. No /memory
-    // route yet, so "memory" is not listed. Grows as features land.
-    public static readonly string[] Features = { "limits" };
-    public static readonly string[] FeaturesWithHeat = { "limits", "heat" };
+    // Section 4. "push" (phone alerts, /push/*) and "limits" (POST /limits and the low-battery
+    // switch) always; "heat" (the too-hot switch) only while a temperature source works,
+    // re-checked with each status. No /memory route yet, so "memory" is not listed. Grows as
+    // features land.
+    public static readonly string[] Features = { "push", "limits" };
+    public static readonly string[] FeaturesWithHeat = { "push", "limits", "heat" };
 
     readonly ISystemReadings readings;
     readonly Limits? limits;

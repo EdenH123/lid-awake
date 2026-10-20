@@ -36,6 +36,10 @@ public sealed class Auth
 
     public bool HasPassword => settings.Get<string>("pwHash") != null;
 
+    // Raised after a new password is saved (outside the lock): the phones that get alerts are
+    // forgotten too (WebPush.RemoveAll), as on the Mac. A handler that throws is ignored.
+    public event Action? PasswordSet;
+
     public void SetPassword(string password)
     {
         if (password is null || password.Length < MinPasswordLength)
@@ -50,6 +54,8 @@ public sealed class Auth
             Failures = 0;
             LockedUntil = 0;
         }
+        try { PasswordSet?.Invoke(); }
+        catch (Exception) { }
     }
 
     // Wrong tries in a row (kept across restarts), and when the lockout ends in unix seconds.

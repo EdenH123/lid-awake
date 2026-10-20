@@ -160,8 +160,11 @@ public sealed class HeatSensor
 }
 
 // Why Lid Awake must not be on right now: the Mac's reasons (safetyStop), worded for Windows.
-public sealed record SafetyReason(string Why, string Short)
+// `Alert` is the phone alert's wording (safetyStopAlertReason): "Battery reached 9%".
+public sealed record SafetyReason(string Why, string Short, string? Alert = null)
 {
+    // The phone alert, "<reason> after 2 h 5 min. Your PC can sleep now." (PhoneAlerts.TurnedOff).
+    public string AlertReason => Alert ?? Why.TrimEnd('.');
     // The activity log, when it turns off: "Turned off: battery below 10%".
     public string LogOff => "Turned off: " + Short;
     // The activity log, when a turn-on is refused.
@@ -180,12 +183,15 @@ public static class Safety
     public static SafetyReason? Decide(bool batteryGuard, bool heatGuard, PowerReading? power, TemperatureReading heat)
     {
         if (batteryGuard && power is { } p && p.AcLineStatus == 0 && StatusInfo.HasBattery(p) && p.BatteryLifePercent < Limits.BatteryLimit)
-            return new SafetyReason($"Battery is at {p.BatteryLifePercent}%.", $"battery below {Limits.BatteryLimit}%");
+            return new SafetyReason($"Battery is at {p.BatteryLifePercent}%.", $"battery below {Limits.BatteryLimit}%",
+                $"Battery reached {p.BatteryLifePercent}%");
         if (!heatGuard) return null;
         if (heat.Battery is { } b && TemperatureMath.IsSane(b) && b >= Limits.MaxBatteryTemp)
-            return new SafetyReason($"Battery is too hot ({Shown(b)}°C).", $"battery too hot ({Shown(b)}°C)");
+            return new SafetyReason($"Battery is too hot ({Shown(b)}°C).", $"battery too hot ({Shown(b)}°C)",
+                $"Battery got too hot ({Shown(b)}°C)");
         if (heat.Zone is { } z && TemperatureMath.IsSane(z) && z >= Limits.MaxPcTemp)
-            return new SafetyReason($"Your PC is too hot ({Shown(z)}°C).", $"PC too hot ({Shown(z)}°C)");
+            return new SafetyReason($"Your PC is too hot ({Shown(z)}°C).", $"PC too hot ({Shown(z)}°C)",
+                $"Your PC got too hot ({Shown(z)}°C)");
         return null;
     }
 
