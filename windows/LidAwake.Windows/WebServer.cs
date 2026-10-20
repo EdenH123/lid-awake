@@ -26,6 +26,8 @@ public sealed class WebServer : IDisposable
     readonly AccessLog? log;
     readonly Action<int>? setTimer;
     readonly Action<string, bool>? setLimit;
+    readonly ScreenFeed? screen;
+    readonly Func<bool>? screenAllowed;
     readonly int port;
     readonly string baseDir;
     readonly string web;
@@ -40,13 +42,16 @@ public sealed class WebServer : IDisposable
     // is written and the list is empty). `setTimer(minutes)` applies a length already checked against
     // AutoOff.Choices to the "Turn off after" timer (none: the length is accepted and dropped).
     // `setLimit(name, on)` turns a safety switch ("battery" or "heat", already checked) on or off
-    // (none: accepted and dropped).
+    // (none: accepted and dropped). `screen` answers GET /screen.jpg while `screenAllowed` (the
+    // owner's switch) is on (none: the route doesn't exist, 404).
     public WebServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<object> status, Action turnOff,
                      Action<string, string> announce, int port = DefaultPort, string? baseDir = null,
-                     AccessLog? log = null, Action<int>? setTimer = null, Action<string, bool>? setLimit = null)
+                     AccessLog? log = null, Action<int>? setTimer = null, Action<string, bool>? setLimit = null,
+                     ScreenFeed? screen = null, Func<bool>? screenAllowed = null)
     {
         (this.auth, this.tailnet, this.isOn, this.status, this.turnOff, this.announce) = (auth, tailnet, isOn, status, turnOff, announce);
         (this.log, this.setTimer, this.setLimit) = (log, setTimer, setLimit);
+        (this.screen, this.screenAllowed) = (screen, screenAllowed);
         this.port = port;
         this.baseDir = baseDir ?? AppContext.BaseDirectory;
         web = Path.Combine(this.baseDir, "web");
@@ -300,6 +305,9 @@ public sealed class WebServer : IDisposable
                 Empty(c);
                 return;
             }
+            case ("GET", "/screen.jpg") when screen is { } feed:
+                await ScreenJpg(c, feed);
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
@@ -326,6 +334,40 @@ public sealed class WebServer : IDisposable
             return;
         }
         Empty(c);
+    }
+
+    // GET /screen.jpg (5.9): the slow path for the screen picture, a long poll. `after` is the id
+    // of the picture the phone has; the answer is a newer one (200 with X-Frame-Id), nothing new
+    // within 2 seconds (204), or no capture yet (503). Windows needs no permission to capture.
+    async Task ScreenJpg(HttpContext c, ScreenFeed feed)
+    {
+        bool allowed;
+        try { allowed = screenAllowed?.Invoke() == true; }
+        catch (Exception) { allowed = false; }
+        if (!allowed)
+        {
+            await SendText(c, 403, "Screen access is off. Turn on “Allow screen from phone” in the Lid Awake menu on your PC.");
+            return;
+        }
+        // Values are not percent-decoded (2.1): digits only.
+        var after = int.TryParse(c.Request.Query["after"].ToString(), System.Globalization.NumberStyles.None,
+                                 System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : 0;
+        var poll = await feed.FrameAfter(after);
+        switch (poll.Kind)
+        {
+            case ScreenFeed.Result.Frame when poll.Jpeg != null:
+                c.Response.StatusCode = 200;
+                c.Response.ContentType = "image/jpeg";
+                c.Response.Headers["X-Frame-Id"] = poll.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await c.Response.Body.WriteAsync(poll.Jpeg);
+                return;
+            case ScreenFeed.Result.Unavailable:
+                await SendText(c, 503, LiveServer.WakingText);
+                return;
+            default:
+                Empty(c);
+                return;
+        }
     }
 
     // A whole number in a JSON body: 15 and 15.0 both count, 15.5 and "15" do not.
@@ -376,8 +418,9 @@ public sealed class WebServer : IDisposable
         }
     }
 
-    // Every session token in the Cookie header, whichever way the header is split (2.5).
-    static IEnumerable<string> CookieTokens(HttpRequest req)
+    // Every session token in the Cookie header, whichever way the header is split (2.5). The live
+    // socket's handshake reads them the same way.
+    internal static IEnumerable<string> CookieTokens(HttpRequest req)
     {
         foreach (var header in req.Headers.Cookie)
         {
