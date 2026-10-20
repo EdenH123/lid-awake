@@ -536,7 +536,7 @@ public sealed class ClaudeSettingsFile
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
-            return HistoryStore.WriteAtomic(file, root.ToJsonString(Pretty) + Environment.NewLine);
+            return Files.TryWriteAtomic(file, root.ToJsonString(Pretty) + Environment.NewLine);
         }
         catch (Exception) { return false; }
     }

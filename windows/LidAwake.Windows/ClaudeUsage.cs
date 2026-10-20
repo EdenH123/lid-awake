@@ -121,7 +121,7 @@ public sealed class ClaudeUsage
     }
 
     // {"rate_limits": {...}, "updated": <Unix seconds>}, to a temp file of its own first
-    // (HistoryStore.WriteAtomic), so several status lines at once can't mix. Only into a folder
+    // (Files.WriteAtomic), so several status lines at once can't mix. Only into a folder
     // that is there (%LOCALAPPDATA%\LidAwake: no folder, no file, as on the Mac).
     public static bool Save(string path, JsonObject rateLimits, DateTimeOffset at)
     {
@@ -129,7 +129,7 @@ public sealed class ClaudeUsage
         {
             if (!Directory.Exists(Path.GetDirectoryName(Path.GetFullPath(path)))) return false;
             var saved = new JsonObject { ["rate_limits"] = rateLimits.DeepClone(), ["updated"] = at.ToUnixTimeSeconds() };
-            return HistoryStore.WriteAtomic(path, saved.ToJsonString());
+            return Files.TryWriteAtomic(path, saved.ToJsonString());
         }
         catch (Exception) { return false; }
     }

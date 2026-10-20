@@ -252,7 +252,7 @@ public sealed class HistoryStore
                 text = SaveText();
                 dirty = false;
             }
-            if (WriteAtomic(path, text))
+            if (Files.TryWriteAtomic(path, text))
             {
                 lock (gate) savedAt = Now();
                 return true;
@@ -317,33 +317,6 @@ public sealed class HistoryStore
         var known = new Dictionary<string, object?[]>();
         foreach (var app in table.Values) known[app.Key] = new object?[] { app.Name, app.Kind, app.Exe, app.Color };
         return JsonSerializer.Serialize(new Dictionary<string, object> { ["v"] = FileVersion, ["apps"] = known, ["samples"] = rows });
-    }
-
-    // To a temp file of its own first, flushed to the disk, then moved over the old one, so a
-    // crash or power cut mid-write can't leave a truncated file. Never throws; false when it
-    // failed (the old file is left as it was, and the temp file is removed). A temp name of its
-    // own each time, so writers at once never share one: also for Claude's usage file and Claude
-    // Code's settings (status lines, hooks, the tray; ClaudeUsage, ClaudeSettingsFile).
-    internal static bool WriteAtomic(string path, string text)
-    {
-        var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
-        try
-        {
-            using (var file = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                var bytes = System.Text.Encoding.UTF8.GetBytes(text);
-                file.Write(bytes, 0, bytes.Length);
-                file.Flush(flushToDisk: true);
-            }
-            File.Move(tmp, path, overwrite: true);
-            return true;
-        }
-        catch (Exception)
-        {
-            try { File.Delete(tmp); }
-            catch (Exception) { }
-            return false;
-        }
     }
 
     // ---- the routes ----

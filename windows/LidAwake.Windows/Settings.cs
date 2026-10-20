@@ -5,8 +5,8 @@ namespace LidAwake;
 
 // Everything Lid Awake remembers, in %APPDATA%\LidAwake\settings.json (the Mac keeps the same
 // things in UserDefaults). A second instance, on machine.json, keeps what is only true of this PC.
-// Written whole on every change, to a temp file that then replaces it, so a crash mid-write
-// cannot leave a truncated file.
+// Written whole on every change, to a temp file that then replaces it (Files.WriteAtomic), so a
+// crash mid-write cannot leave a truncated file.
 public sealed class Settings
 {
     readonly string path;
@@ -54,12 +54,16 @@ public sealed class Settings
         lock (gate) return data.TryGetPropertyValue(key, out var v) && v is not null ? v.Deserialize<T>() : default;
     }
 
+    // A value the key already has changes nothing and writes nothing (Tailscale's name and owner
+    // are learned again every 30 seconds). Throws when the file can't be written; the key then
+    // keeps its old value.
     public void Set<T>(string key, T? value)
     {
+        var node = value is null ? null : JsonSerializer.SerializeToNode(value);
         lock (gate)
         {
-            data[key] = value is null ? null : JsonSerializer.SerializeToNode(value);
-            Save();
+            if (data.TryGetPropertyValue(key, out var there) && there?.ToJsonString() == node?.ToJsonString()) return;
+            Change(key, node);
         }
     }
 
@@ -68,8 +72,8 @@ public sealed class Settings
     {
         lock (gate)
         {
-            if (!data.Remove(key)) return;
-            Save();
+            if (!data.ContainsKey(key)) return;
+            Change(key, null, remove: true);
         }
     }
 
@@ -100,16 +104,28 @@ public sealed class Settings
         lock (gate)
         {
             if (data.TryGetPropertyValue(key, out var there) && there is not null) return;
-            data[key] = value;
-            Save();
+            Change(key, value);
         }
     }
 
-    // Under gate.
-    void Save()
+    // Under gate: `key` set to `value` (or taken out), and the file written. When the file can't be
+    // written, the key is put back as it was, so what is remembered is what the file holds, and
+    // the error is passed on.
+    void Change(string key, JsonNode? value, bool remove = false)
     {
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, data.ToJsonString());
-        File.Move(tmp, path, overwrite: true);
+        bool had = data.TryGetPropertyValue(key, out var old);
+        old = old?.DeepClone();
+        if (remove) data.Remove(key);
+        else data[key] = value;
+        try
+        {
+            Files.WriteAtomic(path, data.ToJsonString());
+        }
+        catch (Exception)
+        {
+            if (had) data[key] = old;
+            else data.Remove(key);
+            throw;
+        }
     }
 }
