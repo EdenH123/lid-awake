@@ -62,6 +62,10 @@ public sealed class WebServer : IDisposable
     // routes answer 404, as for a feature the PC doesn't have). Set before Start.
     public HistoryStore? History { get; set; }
 
+    // POST /camera/options and /camera/unlock (none: both answer 404, as for a feature the PC
+    // doesn't have). Set only once the camera is wired to passkeys and the live socket. Set before Start.
+    public CameraAccess? Camera { get; set; }
+
     // True after Start succeeded, until Stop or Dispose. Tailscale Serve may only point at the
     // port while this is true (PhoneAccess).
     public bool IsRunning => app != null;
@@ -317,10 +321,24 @@ public sealed class WebServer : IDisposable
                 // Windows sends no per-app processor use, so no app is ever listed to have an icon.
                 await SendText(c, 404, "No such app.");
                 return;
+            case ("POST", "/camera/options") when Camera is { } cameraOptions:
+                await SendCamera(c, cameraOptions.Options(host));
+                return;
+            case ("POST", "/camera/unlock") when Camera is { } cameraUnlock:
+                await SendCamera(c, cameraUnlock.Unlock(host, tokens.FirstOrDefault(auth.IsValid), await ReadJson(c.Request)));
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
         }
+    }
+
+    static Task SendCamera(HttpContext c, CameraAccess.Answer a)
+    {
+        if (a.Json == null) return SendText(c, a.Code, a.Text ?? "");
+        c.Response.StatusCode = a.Code;
+        c.Response.ContentType = "application/json";
+        return c.Response.WriteAsync(a.Json);
     }
 
     // POST /sessions/signout: `others: true` signs out every session but the caller's, `id` one

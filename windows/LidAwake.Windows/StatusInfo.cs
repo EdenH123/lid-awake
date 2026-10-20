@@ -94,6 +94,13 @@ public sealed class StatusInfo
     public static readonly string[] Features = { "limits", "history" };
     public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat" };
 
+    // "camera" too, but only once the camera is wired to passkeys, the H.264 encoder and the live
+    // socket (CameraFeature.Ready, in Program). Off by default, so a build without them never offers it.
+    public bool CameraFeature { get; set; }
+
+    // cameraAllowed: the owner's screen and camera switches (CameraSwitch.Allowed). None: false.
+    public Func<bool>? CameraAllowed { get; set; }
+
     readonly ISystemReadings readings;
     readonly Limits? limits;
     readonly HeatSensor? heat;
@@ -134,7 +141,7 @@ public sealed class StatusInfo
             // 6.2
             ["remoteScreen"] = false,
             ["remoteControl"] = false,
-            ["cameraAllowed"] = false,
+            ["cameraAllowed"] = CameraAllowed?.Invoke() ?? false,
             ["screenPermission"] = false,
             ["controlPermission"] = false,
             ["screenWidth"] = Math.Max(0, readings.ScreenWidth()),
@@ -148,7 +155,7 @@ public sealed class StatusInfo
             // 6.6
             ["os"] = "windows",
             // "heat" while either source works: the battery's sensor or the thermal zones.
-            ["features"] = temperature.Any ? FeaturesWithHeat : Features,
+            ["features"] = WithCamera(temperature.Any ? FeaturesWithHeat : Features),
         };
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
@@ -208,6 +215,8 @@ public sealed class StatusInfo
         s["net"] = netInfo;
         return s;
     }
+
+    string[] WithCamera(string[] features) => CameraFeature ? features.Append("camera").ToArray() : features;
 
     // Windows gives Wi-Fi signal as a quality from 0 to 100, not dBm. The usual approximation:
     // quality = 2 × (dBm + 100), so dBm = quality / 2 − 100, from −100 (0) to −50 (100). A whole
