@@ -19,6 +19,8 @@
     <!-- WASAPI, for the camera's microphone and the phone's voice on the speakers (talk back). -->
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <!-- The QR code in "Set up Lid Awake" (MIT, managed only). Only its module matrix is used: SetupWindow draws the picture itself. -->
+    <PackageReference Include="QRCoder" Version="1.6.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- The shared phone page, next to the exe. -->

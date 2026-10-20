@@ -147,14 +147,18 @@ You don't need to install any programming tools.
 
 ### Finish and add it to your phone
 
-1. Right-click the **Lid Awake** icon in the tray by the clock (it may be under the **^** arrow).
-2. Choose **Set phone password…** and pick a password.
-3. Click **Lid Awake on** so it shows a tick. The phone page only opens while Lid Awake is on.
-4. On your phone, make sure Tailscale is on, then open `https://<pc-name>.<tailnet>.ts.net/` in the browser. You'll find your laptop's exact name in the Tailscale app on the phone (the list of your machines), or at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
-5. Add it to your Home screen:
+1. The **Set up Lid Awake** window opens by itself the first time (until a phone password is set). Later, open it from the tray: right-click the **Lid Awake** icon by the clock → **Set up phone…**.
+   - Lid Awake lives by the clock. If you don't see its icon, click **^** next to the clock and drag it onto the taskbar, or turn it on in **Settings → Personalization → Taskbar → Other system tray icons** (the window has a button that opens that page).
+2. The window ticks off what the laptop needs: Tailscale installed and signed in, and the private web address (MagicDNS and HTTPS Certificates). Anything missing has a button next to it that fixes it or opens the right page.
+3. Type a **phone password** in the two boxes and click **Save password**. (Later you change it from the tray: **Set phone password…**.)
+4. Click **Turn Lid Awake on**. The phone page only opens while Lid Awake is on.
+5. On your phone, make sure Tailscale is on, then point the **Camera** at the QR code in the window and open the link (Safari on iPhone, your browser on Android).
+   - No camera handy? Type the address shown under the code (**Copy address** copies it), `https://<pc-name>.<tailnet>.ts.net/`, into the phone's browser. You'll also find your laptop's exact name in the Tailscale app on the phone (the list of your machines), or at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
+6. Add it to your Home screen:
    - **iPhone:** in Safari tap **Share** → **Add to Home Screen** → **Add**.
    - **Android (Samsung or similar):** open the browser menu (**⋮** in Chrome, **≡** in Samsung Internet) → **Add to Home screen** (or **Install app**).
-6. Open **Lid Awake** from your Home screen and type your phone password.
+7. Open **Lid Awake** from your Home screen and type your phone password.
+8. Optional: to watch the screen from the phone, click **Allow screen from phone** at the bottom of the window.
 
 Each time a new phone signs in, the laptop shows a small alert at the tray: **New sign-in to Lid Awake**.
 

@@ -291,8 +291,9 @@ jobs:
             '2) Double-click "Install Lid Awake (Windows)".',
             '3) If Windows shows "Windows protected your PC", click More info, then Run anyway.',
             '   If it asks "Do you want to run this file?", click Run.',
-            '4) When it finishes, right-click the Lid Awake icon by the clock, choose',
-            '   "Set phone password...", and then turn it on.',
+            '4) When it finishes, the "Set up Lid Awake" window opens. Set a phone password',
+            '   there, turn Lid Awake on, and scan the code with your phone camera.',
+            '   (Later: right-click the Lid Awake icon by the clock, "Set up phone...".)',
             '',
             'To remove it later, double-click "Uninstall Lid Awake (Windows)".'
           ) | Set-Content -Path 'stage\README-FIRST.txt' -Encoding ASCII

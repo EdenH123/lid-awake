@@ -140,7 +140,7 @@ static class Program
         // The page works but the screen's /live isn't published: only the activity log says so.
         tailnet.LiveNotPublished = said => log.Write("Screen viewing not published by Tailscale (the phone page works): " + said);
         tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, alerts, screen,
-            phoneApps, startMenu, control, live, cameraSwitch, camera);
+            phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");
@@ -189,6 +189,9 @@ sealed class TrayApp : ApplicationContext
     readonly ToolStripMenuItem cameraItem = new(CameraTitle);
     readonly CameraSwitch? cameraSwitch;
     readonly CameraService? camera;
+    // "Set up Lid Awake" (Set up phone…), at most one; Tailscale is read for it in the background.
+    readonly Tailnet? tailnet;
+    readonly SingleWindow<SetupWindow> setup;
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
@@ -214,8 +217,16 @@ sealed class TrayApp : ApplicationContext
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
                    Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts, LidScreen screen,
                    PhoneApps? apps = null, IStartMenuSource? startMenu = null, RemoteControl? control = null,
-                   LiveServer? live = null, CameraSwitch? cameraSwitch = null, CameraService? camera = null)
+                   LiveServer? live = null, CameraSwitch? cameraSwitch = null, CameraService? camera = null,
+                   Tailnet? tailnet = null)
     {
+        this.tailnet = tailnet;
+        setup = new SingleWindow<SetupWindow>(MakeSetupWindow, w => !w.IsDisposed, w =>
+        {
+            if (!w.Visible) w.Show();
+            if (w.WindowState == FormWindowState.Minimized) w.WindowState = FormWindowState.Normal;
+            w.Activate();
+        });
         this.cameraSwitch = cameraSwitch;
         this.camera = camera;
         phoneApps = apps;
@@ -246,9 +257,7 @@ sealed class TrayApp : ApplicationContext
         toggle.Click += (_, _) =>
         {
             if (isOn) { SetAwake(false); return; }
-            if (!TurnOnAllowed()) return;
-            SetAwake(true);
-            AskForLocation();
+            TurnOn();
         };
         batteryItem.Click += (_, _) => FlipLimit(Limits.Battery, !limits.BatteryGuard);
         heatItem.Click += (_, _) => FlipLimit(Limits.Heat, !limits.HeatGuard);
@@ -267,6 +276,7 @@ sealed class TrayApp : ApplicationContext
         serveCheck.Tick += (_, _) => phone.Recheck();
         serveCheck.Start();
         var menu = new ContextMenuStrip();
+        menu.Items.Add("Set up phone…", null, (_, _) => ShowSetup());
         menu.Items.Add(toggle);
         menu.Items.Add(timerMenu);
         menu.Items.Add(batteryItem);
@@ -307,6 +317,7 @@ sealed class TrayApp : ApplicationContext
             try { Task.WaitAll(new[] { unserved, screen.SetOn(false) }, TimeSpan.FromSeconds(5)); }
             catch (Exception) { }
             icon!.Visible = false;
+            CloseSetup();
             ExitThread();
         });
         icon = new NotifyIcon { Icon = LoadTrayIcon(), Text = "Lid Awake", ContextMenuStrip = menu, Visible = true };
@@ -326,10 +337,38 @@ sealed class TrayApp : ApplicationContext
         // the background, and then every 15 seconds (once a minute while off).
         heat.Changed += () => OnUi(ShowLimits);
         safetyTimer.Change(TimeSpan.Zero, HeatSensor.CheckEvery);
-        // A new PC: say how to set the phone password (the page refuses every sign-in without one).
-        if (!auth.HasPassword)
-            OnUi(() => icon.ShowBalloonTip(10000, "Welcome to Lid Awake",
-                "Set a phone password: right-click the Lid Awake icon by the clock → Set phone password…", ToolTipIcon.Info));
+        // A new PC: the setup window opens by itself until a phone password is set (the page
+        // refuses every sign-in without one), once the tray is running.
+        if (SetupModel.OpensAtStart(auth.HasPassword)) OnUi(ShowSetup);
+    }
+
+    // ---- Set up Lid Awake (the Mac's Setup.swift) ----
+
+    SetupWindow MakeSetupWindow() => new(
+        new SetupModel(auth, log.Write,
+            () => tailnet?.CheckSetup() ?? new Tailnet.SetupState(false, false, false),
+            () => tailnet?.Host, () => isOn, () => ScreenSwitch.IsOn(settings)),
+        turnOn: TurnOn, allowScreen: () => SetScreenAllowed(true), screenFeature: live != null, icon: icon.Icon);
+
+    // Opened again, the window there is comes to the front.
+    void ShowSetup()
+    {
+        try { setup.Show(); }
+        catch (Exception e) { log.Write("Set up Lid Awake couldn't open: " + e.Message); }
+    }
+
+    void CloseSetup()
+    {
+        try { setup.Current?.Dispose(); }
+        catch (Exception) { }
+    }
+
+    // A turn-on from the tray or the setup window: refused, with a balloon, when a limit is reached.
+    void TurnOn()
+    {
+        if (isOn || !TurnOnAllowed()) return;
+        SetAwake(true);
+        AskForLocation();
     }
 
     protected override void ExitThreadCore()
@@ -342,6 +381,7 @@ sealed class TrayApp : ApplicationContext
         catch (Exception) { }
         try { control?.ReleaseHeld(); }
         catch (Exception) { }
+        CloseSetup();
         base.ExitThreadCore();
     }
 
@@ -708,10 +748,10 @@ sealed class TrayApp : ApplicationContext
         passwordFormOpen = true;
         try
         {
-            using var form = new PasswordForm(auth);
+            // The form writes the activity-log line itself (PhonePassword, shared with the setup window).
+            using var form = new PasswordForm(auth, log.Write);
             if (form.ShowDialog() == DialogResult.OK)
             {
-                log.Write("Phone password changed on the PC");
                 MessageBox.Show("Phone password saved. Every phone was signed out.", "Lid Awake");
             }
         }

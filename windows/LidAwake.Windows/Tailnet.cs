@@ -97,26 +97,60 @@ public sealed class Tailnet
             var json = Run("status --json");
             if (string.IsNullOrWhiteSpace(json)) return;
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("Self", out var self) || self.ValueKind != JsonValueKind.Object) return;
-            var dns = self.TryGetProperty("DNSName", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() ?? "" : "";
-            if (!dns.EndsWith(".ts.net.", StringComparison.OrdinalIgnoreCase)) return;
-            string? userId = null;
-            if (self.TryGetProperty("UserID", out var uid))
-                userId = uid.ValueKind == JsonValueKind.Number ? uid.GetRawText() : uid.ValueKind == JsonValueKind.String ? uid.GetString() : null;
-            if (userId != null
-                && root.TryGetProperty("User", out var users) && users.ValueKind == JsonValueKind.Object
-                && users.TryGetProperty(userId, out var me) && me.ValueKind == JsonValueKind.Object
-                && me.TryGetProperty("LoginName", out var login) && login.ValueKind == JsonValueKind.String
-                && login.GetString() is { Length: > 0 } name)
-            {
-                settings.Set(HostKey, dns.TrimEnd('.').ToLowerInvariant());
-                settings.Set(OwnerKey, name.ToLowerInvariant());
-            }
+            Learn(doc.RootElement);
         }
         catch (Exception) { }
     }
+
+    // What the "Set up Lid Awake" window shows about Tailscale, from one `status --json` (the
+    // same read as Refresh, which it also does): installed, signed in (BackendState "Running"),
+    // and HTTPS certificates on for the account (CertDomains not empty), as on the Mac.
+    public readonly record struct SetupState(bool Installed, bool SignedIn, bool HttpsOn);
+
+    // Slow (it runs tailscale.exe): never on the UI thread. Never throws.
+    public SetupState CheckSetup()
+    {
+        try
+        {
+            var r = exec("status --json");
+            if (r.Missing) return new(false, false, false);
+            if (!r.Ok || string.IsNullOrWhiteSpace(r.Output)) return new(true, false, false);
+            using var doc = JsonDocument.Parse(r.Output);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return new(true, false, false);
+            // A settings file that can't be written doesn't change what Tailscale said.
+            try { Learn(root); }
+            catch (Exception) { }
+            bool running = root.TryGetProperty("BackendState", out var b) && b.ValueKind == JsonValueKind.String && b.GetString() == "Running";
+            bool https = root.TryGetProperty("CertDomains", out var c) && c.ValueKind == JsonValueKind.Array && c.GetArrayLength() > 0;
+            return new(true, running, https);
+        }
+        catch (Exception) { return new(true, false, false); }
+    }
+
+    // The name and owner from a parsed `status --json`, saved together or not at all.
+    void Learn(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("Self", out var self) || self.ValueKind != JsonValueKind.Object) return;
+        var dns = self.TryGetProperty("DNSName", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() ?? "" : "";
+        if (!dns.EndsWith(".ts.net.", StringComparison.OrdinalIgnoreCase)) return;
+        string? userId = null;
+        if (self.TryGetProperty("UserID", out var uid))
+            userId = uid.ValueKind == JsonValueKind.Number ? uid.GetRawText() : uid.ValueKind == JsonValueKind.String ? uid.GetString() : null;
+        if (userId != null
+            && root.TryGetProperty("User", out var users) && users.ValueKind == JsonValueKind.Object
+            && users.TryGetProperty(userId, out var me) && me.ValueKind == JsonValueKind.Object
+            && me.TryGetProperty("LoginName", out var login) && login.ValueKind == JsonValueKind.String
+            && login.GetString() is { Length: > 0 } name)
+        {
+            settings.Set(HostKey, dns.TrimEnd('.').ToLowerInvariant());
+            settings.Set(OwnerKey, name.ToLowerInvariant());
+        }
+    }
+
+    // The Tailscale app itself (the window and tray icon), next to the CLI.
+    public static string AppExe => Path.Combine(Path.GetDirectoryName(Exe)!, "tailscale-ipn.exe");
 
     // Make https://<pc>.ts.net/ reach the page on `port` (section 9), and /live the live socket
     // on LivePort when it is set. Only adds what is missing, and never leaves Funnel (the public

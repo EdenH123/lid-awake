@@ -209,6 +209,6 @@ if ($NoStart) {
 }
 
 Write-Host ''
-Write-Host 'Almost done: right-click the Lid Awake icon by the clock -> Set phone password..., then turn it on.'
+Write-Host 'Almost done: in the Set up Lid Awake window, set a phone password, turn Lid Awake on and scan the code with your phone. (Later: right-click the Lid Awake icon by the clock -> Set up phone...)'
 Wait-ForEnter
 exit 0
