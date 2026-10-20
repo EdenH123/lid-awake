@@ -170,7 +170,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 
 ### What works on Windows so far
 
-- See how the laptop is doing on your phone: battery, memory, processor, network and uptime.
+- See how the laptop is doing on your phone: battery, memory, processor, network (with Wi-Fi signal bars and the network name) and uptime.
 - Keep it running with the lid closed.
 - Turn it off from your phone.
 - A **Turn off after** timer.
@@ -189,7 +189,6 @@ Don't rely on these on Windows. They work on the Mac only, for now.
 - The camera and microphone.
 - Battery and temperature history graphs.
 - **The low-battery and too-hot safety switches.** Lid Awake will **not** turn itself off if the battery runs low or the laptop gets hot, so keep it plugged in.
-- Wi-Fi signal bars.
 
 ### Update or remove it on Windows
 

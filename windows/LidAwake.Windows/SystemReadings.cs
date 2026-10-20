@@ -102,10 +102,13 @@ public sealed class SystemReadings : ISystemReadings
 
             var stats = pick.GetIPStatistics();
             return new NetCounters(pick.Name, pick.NetworkInterfaceType != NetworkInterfaceType.Wireless80211,
-                (ulong)Math.Max(0L, stats.BytesReceived), (ulong)Math.Max(0L, stats.BytesSent));
+                (ulong)Math.Max(0L, stats.BytesReceived), (ulong)Math.Max(0L, stats.BytesSent), pick.Id);
         }
         catch (Exception) { return null; }
     }
+
+    // Native Wifi (WlanReader): null when there is no connected Wi-Fi or the API isn't available.
+    public WifiReading? Wifi(string? adapterId) => WlanReader.Read(adapterId);
 
     static int? BestInterfaceIndex()
     {

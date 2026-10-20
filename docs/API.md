@@ -795,10 +795,10 @@ These come from `SystemInfo.snapshot()`. Two objects, `mac` and `net` (the key i
 
 | Field | Type | Meaning | If unknown |
 |---|---|---|---|
-| `wifi` | string | Wi-Fi network name (the Mac needs Location permission to read it) | omit |
-| `rssi` | integer, dBm | Wi-Fi signal. `0` is never sent | omit |
+| `wifi` | string | Wi-Fi network name (the Mac needs Location permission to read it; Windows sends it when the name is valid UTF-8 and not hidden) | omit |
+| `rssi` | integer, dBm | Wi-Fi signal. `0` is never sent. On Windows it is approximated from the Native Wifi signal quality (0 to 100): `quality / 2 - 100`, so always -100 to -50 | omit |
 | `iface` | string | the network interface in use (for example `en0`) | omit |
-| `wired` | boolean | the interface in use is not Wi-Fi. The page shows Ethernet when `true`, otherwise Wi-Fi (and "Not connected" with no `rssi`; when `os` is `"windows"` and `wired` is `false` with no `rssi`, it reads "Connected" without signal bars) | omit (set `true` on a desktop with no Wi-Fi) |
+| `wired` | boolean | the interface in use is not Wi-Fi. The page shows Ethernet when `true`, otherwise Wi-Fi (and "Not connected" with no `rssi`; when `os` is `"windows"` and `wired` is `false` with no `rssi`, it reads "Connected" without signal bars, which happens when Windows can't read the signal: no WLAN service, or the Native Wifi call failed) | omit (set `true` on a desktop with no Wi-Fi) |
 | `down` | number, bytes per second | received, since the previous status request | omit |
 | `up` | number, bytes per second | sent, since the previous status request | omit |
 

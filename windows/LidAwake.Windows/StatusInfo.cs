@@ -9,6 +9,8 @@ public interface ISystemReadings
     CpuTimes? Cpu();
     DiskReading? Disk();
     NetCounters? Network();     // null: no network interface in use
+    // The connected Wi-Fi, preferring the adapter with this NetworkInterface.Id. null: no reading.
+    WifiReading? Wifi(string? adapterId);
     long UptimeSeconds();
     int ScreenWidth();          // 0 when unknown
     string HostName();
@@ -26,8 +28,9 @@ public readonly record struct CpuTimes(ulong Idle, ulong Kernel, ulong User);
 
 public readonly record struct DiskReading(long Free, long Total);
 
-// Bytes through the network interface in use since it came up.
-public readonly record struct NetCounters(string Iface, bool Wired, ulong Received, ulong Sent);
+// Bytes through the network interface in use since it came up. Id is NetworkInterface.Id (the
+// adapter GUID in braces), used to read that adapter's Wi-Fi signal; null when unknown.
+public readonly record struct NetCounters(string Iface, bool Wired, ulong Received, ulong Sent, string? Id = null);
 
 // Processor load between two calls, like the Mac: the first call has no answer.
 public sealed class CpuMeter
@@ -163,6 +166,8 @@ public sealed class StatusInfo
         if (readings.Disk() is { } d) { mac["diskFree"] = d.Free; mac["diskTotal"] = d.Total; }
         var times = readings.Cpu();
         var netNow = readings.Network();
+        // Wi-Fi signal only for an adapter in use that isn't wired; outside the lock (a native call).
+        var wifi = netNow is { Wired: false } w ? ReadWifi(w.Id) : null;
         var netInfo = new Dictionary<string, object?>();
         lock (gate)
         {
@@ -171,6 +176,11 @@ public sealed class StatusInfo
             {
                 netInfo["iface"] = n.Iface;
                 netInfo["wired"] = n.Wired;
+                if (wifi is { } r)
+                {
+                    netInfo["rssi"] = RssiFromQuality(r.Quality);
+                    if (!string.IsNullOrEmpty(r.Ssid)) netInfo["wifi"] = r.Ssid;
+                }
                 if (net.Rates(n, now) is { } rate) { netInfo["down"] = rate.Down; netInfo["up"] = rate.Up; }
             }
             else net.Reset();
@@ -178,6 +188,18 @@ public sealed class StatusInfo
         s["mac"] = mac;
         s["net"] = netInfo;
         return s;
+    }
+
+    // Windows gives Wi-Fi signal as a quality from 0 to 100, not dBm. The usual approximation:
+    // quality = 2 × (dBm + 100), so dBm = quality / 2 − 100, from −100 (0) to −50 (100). A whole
+    // number, and never 0, as section 6.5 asks.
+    public static int RssiFromQuality(int quality) => Math.Clamp(Math.Clamp(quality, 0, 100) / 2 - 100, -100, -50);
+
+    // A failing Wi-Fi reading only leaves rssi and wifi out; the rest of the status is unaffected.
+    WifiReading? ReadWifi(string? adapterId)
+    {
+        try { return readings.Wifi(adapterId); }
+        catch (Exception) { return null; }
     }
 
     // Flag 128 means no battery; 255 means Windows can't tell; a percent over 100 is unknown.

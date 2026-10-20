@@ -10,6 +10,10 @@ public sealed class FakeReadings : ISystemReadings
     public CpuTimes? CpuNow;
     public DiskReading? DiskNow = new(200_000_000_000, 500_000_000_000);
     public NetCounters? NetNow;
+    public WifiReading? WifiNow;
+    public bool WifiThrows;
+    public int WifiCalls;
+    public string? WifiAskedFor;
     public long Uptime = 90_000;
     public int Width = 1920;
     public string Host = "DESKTOP-TEST";
@@ -20,6 +24,13 @@ public sealed class FakeReadings : ISystemReadings
     public CpuTimes? Cpu() => CpuNow;
     public DiskReading? Disk() => DiskNow;
     public NetCounters? Network() => NetNow;
+    public WifiReading? Wifi(string? adapterId)
+    {
+        WifiCalls++;
+        WifiAskedFor = adapterId;
+        if (WifiThrows) throw new InvalidOperationException("Wi-Fi reading failed");
+        return WifiNow;
+    }
     public long UptimeSeconds() => Uptime;
     public int ScreenWidth() => Width;
     public string HostName() => Host;
@@ -80,7 +91,10 @@ public class StatusInfoTests
         Assert.Equal(JsonValueKind.Object, mac.ValueKind);
         Assert.Equal(JsonValueKind.Number, mac.GetProperty("memTotal").ValueKind);
         Assert.Equal(JsonValueKind.Number, mac.GetProperty("uptime").ValueKind);
-        Assert.Equal(JsonValueKind.Object, s.GetProperty("net").ValueKind);
+        var net = s.GetProperty("net");
+        Assert.Equal(JsonValueKind.Object, net.ValueKind);
+        if (net.TryGetProperty("rssi", out var rssi)) Assert.Equal(JsonValueKind.Number, rssi.ValueKind);
+        if (net.TryGetProperty("wifi", out var wifi)) Assert.Equal(JsonValueKind.String, wifi.ValueKind);
         // 6.6
         Assert.Equal(JsonValueKind.String, s.GetProperty("os").ValueKind);
         Assert.Equal(JsonValueKind.Array, s.GetProperty("features").ValueKind);
@@ -458,7 +472,7 @@ public class StatusInfoTests
         Assert.False(first.GetProperty("wired").GetBoolean());
         Assert.False(first.TryGetProperty("down", out _));
         Assert.False(first.TryGetProperty("up", out _));
-        // No Wi-Fi signal is measured on Windows (yet), so none is sent: `rssi` is omitted.
+        // No Wi-Fi reading (the fake has none): `rssi` and `wifi` are omitted.
         Assert.False(first.TryGetProperty("rssi", out _));
         Assert.False(first.TryGetProperty("wifi", out _));
 
@@ -477,6 +491,108 @@ public class StatusInfoTests
         var net = s.GetProperty("net");
         Assert.Equal(JsonValueKind.Object, net.ValueKind);
         Assert.Empty(net.EnumerateObject());
+    }
+
+    // ---- Wi-Fi signal and network name ----
+
+    static JsonElement WifiNet(WifiReading? reading, string? id = null) =>
+        Run(new FakeReadings { NetNow = new NetCounters("Wi-Fi", false, 0, 0, id), WifiNow = reading }).GetProperty("net");
+
+    [Theory]
+    [InlineData(100, -50)]
+    [InlineData(0, -100)]
+    [InlineData(60, -70)]
+    [InlineData(90, -55)]
+    [InlineData(1, -100)]
+    [InlineData(150, -50)]   // out of range: clamped
+    [InlineData(-5, -100)]
+    public void RssiIsTheQualityAsApproximateDbm(int quality, int dbm)
+    {
+        Assert.Equal(dbm, StatusInfo.RssiFromQuality(quality));
+        if (quality is >= 0 and <= 100)
+        {
+            var rssi = WifiNet(new WifiReading(quality, "Home")).GetProperty("rssi");
+            Assert.Equal(JsonValueKind.Number, rssi.ValueKind);
+            Assert.Equal(dbm, rssi.GetInt32());
+        }
+    }
+
+    [Fact]
+    public void TheNetworkNameIsSentAsWifiWhenWindowsGivesIt()
+    {
+        var net = WifiNet(new WifiReading(80, "Café Wi-Fi"));
+        Assert.Equal("Café Wi-Fi", net.GetProperty("wifi").GetString());
+        Assert.Equal(-60, net.GetProperty("rssi").GetInt32());
+        Assert.False(net.GetProperty("wired").GetBoolean());
+    }
+
+    [Fact]
+    public void WithoutANetworkNameOnlyRssiIsSent()
+    {
+        foreach (var ssid in new[] { null, "" })
+        {
+            var net = WifiNet(new WifiReading(70, ssid));
+            Assert.Equal(-65, net.GetProperty("rssi").GetInt32());
+            Assert.False(net.TryGetProperty("wifi", out _));
+        }
+    }
+
+    [Fact]
+    public void NoWifiReadingOmitsRssiAndWifi()
+    {
+        var net = WifiNet(null);
+        Assert.False(net.TryGetProperty("rssi", out _));
+        Assert.False(net.TryGetProperty("wifi", out _));
+        Assert.Equal("Wi-Fi", net.GetProperty("iface").GetString());
+        Assert.False(net.GetProperty("wired").GetBoolean());
+    }
+
+    [Fact]
+    public void AWiredAdapterNeverSendsRssiAndIsNotAskedForWifi()
+    {
+        var fake = new FakeReadings { NetNow = new NetCounters("Ethernet", true, 0, 0, "{x}"), WifiNow = new WifiReading(90, "Home") };
+        var net = Run(fake).GetProperty("net");
+        Assert.False(net.TryGetProperty("rssi", out _));
+        Assert.False(net.TryGetProperty("wifi", out _));
+        Assert.True(net.GetProperty("wired").GetBoolean());
+        Assert.Equal(0, fake.WifiCalls);
+        // No interface at all: not asked either.
+        var none = new FakeReadings { NetNow = null, WifiNow = new WifiReading(90, "Home") };
+        Assert.Empty(Run(none).GetProperty("net").EnumerateObject());
+        Assert.Equal(0, none.WifiCalls);
+    }
+
+    [Fact]
+    public void TheWifiReadingIsForTheAdapterInUse()
+    {
+        var fake = new FakeReadings
+        {
+            NetNow = new NetCounters("Wi-Fi", false, 0, 0, "{6B29FC40-CA47-1067-B31D-00DD010662DA}"),
+            WifiNow = new WifiReading(50, "Home"),
+        };
+        Run(fake);
+        Assert.Equal(1, fake.WifiCalls);
+        Assert.Equal("{6B29FC40-CA47-1067-B31D-00DD010662DA}", fake.WifiAskedFor);
+    }
+
+    [Fact]
+    public void AFailingWifiReadingLeavesTheRestOfTheStatus()
+    {
+        var fake = new FakeReadings
+        {
+            NetNow = new NetCounters("Wi-Fi", false, 1000, 500),
+            WifiThrows = true,
+            CpuNow = new CpuTimes(0, 0, 0),
+            PowerNow = new PowerReading(0, 1, 80, 7200),
+        };
+        var s = Run(fake);
+        AssertEveryKeyWithItsKind(s);
+        Assert.Equal(80, s.GetProperty("battery").GetInt32());
+        var net = s.GetProperty("net");
+        Assert.Equal("Wi-Fi", net.GetProperty("iface").GetString());
+        Assert.False(net.GetProperty("wired").GetBoolean());
+        Assert.False(net.TryGetProperty("rssi", out _));
+        Assert.False(net.TryGetProperty("wifi", out _));
     }
 
     // ---- the real Windows readings ----
