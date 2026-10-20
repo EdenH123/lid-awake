@@ -638,11 +638,11 @@ public class StatusInfoTests
     }
 
     [Fact]
-    public void RealCpuAppearsOnTheSecondCallAndIsAPercentage()
+    public async Task RealCpuAppearsOnTheSecondCallAndIsAPercentage()
     {
         var info = new StatusInfo(new SystemReadings());
         Run(info.Build(true));
-        Thread.Sleep(400);
+        await Task.Delay(400);
         var mac = Run(info.Build(true)).GetProperty("mac");
         // GetSystemTimes always works and 400 ms is long enough for the counters to advance.
         Assert.True(mac.TryGetProperty("cpu", out var load));

@@ -555,7 +555,7 @@ public class PhoneAppsTests : IDisposable
     }
 
     [Fact]
-    public void TheRealStartRefusesAnythingButAnExistingExe()
+    public async Task TheRealStartRefusesAnythingButAnExistingExe()
     {
         Directory.CreateDirectory(folder);
         var script = Path.Combine(folder, "run.bat");
@@ -566,7 +566,7 @@ public class PhoneAppsTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => actionsReal.Start(script));
         Assert.Throws<InvalidOperationException>(() => actionsReal.Start(document));
         Assert.Throws<InvalidOperationException>(() => actionsReal.Start(@"C:\definitely\not\here.exe"));
-        Thread.Sleep(500);
+        await Task.Delay(500);
         Assert.False(File.Exists(Path.Combine(folder, "ran.txt")));   // the script never ran
     }
 
@@ -579,7 +579,7 @@ public class PhoneAppsTests : IDisposable
     }
 
     [Fact]
-    public void TheRealQuitOnAProgramWithNoWindowAsksAndNeverKillsIt()
+    public async Task TheRealQuitOnAProgramWithNoWindowAsksAndNeverKillsIt()
     {
         var ping = Path.Combine(Environment.SystemDirectory, "PING.EXE");
         using var process = Process.Start(new ProcessStartInfo(ping, "-n 30 127.0.0.1")
@@ -590,9 +590,9 @@ public class PhoneAppsTests : IDisposable
         })!;
         try
         {
-            Thread.Sleep(300);
+            await Task.Delay(300);
             Assert.Equal(QuitResult.NoWindow, new WindowActions().Quit(ping));
-            Thread.Sleep(300);
+            await Task.Delay(300);
             Assert.False(process.HasExited);   // asked politely only: nothing killed it
         }
         finally

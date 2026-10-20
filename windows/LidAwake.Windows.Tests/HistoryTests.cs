@@ -154,9 +154,9 @@ public sealed class HistoryTests : IDisposable
         var store = NewStore();
         using var inside = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
-        var sampler = new HistorySampler(store, new FakeReadings(), () => { inside.Set(); release.Wait(5000); return null; });
+        var sampler = new HistorySampler(store, new FakeReadings(), () => { inside.Set(); release.Wait(TestThreads.Patience); return null; });
         var first = Task.Run(sampler.Sample);
-        Assert.True(inside.Wait(5000));
+        Assert.True(await TestThreads.Until(() => inside.IsSet));
         sampler.Sample();  // returns at once: one is already running
         release.Set();
         await first;
@@ -164,14 +164,13 @@ public sealed class HistoryTests : IDisposable
     }
 
     [Fact]
-    public void StartTakesAFirstSampleAtOnceAndDisposeStopsIt()
+    public async Task StartTakesAFirstSampleAtOnceAndDisposeStopsIt()
     {
         var store = NewStore();
         using (var sampler = new HistorySampler(store, new FakeReadings { PowerNow = new PowerReading(0, 0, 40, -1) }, () => null))
         {
             sampler.Start();
-            var deadline = DateTime.UtcNow.AddSeconds(10);
-            while (store.Count == 0 && DateTime.UtcNow < deadline) Thread.Sleep(20);
+            Assert.True(await TestThreads.Until(() => store.Count > 0));
             Assert.Equal(1, store.Count);
         }
     }

@@ -345,11 +345,11 @@ public class SafetyTests : IDisposable
         {
             if (Interlocked.Increment(ref running) > 1) Interlocked.Increment(ref overlapped);
             lock (runs) runs.Add(read);
-            if (runs.Count == 1) { inRun.Set(); release.Wait(TimeSpan.FromSeconds(10)); }
+            if (runs.Count == 1) { inRun.Set(); release.Wait(TestThreads.Patience); }
             Interlocked.Decrement(ref running);
         });
         var first = Task.Run(() => checks.Request(false));
-        Assert.True(inRun.Wait(TimeSpan.FromSeconds(10)));
+        Assert.True(await TestThreads.Until(() => inRun.IsSet));
         // Asked while the first run is going: both return at once, and share one more run that reads.
         checks.Request(true);
         checks.Request(false);

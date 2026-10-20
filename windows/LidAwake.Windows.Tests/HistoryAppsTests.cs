@@ -7,7 +7,7 @@ public sealed class FakeBatteryReport : IBatteryReport
 {
     public string? Xml;
     public int Calls;
-    public string? ReadXml() { Calls++; return Xml; }
+    public string? ReadXml() { Interlocked.Increment(ref Calls); return Xml; }
 }
 
 // Per-program processor history (docs/API.md 5.7) and the battery backfill: the new row format,
@@ -338,20 +338,25 @@ public sealed class HistoryAppsTests : IDisposable
 
     // The sampler asks for the report at its first sample and then not again within a day.
     [Fact]
-    public void TheSamplerBackfillsAtStartThenOnceADay()
+    public async Task TheSamplerBackfillsAtStartThenOnceADay()
     {
         var store = NewStore();
         var report = new FakeBatteryReport();
         var sampler = new HistorySampler(store, new FakeReadings { PowerNow = new PowerReading(0, 0, 70, -1) }, () => null, report: report);
         sampler.Sample();
-        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref report.Calls) == 1, 5000));
-        Thread.Sleep(200);  // the first one finishes
+        Assert.True(await TestThreads.Until(() => Volatile.Read(ref report.Calls) == 1));
         now += 3600;
-        sampler.Sample();
+        sampler.Sample();  // within a day: not asked (whether or not the first has finished)
         now += 23 * 3600;
-        sampler.Sample();
-        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref report.Calls) == 2, 5000));
-        Thread.Sleep(200);
+        // A day later it is asked again, once the first backfill has finished in the background
+        // (a sample while it still runs skips it, and the next sample tries again).
+        Assert.True(await TestThreads.Until(() =>
+        {
+            sampler.Sample();
+            return Volatile.Read(ref report.Calls) == 2;
+        }));
+        sampler.Sample();  // the same day again: not asked
+        await Task.Delay(200);
         Assert.Equal(2, Volatile.Read(ref report.Calls));
     }
 }

@@ -457,7 +457,7 @@ public class ClaudeUsageTests : IDisposable
     // A program that waits, with a child that waits too and then writes a file. The time limit
     // stops both: the file never appears. With time enough, it does (the command really works).
     [Fact]
-    public void TheTimeLimitStopsTheWholeTree()
+    public async Task TheTimeLimitStopsTheWholeTree()
     {
         const string sleeper = "/d /c cmd /d /c \"ping -n 4 127.0.0.1 >nul & echo late>marker.txt\"";
         var slow = NewFolder();
@@ -466,7 +466,8 @@ public class ClaudeUsageTests : IDisposable
         Assert.True(r.Started);
         Assert.True(r.TimedOut);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), "took " + watch.Elapsed);
-        Thread.Sleep(6000);
+        // The child would have written its file after about 3 seconds; this is time enough to see it doesn't.
+        await Task.Delay(6000);
         Assert.False(File.Exists(Path.Combine(slow, "marker.txt")), "the child kept running after the time limit");
 
         var patient = NewFolder();

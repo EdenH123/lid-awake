@@ -502,27 +502,26 @@ public class LidScreenTests : IDisposable
     }
 
     [Fact]
-    public void ACallThatFinishesLateStillFinishesBeforeTheNextOneStarts()
+    public async Task ACallThatFinishesLateStillFinishesBeforeTheNextOneStarts()
     {
         var calls = new OrderedCalls();
         var order = new List<string>();
         using var release = new ManualResetEventSlim(false);
-        using var secondRan = new ManualResetEventSlim(false);
         Assert.Throws<TimeoutException>(() => calls.Run(() =>
         {
             release.Wait();
             lock (order) order.Add("late");
             return 1;
         }, TimeSpan.FromMilliseconds(100)));
-        _ = Task.Run(() => calls.Run(() =>
+        var second = Task.Run(() => calls.Run(() =>
         {
             lock (order) order.Add("second");
-            secondRan.Set();
             return 2;
         }, TimeSpan.FromSeconds(30)));
-        Assert.False(secondRan.Wait(300));  // still waiting behind the late one
+        await Task.Delay(300);
+        lock (order) Assert.Empty(order);  // still waiting behind the late one
         release.Set();
-        Assert.True(secondRan.Wait(30_000));
+        Assert.Equal(2, await second.WaitAsync(TestThreads.Patience));
         lock (order) Assert.Equal(new[] { "late", "second" }, order);
     }
 

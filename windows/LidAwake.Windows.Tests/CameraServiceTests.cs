@@ -500,20 +500,20 @@ public sealed class CameraServiceTests : IDisposable
     }
 
     [Fact]
-    public void DisposeWaitsOnlyAboutThreeSecondsForTheDevice()
+    public async Task DisposeWaitsOnlyAboutThreeSecondsForTheDevice()
     {
         var stuck = new StuckHardware();
         var service = new CameraService(tickets, () => allowed, stuck, encoders, talk, log, () => now, a => Task.Run(a));
         var phone = new FakeCameraSocket("s");
         service.Receive(phone, Json($"{{\"camera\":true,\"ticket\":\"{tickets.Issue("s")}\"}}"));
-        Assert.True(stuck.Entered.Wait(TimeSpan.FromSeconds(10)));
+        Assert.True(await TestThreads.Until(() => stuck.Entered.IsSet));
         var watch = System.Diagnostics.Stopwatch.StartNew();
         service.Dispose();
         Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(2.5), TimeSpan.FromSeconds(6));
         Assert.False(service.IsOpen(phone));
         stuck.Release.Set();
         // The open that finished after everyone left is closed at once.
-        Assert.True(SpinWait.SpinUntil(() => stuck.Started?.Disposed == true, TimeSpan.FromSeconds(10)));
+        Assert.True(await TestThreads.Until(() => stuck.Started?.Disposed == true));
     }
 
     // A camera whose open hangs until the test lets it go.

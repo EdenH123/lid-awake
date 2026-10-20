@@ -7,16 +7,8 @@ public class ScreenFeedTests
 {
     static readonly TimeSpan Soon = TimeSpan.FromSeconds(5);
 
-    static async Task<bool> Eventually(Func<bool> condition, TimeSpan? within = null)
-    {
-        var end = DateTime.UtcNow + (within ?? Soon);
-        while (DateTime.UtcNow < end)
-        {
-            if (condition()) return true;
-            await Task.Delay(20);
-        }
-        return condition();
-    }
+    // Background work that should happen at once, with time enough for a busy runner.
+    static Task<bool> Eventually(Func<bool> condition) => TestThreads.Until(condition);
 
     [Fact]
     public async Task CaptureStartsWithAWatcherAndStopsAfterTheLastOneLeaves()

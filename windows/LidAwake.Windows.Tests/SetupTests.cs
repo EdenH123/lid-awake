@@ -38,11 +38,11 @@ public class SetupTests : IDisposable
                             bool awake = false) =>
         new(auth, log == null ? null : new Action<string>(log.Add), () => state, () => host, () => awake, () => false);
 
-    static SetupModel.Checked Check(SetupModel model)
+    static async Task<SetupModel.Checked> Check(SetupModel model)
     {
         var task = model.StartCheck();
         Assert.NotNull(task);
-        var result = task!.Result;
+        var result = await task!;
         model.Apply(result);
         return result;
     }
@@ -69,10 +69,10 @@ public class SetupTests : IDisposable
     }
 
     [Fact]
-    public void QrCodeHoldsThePageAddress()
+    public async Task QrCodeHoldsThePageAddress()
     {
         var model = Model(NewAuth(), new(true, true, true));
-        Check(model);
+        await Check(model);
         Assert.Equal("https://" + Host + "/", model.PageUrl);
         using var bitmap = QrImage.Render(model.PageUrl, QrImage.TargetSize);
         Assert.NotNull(bitmap);
@@ -117,7 +117,7 @@ public class SetupTests : IDisposable
     }
 
     [Fact]
-    public void NoAddressGivesNoCode()
+    public async Task NoAddressGivesNoCode()
     {
         Assert.Null(QrImage.Render(null, QrImage.TargetSize));
         Assert.Null(QrImage.Render("", QrImage.TargetSize));
@@ -126,14 +126,14 @@ public class SetupTests : IDisposable
 
         // Not signed in: no address, even when a name is remembered from before.
         var model = Model(NewAuth(), new(true, false, false));
-        Check(model);
+        await Check(model);
         Assert.Null(model.Host);
         Assert.Null(model.PageUrl);
         Assert.False(model.Ready);
 
         // Signed in, but the name isn't known yet.
         var unknown = Model(NewAuth(), new(true, true, true), host: null);
-        Check(unknown);
+        await Check(unknown);
         Assert.Null(unknown.PageUrl);
     }
 
@@ -256,23 +256,23 @@ public class SetupTests : IDisposable
     // ---- What the steps say ----
 
     [Fact]
-    public void TurnOnButtonOnlyWhileOffAndReady()
+    public async Task TurnOnButtonOnlyWhileOffAndReady()
     {
         var auth = NewAuth();
         auth.SetPassword(Good);
         var off = Model(auth, new(true, true, true));
-        Check(off);
+        await Check(off);
         Assert.True(off.Ready);
         Assert.True(off.ShowsTurnOn);
         Assert.Equal("Turn Lid Awake on: the page only opens while it's on.", off.AwakeStep);
 
         var on = Model(auth, new(true, true, true), awake: true);
-        Check(on);
+        await Check(on);
         Assert.False(on.ShowsTurnOn);
         Assert.Equal("Lid Awake is on, so the page is open.", on.AwakeStep);
 
         var noHttps = Model(auth, new(true, true, false));
-        Check(noHttps);
+        await Check(noHttps);
         Assert.False(noHttps.ShowsTurnOn);
         Assert.StartsWith("In Tailscale's settings, turn on MagicDNS and HTTPS Certificates", noHttps.AddressDetail);
     }

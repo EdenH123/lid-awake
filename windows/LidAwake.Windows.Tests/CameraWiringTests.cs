@@ -212,16 +212,8 @@ public class CameraSocketTests
 
     static CameraFrame Frame(long micros) => new(new byte[1280 * 720 * 3 / 2], 1280, 720, micros);
 
-    static async Task<bool> Until(Func<bool> condition)
-    {
-        var end = DateTime.UtcNow + Soon;
-        while (DateTime.UtcNow < end)
-        {
-            if (condition()) return true;
-            await Task.Delay(25);
-        }
-        return condition();
-    }
+    // Background work that should happen at once, with time enough for a busy runner.
+    static Task<bool> Until(Func<bool> condition) => TestThreads.Until(condition);
 
     async Task<LiveClient> OpenCamera(LiveHarness h, string? cookie = null, string? token = null)
     {

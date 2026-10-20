@@ -151,25 +151,25 @@ public class TailnetTests : IDisposable
     }
 
     [Fact]
-    public void AMissingMappingAfterServeIsReported()
+    public async Task AMissingMappingAfterServeIsReported()
     {
         // Tailscale accepted the command but serve status still shows nothing of ours.
         var t = NewTailnet(_ => "{}");
         var reported = new List<string>();
         t.NotPublished = reported.Add;
         Assert.NotNull(t.Serve(8787));
-        t.SetServed(true, 8787).Wait();
+        await t.SetServed(true, 8787);
         Assert.Single(reported);
     }
 
     [Fact]
-    public void ALinkFromTailscaleIsReportedWithWhatItPrinted()
+    public async Task ALinkFromTailscaleIsReportedWithWhatItPrinted()
     {
         const string consent = "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=n1234\n";
         var t = ServingTailnet(consent);
         var reported = new List<string>();
         t.NotPublished = reported.Add;
-        t.SetServed(true, 8787).Wait();
+        await t.SetServed(true, 8787);
         var said = Assert.Single(reported);
         Assert.Contains("https://login.tailscale.com/f/serve?node=n1234", said);
         // On one line, for the activity log.
@@ -177,7 +177,7 @@ public class TailnetTests : IDisposable
     }
 
     [Fact]
-    public void ThePagesOwnAddressIsNotALinkToFollow()
+    public async Task ThePagesOwnAddressIsNotALinkToFollow()
     {
         // What `serve --bg` prints when it works: the page's own address and where it points.
         const string ok = "Available within your tailnet:\n\nhttps://desk-pc.tail1234.ts.net/\n|-- proxy http://127.0.0.1:8787\n\nServe started and running in the background.";
@@ -186,7 +186,7 @@ public class TailnetTests : IDisposable
         var t = ServingTailnet(ok);
         var reported = new List<string>();
         t.NotPublished = reported.Add;
-        t.SetServed(true, 8787).Wait();
+        await t.SetServed(true, 8787);
         Assert.Empty(reported);
     }
 

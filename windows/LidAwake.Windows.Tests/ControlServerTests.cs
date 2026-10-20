@@ -277,7 +277,7 @@ public class ControlServerTests : IDisposable
         ScreenOn();
         settings.Set("remoteControl", false);  // view only
         Assert.Equal((204, ""), await Send("/power", """{"action":"displayoff"}""", cookie));
-        Assert.True(SpinWait.SpinUntil(() => power.Offs == 1, 5000));  // broadcast in the background
+        await power.OffsReach(1).WaitAsync(TestThreads.Patience);  // broadcast in the background
         Assert.True(control.ScreenOff);
         Assert.Contains(accessLog.Recent(5), l => l.EndsWith("  Display turned off from the phone · iPhone", StringComparison.Ordinal));
         Assert.True(JsonDocument.Parse(JsonSerializer.Serialize(status.Build(true))).RootElement.GetProperty("screenOff").GetBoolean());
@@ -305,7 +305,7 @@ public class ControlServerTests : IDisposable
         Assert.Equal((204, ""), await Send("/power", """{"action":"lock"}""", cookie));
         lid = false;
         Assert.Equal((204, ""), await Send("/power", """{"action":"displayoff"}""", cookie));
-        Assert.True(SpinWait.SpinUntil(() => power.Offs == 1, 5000));
+        await power.OffsReach(1).WaitAsync(TestThreads.Patience);
     }
 
     [Fact]

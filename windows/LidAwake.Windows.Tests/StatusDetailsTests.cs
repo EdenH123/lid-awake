@@ -184,11 +184,7 @@ public class StatusDetailsTests
             });
             Assert.Equal(TimeSpan.FromSeconds(10), Tailnet.PeersEvery);
             string? link = null;
-            for (int i = 0; i < 200 && link == null; i++)
-            {
-                link = tailnet.Link("100.64.0.2");
-                if (link == null) await Task.Delay(25);
-            }
+            await TestThreads.Until(() => (link = tailnet.Link("100.64.0.2")) != null);
             Assert.Equal("Through a relay in Paris", link);
             for (int i = 0; i < 20; i++) Assert.Equal("Direct · same Wi-Fi", tailnet.Link("100.101.102.103"));
             Assert.Null(tailnet.Link(null));
@@ -590,7 +586,7 @@ public sealed class StatusLinkTests : IDisposable
             Assert.False((await Status("100.64.0.2")).TryGetProperty("link", out _));
             Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"took {clock.Elapsed}");
         }
-        for (int i = 0; i < 100 && Volatile.Read(ref runs) == 0; i++) await Task.Delay(20);
+        Assert.True(await TestThreads.Until(() => Volatile.Read(ref runs) > 0));
         Assert.Equal(1, Volatile.Read(ref runs));  // one read at a time, still waiting for Tailscale
 
         // Tailscale answers: the next status says how this phone connects.

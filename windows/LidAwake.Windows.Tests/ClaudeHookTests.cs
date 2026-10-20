@@ -79,10 +79,17 @@ public class ClaudeHookTests : IDisposable
         Assert.NotEmpty(o.Entries);
     }
 
-    // A stdin that never ends doesn't hold the hook up.
+    // A stdin that never ends doesn't hold the hook up. It ends when the test is done with it, so
+    // the thread-pool thread that reads it isn't held for the rest of the run.
     sealed class NeverEnds : Stream
     {
-        public override int Read(byte[] buffer, int offset, int count) { Thread.Sleep(Timeout.Infinite); return 0; }
+        readonly ManualResetEventSlim done = new();
+        public override int Read(byte[] buffer, int offset, int count) { done.Wait(); return 0; }
+        protected override void Dispose(bool disposing)
+        {
+            done.Set();
+            base.Dispose(disposing);
+        }
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
@@ -98,7 +105,8 @@ public class ClaudeHookTests : IDisposable
     public void AStdinThatNeverEndsIsGivenUpOn()
     {
         var watch = Stopwatch.StartNew();
-        Assert.Null(ClaudeHook.ReadInput(new NeverEnds(), wait: TimeSpan.FromMilliseconds(300)));
+        using var stdin = new NeverEnds();
+        Assert.Null(ClaudeHook.ReadInput(stdin, wait: TimeSpan.FromMilliseconds(300)));
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5));
     }
 
