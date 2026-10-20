@@ -320,9 +320,11 @@ public sealed class HistoryStore
     }
 
     // To a temp file of its own first, flushed to the disk, then moved over the old one, so a
-    // crash or power cut mid-write can't leave a truncated history. Never throws; false when it
-    // failed (the old file is left as it was, and the temp file is removed).
-    static bool WriteAtomic(string path, string text)
+    // crash or power cut mid-write can't leave a truncated file. Never throws; false when it
+    // failed (the old file is left as it was, and the temp file is removed). A temp name of its
+    // own each time, so writers at once never share one: also for Claude's usage file and Claude
+    // Code's settings (status lines, hooks, the tray; ClaudeUsage, ClaudeSettingsFile).
+    internal static bool WriteAtomic(string path, string text)
     {
         var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
         try

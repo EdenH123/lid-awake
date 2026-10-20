@@ -391,7 +391,7 @@ public sealed class WebPush : IDisposable
 }
 
 // The alerts the tray sends about Lid Awake itself, with the Mac's thresholds and wording, "PC"
-// for "Mac" (main.swift stopWithAlert and checkAlerts). Windows sends no Claude alerts.
+// for "Mac" (main.swift stopWithAlert and checkAlerts), and the Claude usage one (Claude, below).
 // `send(kind, title, body)` is WebPush.Send; `power` is GetSystemPowerStatus, `batteryTemp` the
 // battery's own sensor (HeatSensor.Latest.Battery, never a thermal zone), `heatGuard` the switch.
 public sealed class PhoneAlerts
@@ -409,6 +409,9 @@ public sealed class PhoneAlerts
     readonly object gate = new();
     DateTimeOffset onSince;
     bool lowBatteryAlerted, warmAlerted;
+
+    // Claude plan usage at 90%, checked with the others (ClaudeUsageAlert). None: no claudeUsage.
+    public ClaudeUsageAlert? Claude { get; set; }
 
     public PhoneAlerts(Func<string, string, string, Task> send, Func<PowerReading?> power, Func<double?> batteryTemp,
                        Func<bool> heatGuard, Func<DateTimeOffset>? now = null)
@@ -476,6 +479,8 @@ public sealed class PhoneAlerts
                 else if (celsius < Limits.MaxBatteryTemp - WarmRearmUnder) warmAlerted = false;
             }
         }
+        try { Claude?.Check(SendQuietly); }
+        catch (Exception) { }
     }
 
     Task SendQuietly(string kind, string title, string body)

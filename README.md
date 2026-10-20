@@ -195,6 +195,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - Face ID or fingerprint sign-in. On your phone: the gear ⚙︎ → turn on **Face ID** (or fingerprint), then type your password once more. The laptop shows **Face ID or fingerprint added to Lid Awake** at the tray. To remove one, use the tray icon → **Face ID and fingerprint** → click the device. Setting a new phone password removes them all.
 - Open, switch to and quit programs from your phone. Right-click the Lid Awake icon, choose **Apps on phone…**, and tick the programs from the Start menu to show on the phone's Apps page. Programs that are open but not ticked show in the phone's dock.
 - Alerts on your phone: the laptop turned off (timer or safety limit), battery low, getting warm (on laptops that report a battery temperature), and each new sign-in. Turn them on in the app: gear ⚙︎ → **Alerts**. On an iPhone, the app must be on the Home Screen first.
+- Claude: your Claude plan usage on the phone's Status page and in the tray (hover over the Lid Awake icon, or open its menu), and phone alerts when you reach 90% of a limit, and when Claude Code finishes or needs you while you're away from the laptop. See **Claude on Windows** below.
 - Watching the screen live. Tick **Allow screen from phone** in the tray menu first (it starts off). Turning it off, or turning Lid Awake off, closes the picture on your phone at once. If the graphics card's video encoder fails, Lid Awake uses Windows' own instead, for the screen and the camera alike, until it starts again.
 - Using the phone as trackpad and keyboard, and locking the PC or turning its screen off from the phone. Turning on **Allow screen from phone** also allows control, until you change **Allow control from phone** in the tray menu yourself (as on the Mac): if you only want to watch, untick it. **Allow control from phone** is greyed out while screen viewing is off. Windows doesn't let any program control a window that runs as administrator, the "Do you want to allow…" prompt, or the lock screen, so do those at the PC.
 - On your phone, as on the Mac: how your phone reaches the laptop (**Connection**: direct on the same Wi-Fi, over the internet, or through a relay), how warm the laptop is (Normal, Warm, Hot, Critical, on laptops with a thermal zone), when the battery will be full while charging, the laptop's own name, and the launch screen when you open the app from your iPhone's Home Screen. After you turn Lid Awake off, your phone still shows **Lid Awake is off** for a few seconds before the address goes away.
@@ -209,11 +210,28 @@ Many laptops switch the built-in screen off when you close the lid, and Windows 
 
 What Lid Awake does for you: while someone watches the screen from the phone, it stops Windows from turning the display off after a while. With the lid closed it also turns the built-in screen's brightness down to the lowest level, and puts it back when you open the lid, turn Lid Awake off, quit it, or sign out. If Lid Awake is stopped by a crash with the lid closed, it puts the brightness back the next time it starts. Some laptops don't let Windows change the brightness; then Lid Awake leaves it alone and says so once in the activity log.
 
+### Claude on Windows
+
+If you use Claude Code on the laptop, Lid Awake shows your plan usage: on the phone's Status page, in the tray menu (**Claude: Session 59%, resets 15:10 · Week 84%, …**) and, while **Show Claude usage by the clock** is ticked, when you hover over the Lid Awake icon. Lid Awake asks Claude Code for the numbers every few minutes ("/usage", which sends no message and uses none of your plan).
+
+For the usage after every reply and the "Claude finished" and "Claude needs you" alerts, Claude Code has to tell Lid Awake. **This changes Claude Code's settings file** (`.claude\settings.json` in your user folder), so Lid Awake only does it when you ask:
+
+- the installer's last step asks **Turn it on? [Y/n]** when Claude Code is on the laptop, or
+- right-click the Lid Awake icon → **Claude alerts and usage from Claude Code…**.
+
+Lid Awake first saves a copy of the file as `settings.json.lidawake-backup` (later copies get the date and time added; none is ever overwritten), then adds two hooks (Stop and Notification) and a status line, and changes nothing else. If you already have your own status line, it stays; the usage numbers then come from the "/usage" check instead. New Claude Code sessions pick it up. The hooks assume Claude Code runs them through cmd or Git Bash; with PowerShell they may not work (not checked yet).
+
+**To undo it:** click **Claude alerts and usage from Claude Code…** again (the tick goes), or uninstall Lid Awake: either takes out exactly what Lid Awake added. You can also put the backup copy back yourself.
+
+The session alerts only go out while you're away from the laptop (no keyboard or mouse for 2 minutes, or the lid closed). Turn them on in the app: gear ⚙︎ → **Alerts** → **Claude usage** and **Claude sessions**.
+
 ### Not on Windows yet
 
-Don't rely on these on Windows. They work on the Mac only, for now.
+These work on the Mac only:
 
-- Claude alerts on your phone (usage and sessions).
+- Claude usage written next to the icon. Windows can't show text beside a tray icon, so it's in the icon's tooltip instead (hover over the icon).
+- History from the time Lid Awake wasn't running. Only the battery graph is filled in from Windows' battery report; temperature and processor use can't be.
+- The Mac's troubleshooting extras: its self-test and battery check from Terminal, and the extra log lines about the phone keeping the screen awake, the live screen's stream and whether each phone alert was delivered.
 
 ### Update or remove it on Windows
 

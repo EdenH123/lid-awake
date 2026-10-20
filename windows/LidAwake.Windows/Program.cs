@@ -5,8 +5,15 @@ namespace LidAwake;
 static class Program
 {
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
+        // Claude Code's hooks and status line, and the installers' Claude setup, run LidAwake.exe
+        // with a flag (ClaudeHook.cs): done here, before the single-instance check, never a tray.
+        if (ClaudeHook.Run(args) is { } exitCode)
+        {
+            Environment.ExitCode = exitCode;
+            return;
+        }
         using var single = new Mutex(true, "local.lidawake", out bool first);
         if (!first) return;
         ApplicationConfiguration.Initialize();
@@ -81,6 +88,13 @@ static class Program
         using var push = new WebPush(machine);
         auth.PasswordSet += push.RemoveAll;
         var alerts = new PhoneAlerts(push.Send, readings.Power, () => heat.Latest.Battery, () => limits.HeatGuard);
+        // Claude plan usage (/status, the tray, the 90% alert) and the Claude session alerts (ClaudeAlerts.cs).
+        var claudeUsage = new ClaudeUsage();
+        status.Claude = claudeUsage;
+        alerts.Claude = new ClaudeUsageAlert(claudeUsage, settings);
+        using var claudeAlerts = new ClaudeAlerts((title, body) => push.Send(AlertKind.ClaudeSession, title, body),
+            lidClosed: () => screen.LidClosed, log: log.Write);
+        claudeAlerts.Start();
         // The camera and microphone (docs/API.md 5.4, 7.5), through its three seams: Task 18's
         // passkeys (a "camera" challenge, never a sign-in one), the screen's Media Foundation H.264
         // encoder, and the live socket (LiveServer hands it each phone's messages first, and tells
@@ -144,6 +158,13 @@ static class Program
         tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, alerts, screen,
             phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet, readings.Power, server.ScreenPolls,
             () => TrayText.MinutesToFull(readings.Charge()));
+        // Claude in the tray (TrayClaude): its items after the safety limits, its "Claude 59% ·
+        // 1h40m" as the tooltip's last line (the tray composes it), then attached, once the items
+        // are in the menu (Attach finds the menu through them).
+        var trayClaude = new TrayClaude(settings, claudeUsage, new ClaudeSettingsFile(), log.Write);
+        tray.InsertAfterLimits(trayClaude.Items);
+        tray.ExtraTooltip = trayClaude.TooltipText;
+        trayClaude.Attach(tray.OnUi);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");

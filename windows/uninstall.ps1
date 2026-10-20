@@ -27,6 +27,7 @@ $settingsFile = Join-Path $settingsDir 'settings.json'
 # the brightness, the phone-alert key and phones, Tailscale's name and what Lid Awake added to
 # Serve); older versions kept some of these in settings.json instead.
 $machineFile = Join-Path $dest 'machine.json'
+$exe = Join-Path $dest 'LidAwake.exe'
 $startMenuLink = Join-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs') 'Lid Awake.lnk'
 # Lid Awake's phone page port (WebServer.DefaultPort in the app); exact, so 8787 never matches 87870.
 $mapsOurPort = '(?<![\d.])127\.0\.0\.1:8787(?!\d)'
@@ -57,6 +58,29 @@ function Show-Problem([string]$text) {
 }
 function Wait-ForEnter {
     if (-not $NoPause) { Write-Host ''; [void](Read-Host 'Press Enter to close') }
+}
+
+# Runs the installed LidAwake.exe --claude-setup <on|off|status> (hidden, at most 30 seconds): the
+# same code as the tray item "Claude alerts and usage from Claude Code...". Returns its exit code
+# (-1 when it could not run) and what it printed. Status: 0 set up, 1 not set up, 2 no Claude
+# Code on this PC, 3 Claude Code's settings file can't be read. On and off: 0 done, 3 refused.
+function Invoke-ClaudeSetup([string]$what) {
+    $out = Join-Path ([IO.Path]::GetTempPath()) ('LidAwake-claude-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    try {
+        $p = Start-Process -FilePath $exe -ArgumentList '--claude-setup', $what -PassThru -WindowStyle Hidden -RedirectStandardOutput $out
+        [void]$p.Handle  # Windows PowerShell 5.1 returns no ExitCode unless the handle is read
+        if (-not $p.WaitForExit(30000)) {
+            try { $p.Kill() } catch { }
+            return [pscustomobject]@{ Code = -1; Text = 'it did not finish.' }
+        }
+        $text = ''
+        if (Test-Path -LiteralPath $out) { $text = ([IO.File]::ReadAllText($out)).Trim() }
+        return [pscustomobject]@{ Code = $p.ExitCode; Text = $text }
+    } catch {
+        return [pscustomobject]@{ Code = -1; Text = $_.Exception.Message }
+    } finally {
+        Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Native programs write to stderr in normal use; Stop would turn that into an error.
@@ -195,6 +219,17 @@ try {
     Show-Ok 'Start menu entry removed, and it will not start when you sign in'
 } catch {
     Show-Problem ('Could not finish this step: ' + $_.Exception.Message + ' Run this again.')
+}
+
+# Lid Awake's hooks and status line in Claude Code's settings, if the owner added them: taken out
+# by the app itself (--claude-setup off, the tray item's own rule), while it is still installed.
+if (Test-Path -LiteralPath $exe) {
+    $claudeOff = Invoke-ClaudeSetup 'off'
+    if ($claudeOff.Code -eq 0) {
+        if ($claudeOff.Text -match '^Removed') { Show-Ok "Lid Awake taken out of Claude Code's settings" }
+    } else {
+        Show-Problem ("Could not take Lid Awake out of Claude Code's settings: " + $claudeOff.Text + ' Remove the hooks that run LidAwake.exe from .claude\settings.json in your user folder, or run this again.')
+    }
 }
 
 # ---- 3/5 Lid action ---------------------------------------------------------------------

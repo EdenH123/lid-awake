@@ -92,7 +92,7 @@ public sealed class StatusInfo
     // Section 4. "limits" (POST /limits and the low-battery switch), "history" (the graphs,
     // recorded by Lid Awake itself), "passkeys" (/passkey/*) and "push" (/push/*) always; "heat"
     // (the too-hot switch) only while a temperature source works, re-checked with each status.
-    // FeatureList adds apps, control, screen and camera. "memory": GET /memory (MemoryInfo).
+    // FeatureList adds apps, control, screen, camera and claude. "memory": GET /memory (MemoryInfo).
     public static readonly string[] Features = { "limits", "history", "memory", "passkeys", "push" };
     public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat", "memory", "passkeys", "push" };
 
@@ -118,6 +118,10 @@ public sealed class StatusInfo
     // The phone's control of this PC (feature "control"). None (the tests): no "control", and
     // the control fields keep their defaults.
     public RemoteControl? Control { get; init; }
+
+    // Claude plan usage (ClaudeUsage.cs): "claude" in features, and the saved numbers in `claude`.
+    // None (the tests): `claude` is null, as before.
+    public ClaudeUsage? Claude { get; set; }
 
     // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
     // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp). `apps` is
@@ -176,7 +180,7 @@ public sealed class StatusInfo
             // 6.3
             ["apps"] = appLists.Apps,
             ["otherApps"] = appLists.Others,
-            ["claude"] = null,
+            ["claude"] = Claude?.ForStatus(),
             // 6.6
             ["os"] = "windows",
             // "heat" while either source works: the battery's sensor or the thermal zones.
@@ -259,7 +263,7 @@ public sealed class StatusInfo
     // "apps" is listed only when the apps routes exist (an app list was given), "control" after it
     // only when the control routes do (a RemoteControl was given), and "screen" last only when
     // /screen.jpg and the live socket do (the screen switch was given). "camera" after them only
-    // once the camera is wired (CameraFeature).
+    // once the camera is wired (CameraFeature), and "claude" last once the Claude usage is (Claude).
     string[] FeatureList(bool withHeat)
     {
         IEnumerable<string> list = withHeat ? FeaturesWithHeat : Features;
@@ -267,6 +271,7 @@ public sealed class StatusInfo
         if (Control != null) list = list.Append("control");
         if (screenAllowed != null) list = list.Append("screen");
         if (CameraFeature) list = list.Append("camera");
+        if (Claude != null) list = list.Append("claude");
         return list.ToArray();
     }
 
