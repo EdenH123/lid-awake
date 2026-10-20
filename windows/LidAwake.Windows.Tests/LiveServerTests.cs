@@ -287,6 +287,8 @@ public class LiveServerTests
         h.Allowed = false;
         // The 2-second check closes it.
         Assert.True(await a.WaitClosed(TimeSpan.FromSeconds(5)));
+        // The client can see the close before the server has counted it gone.
+        Assert.True(await Until(() => h.Live.Viewers == 0));
         h.Allowed = true;
 
         var b = await h.Connect();

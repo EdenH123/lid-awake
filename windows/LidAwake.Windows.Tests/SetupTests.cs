@@ -103,12 +103,17 @@ public class SetupTests : IDisposable
             }
     }
 
+    // Faded (setup not finished): the same modules, light grey on white.
     [Fact]
-    public void FadedCodeStillReadsTheSame()
+    public void FadedCodeIsTheSameCodeInGrey()
     {
         var url = "https://" + Host + "/";
+        var modules = QrImage.Modules(url)!;
+        int scale = QrImage.Scale(modules.GetLength(0), QrImage.TargetSize);
         using var bitmap = QrImage.Render(url, QrImage.TargetSize, faded: true)!;
-        Assert.Equal(url, Decode(bitmap));
+        for (int y = 0; y < bitmap.Height; y += scale)
+            for (int x = 0; x < bitmap.Width; x += scale)
+                Assert.Equal(modules[y / scale, x / scale] ? 191 : 255, (int)bitmap.GetPixel(x, y).R);
     }
 
     [Fact]
@@ -154,7 +159,7 @@ public class SetupTests : IDisposable
     }
 
     [Fact]
-    public void OneTailscaleCheckAtATime()
+    public async Task OneTailscaleCheckAtATime()
     {
         var gate = new ManualResetEventSlim();
         int runs = 0;
@@ -164,11 +169,11 @@ public class SetupTests : IDisposable
         Assert.NotNull(first);
         Assert.Null(model.StartCheck());  // still running
         gate.Set();
-        model.Apply(first!.Result);
+        model.Apply(await first!);
         Assert.Equal(Host, model.Host);
         var second = model.StartCheck();  // allowed again once applied
         Assert.NotNull(second);
-        model.Apply(second!.Result);
+        model.Apply(await second!);
         Assert.Equal(2, runs);
     }
 
