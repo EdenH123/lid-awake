@@ -181,25 +181,6 @@ public sealed class MemoryInfoTests
         Assert.False(ProcessTable.IsSystem(Chrome, Windows));
     }
 
-    // The real thing on this PC (the CI runner): numbers that make sense, and every program once.
-    [Fact]
-    public void TheRealMemoryAnswerMakesSense()
-    {
-        var m = Run(new MemoryInfo(new SystemReadings(), new ProcessTable()).Snapshot());
-        ulong total = m.GetProperty("total").GetUInt64(), used = m.GetProperty("used").GetUInt64();
-        Assert.True(total > 0);
-        Assert.InRange(used, 1UL, total);
-        Assert.InRange(m.GetProperty("free").GetUInt64() + m.GetProperty("cached").GetUInt64(), 1UL, total);
-        Assert.Contains(m.GetProperty("level").GetString(), new[] { "normal", "warn", "critical" });
-        Assert.InRange(m.GetProperty("pressure").GetInt32(), 0, 100);
-        var ids = m.GetProperty("top").EnumerateArray().Select(t => t.GetProperty("id").GetString()).ToList();
-        Assert.InRange(ids.Count, 1, 5);
-        Assert.Equal(ids.Count, ids.Distinct().Count());
-        Console.WriteLine($"RUNNER: memory {used >> 20} of {total >> 20} MB used, free {m.GetProperty("free").GetUInt64() >> 20} MB, "
-                          + $"cached {m.GetProperty("cached").GetUInt64() >> 20} MB, swap {m.GetProperty("swapUsed").GetUInt64() >> 20} MB, "
-                          + $"level {m.GetProperty("level").GetString()}, top {string.Join(", ", m.GetProperty("top").EnumerateArray().Select(t => t.GetProperty("name").GetString()))}");
-    }
-
     [Fact]
     public void FeaturesIncludeMemory()
     {

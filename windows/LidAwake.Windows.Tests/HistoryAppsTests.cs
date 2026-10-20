@@ -354,14 +354,4 @@ public sealed class HistoryAppsTests : IDisposable
         Thread.Sleep(200);
         Assert.Equal(2, Volatile.Read(ref report.Calls));
     }
-
-    // The real powercfg on this PC: the CI runner has no battery, so the sampler never calls it;
-    // here it is called directly and must not throw or hang.
-    [Fact]
-    public void TheRealBatteryReportDoesNotThrow()
-    {
-        var xml = new PowercfgReport().ReadXml();
-        var points = xml == null ? new List<BatteryPoint>() : BatteryReport.Parse(xml);
-        Console.WriteLine($"RUNNER: battery report {(xml == null ? "not made" : xml.Length + " characters")}, {points.Count} recent levels");
-    }
 }

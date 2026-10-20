@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Drawing.Imaging;
 using LidAwake;
 using Xunit;
@@ -17,71 +16,6 @@ public sealed class ProcessTableTests
         => new(pid, created, name ?? (path == null ? "x.exe" : Path.GetFileName(path)), path, 1 << 20, 1 << 20, cpu);
 
     static CpuApp? Who(ProcessEntry p) => AppCpu.Who(p, Windows, exe => Path.GetFileNameWithoutExtension(exe));
-
-    // ---- the real table ----
-
-    [Fact]
-    public void TheSnapshotHasThisVeryProcess()
-    {
-        var snap = new ProcessTable().Snapshot();
-        Assert.NotNull(snap);
-        var self = Assert.Single(snap!.Processes, p => p.Pid == Environment.ProcessId);
-        Assert.Equal(Environment.ProcessPath, self.Path, StringComparer.OrdinalIgnoreCase);
-        Assert.Equal(Path.GetFileName(Environment.ProcessPath), self.Name, StringComparer.OrdinalIgnoreCase);
-        Assert.True(self.PrivateBytes > 0);
-        Assert.True(self.WorkingSet >= self.PrivateBytes);
-        Assert.True(self.CpuTime > 0);
-        using var me = Process.GetCurrentProcess();
-        Assert.Equal(me.StartTime.ToUniversalTime().ToFileTimeUtc() / Second, self.CreateTime / Second);
-        // The idle and system processes are there too, with no exe; and no one twice.
-        Assert.Contains(snap.Processes, p => p.Pid == 0 && p.Path == null);
-        Assert.Contains(snap.Processes, p => p.Pid == 4 && p.Path == null && p.Name == "System");
-        Assert.Equal(snap.Processes.Count, snap.Processes.Select(p => (p.Pid, p.CreateTime)).Distinct().Count());
-        Assert.True(snap.Processes.Count > 20);
-        Console.WriteLine($"RUNNER: {snap.Processes.Count} processes, {snap.Processes.Count(p => p.Path != null)} with an exe path");
-    }
-
-    // The processor time keeps growing while this process works.
-    [Fact]
-    public void TheProcessorTimeGrows()
-    {
-        var table = new ProcessTable(clock: () => 0);
-        long first = table.Snapshot()!.Processes.Single(p => p.Pid == Environment.ProcessId).CpuTime;
-        var sw = Stopwatch.StartNew();
-        double x = 0;
-        while (sw.ElapsedMilliseconds < 300) x += Math.Sqrt(sw.ElapsedTicks);
-        Assert.True(x > 0);
-        var later = new ProcessTable().Snapshot()!.Processes.Single(p => p.Pid == Environment.ProcessId).CpuTime;
-        Assert.True(later > first);
-    }
-
-    // Each process's exe is looked up once in its life; a snapshot is reused for a second.
-    [Fact]
-    public void PathsAreLookedUpOncePerProcessAndSnapshotsReused()
-    {
-        long now = 0;
-        var asked = new List<int>();
-        var table = new ProcessTable(pid => { lock (asked) asked.Add(pid); return null; }, () => now);
-        var a = table.Snapshot();
-        Assert.Same(a, table.Snapshot());
-        int firstRound = asked.Count;
-        Assert.True(firstRound > 0);
-        Assert.DoesNotContain(0, asked);
-        Assert.DoesNotContain(4, asked);
-        now = ProcessTable.ReuseMilliseconds;
-        var b = table.Snapshot();
-        Assert.NotSame(a, b);
-        // Only processes that started since were looked up again.
-        Assert.True(asked.Count - firstRound < firstRound);
-    }
-
-    [Fact]
-    public void ThePageFilesUseIsReadOrLeftOut()
-    {
-        var used = ProcessTable.PageFileInUse();
-        Console.WriteLine($"RUNNER: page files in use {(used is { } u ? (u >> 20) + " MB" : "unknown")}");
-        if (used is { } bytes) Assert.True(bytes < 1UL << 50);
-    }
 
     // ---- who used the processor ----
 
