@@ -29,6 +29,7 @@ static class Program
         var log = new AccessLog();
         KeepAwake.Log = log.Write;
         WlanReader.Log = log.Write;
+        TemperatureSources.Log = log.Write;
         // Put back what a crash or a forced stop left behind, before anything else (and before
         // any message could wait for a click): the lid action, and Serve if Lid Awake added it.
         KeepAwake.Off(machine);
@@ -640,6 +641,9 @@ sealed class TrayApp : ApplicationContext
     void CheckSafety(bool read)
     {
         bool on = isOn;
+        // The battery limit (and a limit the last readings already show) first: it needs no
+        // temperature read, so a slow sensor never holds up turning off at a low battery.
+        if (on && !stopping && safety.Now() != null) { OnUi(() => stopper.Run()); return; }
         if (read) heat.Refresh(on ? HeatSensor.Fresh : HeatSensor.WhileOff);
         if (!on || stopping) return;
         // A limit reached turns off; otherwise the early warnings to the phones (low battery, warm).

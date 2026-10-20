@@ -14,6 +14,9 @@ public sealed class Limits
     // The ACPI thermal zones measure the processor or the board, where 40 to 60 °C is normal: they
     // have their own, higher limit (Windows only; the Mac uses the system's thermal state instead).
     public const int MaxPcTemp = 90;
+    // A laptop maker's sensor on the processor's die itself, used only when the PC has no board-type
+    // sensor: a die runs far hotter than the board around it (TemperatureChain).
+    public const int MaxDieTemp = 100;
 
     public const string Battery = "battery";
     public const string Heat = "heat";
@@ -83,8 +86,13 @@ public sealed class HeatSensor
     readonly Func<long> clock;
     readonly object gate = new();
     readonly object reading = new();
-    double? battery, zone;
+    double? battery;
+    ZonePart? zone;
+    bool throttled;
     int batteryMisses, zoneMisses;
+
+    // The zone's value with what was decided about it in the same read.
+    readonly record struct ZonePart(double Celsius, int Limit, bool Confirmed);
     long? readAt;
 
     // Raised (on the reading thread) when the first read is done, and whenever a temperature
@@ -101,7 +109,7 @@ public sealed class HeatSensor
     // The last good readings (each null: none yet, or dropped). Never touches the hardware.
     public TemperatureReading Latest
     {
-        get { lock (gate) return new TemperatureReading(battery, zone); }
+        get { lock (gate) return Kept(); }
     }
 
     // Some temperature source works: the page shows the heat switch, the tray item is available.
@@ -122,7 +130,7 @@ public sealed class HeatSensor
             lock (gate)
             {
                 if (readAt is { } at && clock() - at < (long)maxAge.TotalMilliseconds)
-                    return new TemperatureReading(battery, zone);
+                    return Kept();
             }
             TemperatureReading now;
             try { now = source(); }
@@ -134,9 +142,11 @@ public sealed class HeatSensor
                 bool before = battery != null || zone != null;
                 bool first = readAt == null;
                 Keep(ref battery, ref batteryMisses, Sane(now.Battery));
-                Keep(ref zone, ref zoneMisses, Sane(now.Zone));
+                Keep(ref zone, ref zoneMisses, Sane(now.Zone) is { } z ? (ZonePart?)new ZonePart(z, now.ZoneLimit, now.ZoneConfirmed) : null);
+                // Throttling counts only as just read (TemperatureChain already wants it twice in a row).
+                throttled = now.Throttled;
                 readAt = clock();
-                kept = new TemperatureReading(battery, zone);
+                kept = Kept();
                 changed = first || before != kept.Any;
             }
             if (changed)
@@ -150,8 +160,12 @@ public sealed class HeatSensor
 
     static double? Sane(double? celsius) => celsius is { } c && TemperatureMath.IsSane(c) ? c : null;
 
+    TemperatureReading Kept() => zone is { } z
+        ? new TemperatureReading(battery, z.Celsius, z.Limit, z.Confirmed, throttled)
+        : new TemperatureReading(battery, null, Throttled: throttled);
+
     // A good value replaces the kept one; a miss keeps it until the MissesKept-th miss in a row.
-    static void Keep(ref double? kept, ref int misses, double? now)
+    static void Keep<T>(ref T? kept, ref int misses, T? now) where T : struct
     {
         if (now != null) { kept = now; misses = 0; return; }
         if (kept == null) { misses = 0; return; }
@@ -177,9 +191,10 @@ public sealed record SafetyReason(string Why, string Short, string? Alert = null
 public static class Safety
 {
     // The Mac's safetyStop order: the battery limit first (on battery and below 10%), then heat:
-    // the battery at or above 40 °C ("Battery is too hot", the Mac's words), then the thermal
-    // zones at or above 90 °C (the PC itself). Plugged in, a low battery is no reason. No
-    // temperature: heat is no reason.
+    // the battery at or above 40 °C ("Battery is too hot", the Mac's words), then the PC itself at
+    // or above its zone limit (90 °C, or 100 °C for a processor die sensor) once that is confirmed
+    // (TemperatureReading.ZoneConfirmed), then Windows slowing the processor down hard to cool it.
+    // Plugged in, a low battery is no reason. No temperature: heat is no reason.
     public static SafetyReason? Decide(bool batteryGuard, bool heatGuard, PowerReading? power, TemperatureReading heat)
     {
         if (batteryGuard && power is { } p && p.AcLineStatus == 0 && StatusInfo.HasBattery(p) && p.BatteryLifePercent < Limits.BatteryLimit)
@@ -189,9 +204,14 @@ public static class Safety
         if (heat.Battery is { } b && TemperatureMath.IsSane(b) && b >= Limits.MaxBatteryTemp)
             return new SafetyReason($"Battery is too hot ({Shown(b)}°C).", $"battery too hot ({Shown(b)}°C)",
                 $"Battery got too hot ({Shown(b)}°C)");
-        if (heat.Zone is { } z && TemperatureMath.IsSane(z) && z >= Limits.MaxPcTemp)
+        if (heat.Zone is { } z && TemperatureMath.IsSane(z) && z >= heat.ZoneLimit && heat.ZoneConfirmed)
             return new SafetyReason($"Your PC is too hot ({Shown(z)}°C).", $"PC too hot ({Shown(z)}°C)",
                 $"Your PC got too hot ({Shown(z)}°C)");
+        // Windows holding the processor to half its speed or less to cool it: the Mac's thermal
+        // state "critical", which turns the Mac version off too.
+        if (heat.Throttled)
+            return new SafetyReason("Your PC is too hot (Windows is slowing it down to cool it).", "PC too hot (slowed down by Windows)",
+                "Your PC got too hot (slowed down by Windows)");
         return null;
     }
 

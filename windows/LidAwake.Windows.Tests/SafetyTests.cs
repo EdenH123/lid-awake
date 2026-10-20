@@ -36,13 +36,13 @@ public class SafetyTests : IDisposable
         return heat;
     }
 
-    static JsonElement Run(Dictionary<string, object?> status)
+    internal static JsonElement Run(Dictionary<string, object?> status)
     {
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(status));
         return doc.RootElement.Clone();
     }
 
-    static string?[] Features(JsonElement s) => s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray();
+    internal static string?[] Features(JsonElement s) => s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray();
 
     // ---- Temperature parsing: both sources give tenths of a kelvin ----
 
