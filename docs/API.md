@@ -707,7 +707,7 @@ The page draws a line of `used / total` over the last 2 minutes and shows a row 
 | `swapUsed` | the page files' use (`SystemPageFileInformation`), else 0 |
 | `pressure` | committed memory as a percent of the commit limit |
 | `level` | `critical` when Windows' low-memory signal is on (`QueryMemoryResourceNotification`), 90% of the commit limit is committed, or under 3% of memory is available; `warn` from 75% of the commit limit or under 10% available; else `normal` |
-| `top`, `otherPrograms` | private working sets from one `NtQuerySystemInformation` snapshot (every process, no administrator), added up by exe (Chrome's many processes are one entry). `name` is the exe's file description, else its name; every entry has `id` (the exe's id from 5.6). Windows' own processes (no exe Windows will name, or one in the Windows folder) are in neither, so they count toward "Windows & system" |
+| `top`, `otherPrograms` | private working sets from one `NtQuerySystemInformation` snapshot (every process, no administrator), added up by exe (Chrome's many processes are one entry). `name` is the exe's file description, else its name; every entry has `id` (the exe's id from 5.6). Windows' own processes (no exe Windows will name, or one in the Windows folder) are in neither, so they count toward "Windows & system". `/app-icon.png` only answers for a program on the Apps list or open with a window (5.6), so a background program (a compiler server, an antivirus service) keeps the blank icon |
 
 ### 5.9 `screen`
 
