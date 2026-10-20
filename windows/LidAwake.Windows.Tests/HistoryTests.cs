@@ -19,7 +19,8 @@ public sealed class HistoryTests : IDisposable
         catch (UnauthorizedAccessException) { }
     }
 
-    HistoryStore NewStore(int cores = 4) => new(folder, () => now, cores);
+    // Written on every sample here (the app writes at most every 5 minutes: HistoryWriteTests).
+    HistoryStore NewStore(int cores = 4) => new(folder, () => now, cores, TimeSpan.Zero);
 
     static JsonElement Run(object answer)
     {
@@ -224,7 +225,7 @@ public sealed class HistoryTests : IDisposable
         Assert.Equal(T0 + 2 * Hour, onDisk[0][0].GetInt64());
     }
 
-    HistoryStore NewStoreAt(long at) => new(folder, () => at, 4);
+    HistoryStore NewStoreAt(long at) => new(folder, () => at, 4, TimeSpan.Zero);
 
     [Fact]
     public void RowsOlderThan48HoursInTheFileAreDroppedWhenItIsRead()
@@ -255,12 +256,12 @@ public sealed class HistoryTests : IDisposable
         var store = NewStore();
         for (int i = 0; i < 5; i++) store.Add(Sample(T0 + i * 60));
         Assert.True(File.Exists(Path.Combine(folder, "history.json")));
-        Assert.False(File.Exists(Path.Combine(folder, "history.json.tmp")));
+        Assert.Empty(Directory.GetFiles(folder, "*.tmp"));
         Assert.Equal(5, JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "history.json"))).RootElement.GetProperty("samples").GetArrayLength());
     }
 
-    // A write that can't finish (here: the temp name is taken by a folder) must leave the file as
-    // it was, and the sample is still served from memory.
+    // A write that can't finish (here: another program holds the file) must leave the file as
+    // it was, remove its temp file, and the sample is still served from memory.
     [Fact]
     public void AFailedWriteKeepsTheOldFileAndTheSampleInMemory()
     {
@@ -268,14 +269,14 @@ public sealed class HistoryTests : IDisposable
         Assert.True(store.Add(Sample(T0)));
         var path = Path.Combine(folder, "history.json");
         var before = File.ReadAllText(path);
-        Directory.CreateDirectory(path + ".tmp");
 
-        Assert.False(store.Add(Sample(T0 + 60)));
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            Assert.False(store.Add(Sample(T0 + 60)));
         Assert.Equal(before, File.ReadAllText(path));
+        Assert.Empty(Directory.GetFiles(folder, "*.tmp"));
         Assert.Equal(2, Run(store.Battery(24)).GetProperty("points").GetArrayLength());
 
         // Once the obstacle is gone, the next sample saves everything.
-        Directory.Delete(path + ".tmp");
         Assert.True(store.Add(Sample(T0 + 120)));
         Assert.Equal(3, NewStore().Count);
     }
@@ -317,7 +318,7 @@ public sealed class HistoryTests : IDisposable
     public void ANewStoreWithNoFolderYetCreatesIt()
     {
         var inner = Path.Combine(folder, "deep", "LidAwake");
-        var store = new HistoryStore(inner, () => now, 4);
+        var store = new HistoryStore(inner, () => now, 4, TimeSpan.Zero);
         Assert.True(store.Add(Sample(T0)));
         Assert.True(File.Exists(Path.Combine(inner, "history.json")));
     }

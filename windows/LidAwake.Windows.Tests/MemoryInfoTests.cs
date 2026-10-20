@@ -43,7 +43,7 @@ public sealed class MemoryInfoTests
     };
 
     static readonly MemoryCounts Typical = new(Total: 16 * GiB, Available: 6 * GiB, Free: 1 * GiB, Standby: 5 * GiB,
-                                               CommitTotal: 12 * GiB, CommitLimit: 24 * GiB, SwapUsed: GiB / 2, Wired: GiB / 4, LowMemory: false);
+                                               CommitTotal: 12 * GiB, CommitLimit: 24 * GiB, SwapUsed: GiB / 2, LowMemory: false);
 
     static List<ProcessEntry> Typical_Processes() => new()
     {
@@ -75,13 +75,13 @@ public sealed class MemoryInfoTests
         Assert.Equal(1 * GiB, m.GetProperty("free").GetUInt64());            // free & zero pages
         Assert.Equal(5 * GiB, m.GetProperty("cached").GetUInt64());          // the standby list
         Assert.Equal(GiB / 2, m.GetProperty("swapUsed").GetUInt64());
-        Assert.Equal(GiB / 4, m.GetProperty("wired").GetUInt64());
+        Assert.False(m.TryGetProperty("wired", out _));                     // Windows has no such figure
         Assert.Equal(GiB / 2, m.GetProperty("compressed").GetUInt64());      // the Memory Compression process
         Assert.Equal(50, m.GetProperty("pressure").GetInt32());              // half the commit limit
         Assert.Equal("normal", m.GetProperty("level").GetString());
-        // "app": every process's private working set (the idle process has none), at most "used".
-        ulong all = Typical_Processes().Aggregate(0UL, (sum, p) => sum + p.PrivateBytes);
-        Assert.Equal(Math.Min(all, 10 * GiB), m.GetProperty("app").GetUInt64());
+        // "app": the processes' private working sets without the kernel's (System, Memory
+        // Compression), as the Mac leaves compressed memory out: 1 + 3.5 + 1 + 0.25 GB + 340 MB.
+        Assert.Equal(5 * GiB + GiB / 2 + GiB / 4 + (340UL << 20), m.GetProperty("app").GetUInt64());
         Assert.Equal(JsonValueKind.Array, m.GetProperty("top").ValueKind);
         Assert.True(m.GetProperty("otherPrograms").GetUInt64() > 0);
         foreach (var key in new[] { "total", "used", "app", "cached", "free", "swapUsed", "pressure", "level", "top", "otherPrograms" })
@@ -91,7 +91,9 @@ public sealed class MemoryInfoTests
     [Fact]
     public void ProgramsAreGroupedByExeWithTheAppsPageId()
     {
-        var (top, others) = MemoryInfo.Top(Typical_Processes(), 5, Windows, NameOf);
+        var (top, others, exes) = MemoryInfo.Top(Typical_Processes(), 5, Windows, NameOf);
+        Assert.Equal(PhoneApps.Normalize(Chrome), exes[PhoneApps.Id(Chrome)]);
+        Assert.Equal(5, exes.Count);
         var j = Run(top);
         // Chrome's three processes (one path spelled in other case) are one entry.
         Assert.Equal("Google Chrome", j[0].GetProperty("name").GetString());
@@ -179,6 +181,65 @@ public sealed class MemoryInfoTests
         Assert.True(ProcessTable.IsSystem(@"c:\windows\system32\DWM.EXE", @"C:\Windows\"));
         Assert.False(ProcessTable.IsSystem(@"C:\WindowsApps\x.exe", Windows));
         Assert.False(ProcessTable.IsSystem(Chrome, Windows));
+    }
+
+    // The page keys its rows by name: two programs with the same description are told apart by
+    // their exe's name, and a name still taken gets a number.
+    [Fact]
+    public void TwoProgramsNeverShareAName()
+    {
+        var list = new List<ProcessEntry>
+        {
+            P(1, "a.exe", @"C:\One\host.exe", 5 * GiB),
+            P(2, "b.exe", @"C:\Two\host.exe", 4 * GiB),
+            P(3, "c.exe", @"C:\Three\other.exe", 3 * GiB),
+            P(4, "d.exe", @"C:\Four\solo.exe", 2 * GiB),
+        };
+        var (top, _, _) = MemoryInfo.Top(list, 5, Windows, exe => exe.Contains("solo") ? "Solo" : "Host");
+        var names = top.Select(t => (string)t["name"]).ToArray();
+        // Three "Host": by file name (host.exe, host.exe, other.exe), the second host.exe numbered.
+        Assert.Equal(new[] { "host.exe", "host.exe (2)", "other.exe", "Solo" }, names);
+        Assert.Equal(names.Length, names.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public void AppLeavesTheKernelProcessesOut()
+    {
+        var list = new List<ProcessEntry>
+        {
+            P(0, "Idle", null, 0), P(4, "System", null, GiB), P(50, "Registry", null, GiB), P(60, "Memory Compression", null, GiB),
+            P(70, "Secure System", null, GiB), P(80, "csrss.exe", null, GiB / 4), P(90, "x.exe", @"C:\x.exe", GiB / 2),
+        };
+        Assert.Equal(GiB / 4 + GiB / 2, MemoryInfo.AppBytes(list));
+    }
+
+    // /app-icon.png's second chance: the programs of the last three memory answers, by id only.
+    [Fact]
+    public void IconsOnlyForProgramsOfTheLastThreeAnswers()
+    {
+        var icons = new FakeAppIcons();
+        var table = new FakeProcessTable { Next = new ProcessSnapshot(new List<ProcessEntry> { P(300, "chrome.exe", Chrome, GiB) }, 1) };
+        var info = new MemoryInfo(new FakeMemorySource { Now = Typical }, table, Windows, NameOf) { Icons = icons };
+        Assert.Null(info.IconPng(PhoneApps.Id(Chrome), 256));             // nothing answered yet
+        info.Snapshot();
+        Assert.Equal(FakeAppIcons.Image, info.IconPng(PhoneApps.Id(Chrome), 256));
+        Assert.Equal(FakeAppIcons.Image, info.IconPng(PhoneApps.Id(Chrome), 256));
+        Assert.Equal((Chrome, 256), Assert.Single(icons.Asked));         // kept
+        Assert.NotNull(info.IconPng(PhoneApps.Id(Chrome), 600));
+        Assert.Equal((Chrome, 512), icons.Asked[1]);
+        // An id it didn't send, a path, nothing: refused, and no icon is read.
+        Assert.Null(info.IconPng(PhoneApps.Id(Code), 256));
+        Assert.Null(info.IconPng(Chrome, 256));
+        Assert.Null(info.IconPng("", 256));
+        Assert.Equal(2, icons.Asked.Count);
+        // Three answers without Chrome later, its id is forgotten.
+        table.Next = new ProcessSnapshot(new List<ProcessEntry> { P(400, "Code.exe", Code, GiB) }, 2);
+        info.Snapshot();
+        info.Snapshot();
+        Assert.NotNull(info.IconPng(PhoneApps.Id(Chrome), 128));          // still the third answer back
+        info.Snapshot();
+        Assert.Null(info.IconPng(PhoneApps.Id(Chrome), 1));
+        Assert.NotNull(info.IconPng(PhoneApps.Id(Code), 256));
     }
 
     [Fact]

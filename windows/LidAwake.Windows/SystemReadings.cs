@@ -56,7 +56,7 @@ public sealed class SystemReadings : ISystemReadings
         try
         {
             var m = new MemoryStatusEx { dwLength = (uint)Marshal.SizeOf<MemoryStatusEx>() };
-            return GlobalMemoryStatusEx(ref m) ? new MemoryReading(m.ullTotalPhys, m.ullAvailPhys) : null;
+            return GlobalMemoryStatusEx(ref m) ? new MemoryReading(m.ullTotalPhys, m.ullAvailPhys, m.ullTotalPageFile, m.ullAvailPageFile) : null;
         }
         catch (Exception) { return null; }
     }

@@ -36,8 +36,13 @@ public sealed class HistoryStore
     // What the routes keep and clamp to, as on the Mac (PowerHistory.query).
     public const int KeepHours = 48;
     public const double DefaultHours = 24;
-    // A battery-report level within this many seconds of a row is not added (the row is there).
+    // A battery-report level within this many seconds of a measured row is not added (the row is there).
     public const int BackfillGapSeconds = 90;
+    // The file is written at most this often (and when the sampler stops); the rows in between
+    // are in memory, where the routes read them.
+    public static readonly TimeSpan DefaultSaveEvery = TimeSpan.FromMinutes(5);
+    // A bigger file is not ours (48 hours of rows are well under 1 MB): it starts empty.
+    public const long MaxFileBytes = 16 << 20;
     // /cpu-icon: the size the Mac sends, how many are kept, and the most one may weigh.
     public const int IconSize = 256;
     public const int MaxIcons = 64;
@@ -50,13 +55,20 @@ public sealed class HistoryStore
     readonly string path;
     readonly Func<long> clock;
     readonly object gate = new();
+    readonly object writeGate = new();  // one write at a time, taken before `gate`
+    readonly long saveEvery;
     readonly List<HistorySample> samples = new();
     readonly Dictionary<string, CpuApp> apps = new();  // every key the rows name; under `gate`
     readonly ConcurrentDictionary<string, byte[]> icons = new();
+    long? savedAt;   // when the file was last written (clock seconds); under `gate`
+    bool dirty;      // rows not in the file yet; under `gate`
 
     // `clock` is Unix seconds (tests set their own). `cores` is what /cpu-history reports.
-    public HistoryStore(string? folder = null, Func<long>? clock = null, int? cores = null)
+    // `saveEvery`: how often Add writes the file (default 5 minutes; zero: every time).
+    public HistoryStore(string? folder = null, Func<long>? clock = null, int? cores = null, TimeSpan? saveEvery = null)
     {
+        saveEvery ??= DefaultSaveEvery;
+        this.saveEvery = Math.Max(0, (long)saveEvery.Value.TotalSeconds);
         folder ??= Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LidAwake");
         path = Path.Combine(folder, FileName);
         this.clock = clock ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
@@ -97,7 +109,8 @@ public sealed class HistoryStore
         var table = new Dictionary<string, CpuApp>();
         try
         {
-            if (!File.Exists(path)) return (list, table);
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length > MaxFileBytes) return (list, table);
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             if (doc.RootElement.ValueKind != JsonValueKind.Object
                 || !doc.RootElement.TryGetProperty("samples", out var rows)
@@ -126,12 +139,18 @@ public sealed class HistoryStore
         if (name.Length == 0 || name.Length > 256 || kind is not ("app" or "other")) return null;
         string? exe = a[2].ValueKind == JsonValueKind.String ? a[2].GetString() : null;
         string? color = a[3].ValueKind == JsonValueKind.String ? a[3].GetString() : null;
-        if (exe != null && (exe.Length > 32767 || !exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))) exe = null;
+        if (exe != null && !IsLocalExe(exe)) exe = null;
         if (color != null && !ColorPattern.IsMatch(color)) color = null;
         // Only a program with its exe has an icon; anything else counts as "other".
         if (kind == "app" && exe == null) kind = "other";
         return new CpuApp(key, name, kind, kind == "app" ? exe : null, color);
     }
+
+    // An exe on a local drive ("C:\...\x.exe"): never a network share (\\server\...) or a
+    // device path (\\.\ or \\?\), whose icon would be read from elsewhere.
+    internal static bool IsLocalExe(string exe) =>
+        exe.Length is > 7 and <= 32767 && char.IsAsciiLetter(exe[0]) && exe[1] == ':' && exe[2] == '\\'
+        && !exe.Contains('/') && exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
 
     // [t, percent|null, plugged 0/1, charging 0/1, temp|null, cpu|null, span] and optionally
     // [..., apps|null] and [..., apps|null, flags]. apps: {"key": processor-seconds}. flags: 1 =
@@ -189,14 +208,15 @@ public sealed class HistoryStore
         return true;
     }
 
-    // Records a sample, drops everything older than 48 hours before it, and saves the file. A
-    // sample dated at or before the last one means the clock was set back: the rows that are now
-    // "in the future" are dropped, so the history stays in order. `seen` names the programs the
-    // sample's Apps list (a key with no name is left out of /cpu-history). False when the file
-    // couldn't be written (the sample is still kept in memory).
+    // Records a sample and drops everything older than 48 hours before it. A sample dated at or
+    // before the last one means the clock was set back: the rows that are now "in the future" are
+    // dropped, so the history stays in order. `seen` names the programs the sample's Apps list (a
+    // key with no name is left out of /cpu-history). The file is written when the last write is
+    // `saveEvery` old (or failed, or there was none yet); otherwise the row waits in memory for
+    // the next write or Flush. False when a write was due and failed (the sample is still kept).
     public bool Add(HistorySample s, IEnumerable<CpuApp>? seen = null)
     {
-        string text;
+        bool due;
         lock (gate)
         {
             if (seen != null)
@@ -206,18 +226,53 @@ public sealed class HistoryStore
             samples.Add(s);
             long oldest = s.T - KeepHours * 3600L;
             samples.RemoveAll(x => x.T <= oldest);
-            text = SaveText();
+            dirty = true;
+            long now = Now();
+            due = savedAt is not { } at || now - at >= saveEvery || now < at;
         }
-        return WriteAtomic(path, text);
+        return !due || Save();
+    }
+
+    // Writes the rows not in the file yet (the sampler calls it when it stops). True when there
+    // was nothing to write or the write worked.
+    public bool Flush()
+    {
+        lock (gate) if (!dirty) return true;
+        return Save();
+    }
+
+    // One write at a time, of the rows as they are when it starts, so writes never overtake each other.
+    bool Save()
+    {
+        lock (writeGate)
+        {
+            string text;
+            lock (gate)
+            {
+                text = SaveText();
+                dirty = false;
+            }
+            if (WriteAtomic(path, text))
+            {
+                lock (gate) savedAt = Now();
+                return true;
+            }
+            lock (gate)
+            {
+                dirty = true;
+                savedAt = null;  // the next sample tries again
+            }
+            return false;
+        }
     }
 
     // Battery levels from Windows' battery report, for the times History has no row (the PC was
     // asleep, or Lid Awake wasn't running): only the last 48 hours, none in the future, none
-    // within BackfillGapSeconds of a row (an earlier backfill's rows included, so running it again
-    // adds nothing). They are marked Backfilled in the file. Answers how many were added.
+    // within BackfillGapSeconds of a measured row, none at the very second of a row already there
+    // (so running it again adds nothing; two report entries close together are both kept). They
+    // are marked Backfilled in the file, which is written at once. Answers how many were added.
     public int Backfill(IEnumerable<BatteryPoint> points)
     {
-        string text;
         int added = 0;
         lock (gate)
         {
@@ -225,15 +280,15 @@ public sealed class HistoryStore
             foreach (var p in points.OrderBy(x => x.T))
             {
                 if (p.T <= oldest || p.T > now || p.Percent is < 0 or > 100) continue;
-                if (samples.Any(x => Math.Abs(x.T - p.T) <= BackfillGapSeconds)) continue;
+                if (samples.Any(x => x.T == p.T || (!x.Backfilled && Math.Abs(x.T - p.T) <= BackfillGapSeconds))) continue;
                 samples.Add(new HistorySample(p.T, p.Percent, p.Plugged, p.Charging, null, null, 0, null, Backfilled: true));
                 added++;
             }
             if (added == 0) return 0;
             samples.Sort((a, b) => a.T.CompareTo(b.T));
-            text = SaveText();
+            dirty = true;
         }
-        WriteAtomic(path, text);
+        Save();
         return added;
     }
 
@@ -264,14 +319,20 @@ public sealed class HistoryStore
         return JsonSerializer.Serialize(new Dictionary<string, object> { ["v"] = FileVersion, ["apps"] = known, ["samples"] = rows });
     }
 
-    // To a temp file first, then moved over the old one, so a crash mid-write can't leave a
-    // truncated history. Never throws; false when it failed (the old file is left as it was).
-    internal static bool WriteAtomic(string path, string text)
+    // To a temp file of its own first, flushed to the disk, then moved over the old one, so a
+    // crash or power cut mid-write can't leave a truncated history. Never throws; false when it
+    // failed (the old file is left as it was, and the temp file is removed).
+    static bool WriteAtomic(string path, string text)
     {
-        var tmp = path + ".tmp";
+        var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
-            File.WriteAllText(tmp, text);
+            using (var file = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+                file.Write(bytes, 0, bytes.Length);
+                file.Flush(flushToDisk: true);
+            }
             File.Move(tmp, path, overwrite: true);
             return true;
         }
@@ -381,7 +442,7 @@ public sealed class HistoryStore
         if (string.IsNullOrEmpty(key) || key.Length > MaxKeyLength) return null;
         string? exe;
         lock (gate) exe = apps.TryGetValue(key, out var app) && app.Kind == "app" ? app.Exe : null;
-        if (exe == null) return null;
+        if (exe == null || !IsLocalExe(exe)) return null;
         if (icons.TryGetValue(key, out var cached)) return cached;
         byte[]? png;
         try { png = Icons.Png(exe, IconSize); }
@@ -403,16 +464,13 @@ public static class AppCpu
     public const double MinShare = 0.005;
     public const int KeepPerRow = 8;
 
-    // Windows' kernel processes, which have no exe.
-    static readonly HashSet<string> Core = new(StringComparer.OrdinalIgnoreCase) { "System", "Registry", "Memory Compression", "Secure System" };
-
     // A program by its exe (kind "app"); Windows' own processes as "Windows core", "Screen &
     // windows" (dwm.exe) and "Windows (other)"; a process Windows won't name by its image name
     // (kind "other"). The idle process: null (its time is idle time).
     public static CpuApp? Who(ProcessEntry p, string windowsFolder, Func<string, string> nameOf)
     {
         if (p.Pid == 0) return null;
-        if (p.Pid == 4 || (p.Path == null && Core.Contains(p.Name))) return new CpuApp("other.core", "Windows core", "other");
+        if (ProcessTable.IsKernel(p)) return new CpuApp("other.core", "Windows core", "other");
         if (p.Path == null)
         {
             var stem = Path.GetFileNameWithoutExtension(p.Name);
@@ -597,16 +655,17 @@ public sealed class PowercfgReport : IBatteryReport
             foreach (var arg in new[] { "/batteryreport", "/xml", "/output", output }) start.ArgumentList.Add(arg);
             using var process = Process.Start(start);
             if (process == null) return null;
-            // Read both, so a full pipe can't stop powercfg.
-            _ = process.StandardOutput.ReadToEndAsync();
-            _ = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit((int)Limit.TotalMilliseconds))
+            // Read both, so a full pipe can't stop powercfg; both are finished before returning.
+            var streams = Task.WhenAll(process.StandardOutput.ReadToEndAsync(), process.StandardError.ReadToEndAsync());
+            bool exited = process.WaitForExit((int)Limit.TotalMilliseconds);
+            if (!exited)
             {
                 try { process.Kill(entireProcessTree: true); }
                 catch (Exception) { }
-                return null;
             }
-            if (process.ExitCode != 0) return null;
+            try { streams.Wait(TimeSpan.FromSeconds(5)); }
+            catch (Exception) { }  // a pipe that broke as powercfg was stopped
+            if (!exited || process.ExitCode != 0) return null;
             var info = new FileInfo(output);
             if (!info.Exists || info.Length == 0 || info.Length > MaxBytes) return null;
             return File.ReadAllText(output);
@@ -650,6 +709,7 @@ public sealed class HistorySampler : IDisposable
     long? backfilledAt;
     int backfilling;
     System.Threading.Timer? timer;
+    bool hooked;
 
     // `batteryTemp` gives the last good battery temperature (HeatSensor.Latest.Battery), or null.
     // `processes`: each program's processor use (none: the PC's overall use only). `report`:
@@ -671,19 +731,45 @@ public sealed class HistorySampler : IDisposable
     // A program's name from its exe (tests set their own).
     public Func<string, string> NameOf { get; init; } = ProcessSource.NameOf;
 
+    // Also write the rows not saved yet when Windows signs out or shuts down, and when the process
+    // exits (the app sets it; tests don't, so they hook nothing global).
+    public bool FlushAtSessionEnd { get; init; }
+
     // The first sample is taken at once (it also starts the processor measurement and the backfill).
     public void Start()
     {
-        lock (timerGate) timer ??= new System.Threading.Timer(_ => Sample(), null, TimeSpan.Zero, Every);
+        lock (timerGate)
+        {
+            timer ??= new System.Threading.Timer(_ => Sample(), null, TimeSpan.Zero, Every);
+            if (FlushAtSessionEnd && !hooked)
+            {
+                hooked = true;
+                try { Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding; }
+                catch (Exception) { }
+                AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+            }
+        }
     }
 
+    void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs e) => store.Flush();
+    void OnProcessExit(object? sender, EventArgs e) => store.Flush();
+
+    // Stops the samples and writes what isn't in the file yet.
     public void Dispose()
     {
         lock (timerGate)
         {
             timer?.Dispose();
             timer = null;
+            if (hooked)
+            {
+                hooked = false;
+                try { Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding; }
+                catch (Exception) { }
+                AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
+            }
         }
+        store.Flush();
     }
 
     // One sample, now. Safe to call from any thread; one at a time (a call that arrives while

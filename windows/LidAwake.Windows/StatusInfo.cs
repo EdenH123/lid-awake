@@ -21,7 +21,9 @@ public interface ISystemReadings
 // charging, 128 = no battery, 255 = unknown. Percent 0 to 100, 255 = unknown. LifeSeconds -1 = unknown.
 public readonly record struct PowerReading(byte AcLineStatus, byte BatteryFlag, byte BatteryLifePercent, long LifeSeconds);
 
-public readonly record struct MemoryReading(ulong Total, ulong Available);
+// CommitLimit and CommitAvailable: GlobalMemoryStatusEx's ullTotalPageFile and ullAvailPageFile, the
+// memory programs can be promised (RAM plus page files) and what is left of it (0: unknown).
+public readonly record struct MemoryReading(ulong Total, ulong Available, ulong CommitLimit = 0, ulong CommitAvailable = 0);
 
 // GetSystemTimes, in 100-nanosecond units since boot. Kernel time includes idle time.
 public readonly record struct CpuTimes(ulong Idle, ulong Kernel, ulong User);

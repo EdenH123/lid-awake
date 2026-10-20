@@ -31,7 +31,7 @@ public sealed class HistoryAppsTests : IDisposable
         catch (UnauthorizedAccessException) { }
     }
 
-    HistoryStore NewStore(int cores = 4) => new(folder, () => now, cores) { Icons = icons };
+    HistoryStore NewStore(int cores = 4) => new(folder, () => now, cores, TimeSpan.Zero) { Icons = icons };
 
     static JsonElement Run(object answer)
     {

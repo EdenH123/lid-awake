@@ -17,6 +17,55 @@ public sealed class ProcessTableTests
 
     static CpuApp? Who(ProcessEntry p) => AppCpu.Who(p, Windows, exe => Path.GetFileNameWithoutExtension(exe));
 
+    // ---- the page files (a fake NtQuerySystemInformation) ----
+
+    static void Fill(NativeBuffer buffer, int length, byte value) =>
+        System.Runtime.InteropServices.Marshal.Copy(Enumerable.Repeat(value, length).ToArray(), 0, buffer.DangerousGetHandle(), length);
+
+    // No page file: Windows answers success with a length of 0 and writes nothing. Whatever the
+    // memory held must not be read as page-file use.
+    [Fact]
+    public void NoPageFileIsZero()
+    {
+        Assert.Equal(0UL, ProcessTable.PageFileInUse((int _, NativeBuffer buffer, int length, out int needed) =>
+        {
+            Fill(buffer, length, 0xFF);
+            needed = 0;
+            return 0;
+        }));
+    }
+
+    // The buffer starts zeroed, and only the bytes Windows wrote are read.
+    [Fact]
+    public void OnlyTheEntriesWindowsWroteAreSummed()
+    {
+        int calls = 0;
+        var used = ProcessTable.PageFileInUse((int infoClass, NativeBuffer buffer, int length, out int needed) =>
+        {
+            calls++;
+            Assert.Equal(18, infoClass);
+            if (calls == 1) { needed = 10_000; return 0xC0000004; }  // too small: grown and asked again
+            Assert.True(length >= 10_000);
+            var p = buffer.DangerousGetHandle();
+            System.Runtime.InteropServices.Marshal.WriteInt32(p, 0, 0);     // the last (only) entry
+            System.Runtime.InteropServices.Marshal.WriteInt32(p, 8, 10);    // 10 pages in use
+            needed = 32;
+            return 0;
+        });
+        Assert.Equal(2, calls);
+        Assert.Equal(10UL * (ulong)Environment.SystemPageSize, used);
+        Assert.Null(ProcessTable.PageFileInUse((int _, NativeBuffer _, int _, out int needed) => { needed = 0; return 0xC0000022; }));
+    }
+
+    [Fact]
+    public void ABufferStartsZeroed()
+    {
+        using var buffer = NativeBuffer.Allocate(4096);
+        var bytes = new byte[4096];
+        System.Runtime.InteropServices.Marshal.Copy(buffer.DangerousGetHandle(), bytes, 0, bytes.Length);
+        Assert.All(bytes, b => Assert.Equal(0, b));
+    }
+
     // ---- who used the processor ----
 
     [Fact]

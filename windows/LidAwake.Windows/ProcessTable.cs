@@ -46,6 +46,9 @@ public sealed class ProcessTable : IProcessTable
     [DllImport("ntdll.dll", ExactSpelling = true), DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     static extern uint NtQuerySystemInformation(int infoClass, NativeBuffer buffer, int length, out int returnLength);
 
+    // The NtQuerySystemInformation call itself (tests pass a fake one).
+    internal delegate uint NtQuery(int infoClass, NativeBuffer buffer, int length, out int returnLength);
+
     readonly object gate = new();
     readonly Dictionary<(int Pid, long Created), string?> paths = new();
     readonly Func<int, string?> exePath;
@@ -82,7 +85,7 @@ public sealed class ProcessTable : IProcessTable
     List<ProcessEntry>? Read()
     {
         if (IntPtr.Size != 8) return null;
-        using var buffer = Query(SystemProcessInformation, ref processBuffer);
+        using var buffer = Query(SystemProcessInformation, ref processBuffer, NtQuerySystemInformation);
         if (buffer == null) return null;
         var list = new List<ProcessEntry>();
         var alive = new HashSet<(int, long)>();
@@ -141,13 +144,16 @@ public sealed class ProcessTable : IProcessTable
     }
 
     // Bytes of the page files in use (the memory moved to disk), or null when Windows didn't say.
-    public static ulong? PageFileInUse()
+    // No page file: 0 (Windows fills in nothing and answers a length of 0).
+    public static ulong? PageFileInUse() => PageFileInUse(NtQuerySystemInformation);
+
+    internal static ulong? PageFileInUse(NtQuery call)
     {
         try
         {
             if (IntPtr.Size != 8) return null;
             int size = 4096;
-            using var buffer = Query(SystemPageFileInformation, ref size);
+            using var buffer = Query(SystemPageFileInformation, ref size, call);
             if (buffer == null) return null;
             ulong pages = 0;
             bool added = false;
@@ -177,16 +183,17 @@ public sealed class ProcessTable : IProcessTable
 
     // One NtQuerySystemInformation call, the buffer grown while Windows says it is too small (the
     // process list changes between two calls, so a little more is added). `size` keeps the size
-    // that worked, for the next call. null: any other failure, or more than 64 MB.
-    static NativeBuffer? Query(int infoClass, ref int size)
+    // that worked, for the next call. null: any other failure, or more than 64 MB. The buffer
+    // starts zeroed, and only the bytes Windows says it wrote are read (0: no entries at all).
+    static NativeBuffer? Query(int infoClass, ref int size, NtQuery call)
     {
         for (int attempt = 0; attempt < 8 && size > 0 && size <= MaxBuffer; attempt++)
         {
             var buffer = NativeBuffer.Allocate(size);
-            uint status = NtQuerySystemInformation(infoClass, buffer, size, out int needed);
+            uint status = call(infoClass, buffer, size, out int needed);
             if (status == 0)
             {
-                buffer.Used = needed > 0 && needed <= size ? needed : size;
+                buffer.Used = Math.Clamp(needed, 0, size);
                 return buffer;
             }
             buffer.Dispose();
@@ -211,6 +218,12 @@ public sealed class ProcessTable : IProcessTable
         return path.StartsWith(folder, StringComparison.OrdinalIgnoreCase);
     }
 
+    // Windows' kernel processes, which have no exe: the idle process (pid 0), System (pid 4),
+    // Registry, Memory Compression and Secure System.
+    static readonly HashSet<string> KernelNames = new(StringComparer.OrdinalIgnoreCase) { "System", "Registry", "Memory Compression", "Secure System" };
+
+    public static bool IsKernel(ProcessEntry p) => p.Pid is 0 or 4 || (p.Path == null && KernelNames.Contains(p.Name));
+
     public static string WindowsFolder()
     {
         try { return Environment.GetFolderPath(Environment.SpecialFolder.Windows); }
@@ -226,10 +239,13 @@ sealed class NativeBuffer : SafeHandleZeroOrMinusOneIsInvalid
     // Bytes Windows filled in.
     public int Used { get; set; }
 
-    public static NativeBuffer Allocate(int size)
+    // `size` bytes, all zero.
+    public static unsafe NativeBuffer Allocate(int size)
     {
         var buffer = new NativeBuffer();
-        buffer.SetHandle(Marshal.AllocHGlobal(size));
+        var memory = Marshal.AllocHGlobal(size);
+        NativeMemory.Clear((void*)memory, (nuint)size);
+        buffer.SetHandle(memory);
         return buffer;
     }
 

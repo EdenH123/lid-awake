@@ -205,7 +205,7 @@ public sealed class HistoryRouteTests : IDisposable
         };
         server.Memory = new MemoryInfo(new FakeMemorySource
         {
-            Now = new MemoryCounts(16 * GiB, 6 * GiB, GiB, 5 * GiB, 8 * GiB, 24 * GiB, 0, null, false),
+            Now = new MemoryCounts(16 * GiB, 6 * GiB, GiB, 5 * GiB, 8 * GiB, 24 * GiB, 0, false),
         }, processes, @"C:\Windows", exe => "Chrome");
         Assert.Equal(401, (await Get("/memory", null)).Code);
         var cookie = await SignIn();
@@ -221,6 +221,33 @@ public sealed class HistoryRouteTests : IDisposable
 
         server.Memory = null;
         Assert.Equal(404, (await Get("/memory", cookie)).Code);
+    }
+
+    // /app-icon.png also shows the icon of a program in the memory window's last answers, one the
+    // Apps page knows nothing of (a background program); any other id stays 404.
+    [Fact]
+    public async Task AppIconFallsBackToTheMemoryWindowsPrograms()
+    {
+        const ulong GiB = 1UL << 30;
+        const string Exe = @"C:\Tools\builder.exe";
+        server.Apps = new PhoneApps(new Settings(Path.Combine(folder, "apps")), new FakeAppProcesses(), new FakeAppActions(), new FakeAppIcons());
+        var memoryIcons = new FakeAppIcons();
+        server.Memory = new MemoryInfo(new FakeMemorySource(), new FakeProcessTable
+        {
+            Next = new ProcessSnapshot(new[] { new ProcessEntry(10, 1, "builder.exe", Exe, GiB, GiB, 0) }, 1),
+        }, @"C:\Windows", exe => "Builder") { Icons = memoryIcons };
+        var cookie = await SignIn();
+        var id = PhoneApps.Id(Exe);
+        Assert.Equal(404, (await Get("/app-icon.png?id=" + id, cookie)).Code);   // not in an answer yet
+        Assert.Equal(200, (await Get("/memory", cookie)).Code);
+        var icon = await Get("/app-icon.png?id=" + id, cookie);
+        Assert.Equal(200, icon.Code);
+        Assert.Equal("image/png", icon.Type);
+        Assert.Equal((Exe, 256), Assert.Single(memoryIcons.Asked));
+        foreach (var other in new[] { PhoneApps.Id(@"C:\Windows\notepad.exe"), Uri.EscapeDataString(Exe), "" })
+            Assert.Equal(404, (await Get("/app-icon.png?id=" + other, cookie)).Code);
+        Assert.Single(memoryIcons.Asked);
+        Assert.Equal(401, (await Get("/app-icon.png?id=" + id, null)).Code);
     }
 
     [Fact]
