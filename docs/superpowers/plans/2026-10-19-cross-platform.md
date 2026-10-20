@@ -1882,6 +1882,31 @@ Each task gets its own worktree and branch off `claude/windows-phase-3`: `claude
 
 **Tests:** fakes for the lid and display notifications → `/status`; save, lower and restore brightness, including crash recovery from machine.json; ES_DISPLAY_REQUIRED held only while watched (through a fake); WMI failure → no change, one log line.
 
+### Task 25: Camera and microphone on Windows (parallel; wired at merge with 18 and 22)
+
+**Contract:** docs/API.md `POST /camera/options`, `POST /camera/unlock`, §7.2 (the camera setup message, camera video `[3|4][Int64 µs][AVCC]`, sound `[5][UInt32 rate][mu-law]`, `cameraError`/`cameraStopped`), §7.5 (ticket flow, 10-minute close, talk-back limits), and §7.3 (`camera`, `cameraKey`, `talk` messages). Mac reference: CameraStream.swift, the camera parts of LiveServer.swift, and the Server.swift camera routes.
+
+**Ruling P3-8:** this task is built in parallel with Task 18 (passkeys) and Task 22 (the live socket and H.264 encoder). It doesn't depend on their code. It defines small seams, and the controller wires them at merge:
+- `ICameraPasskeys`: create a `camera`-purpose challenge, and verify an assertion with the same checks as login. This is the Task 18 Passkeys port.
+- `IVideoEncoderFactory`: create an H.264 encoder for a given size and bit rate, plus an AVCC/avcC/codec-string helper. This is the Task 22 encoder.
+- `ICameraSocket`: send setup, video, sound, `cameraError`/`cameraStopped`, and receive `camera`/`cameraKey`/`talk`. This is the Task 22 LiveServer.
+- In this task, test fakes implement all three.
+
+**Windows:**
+- **Camera capture.** Media Foundation source reader on the video capture device. Prefer an external USB camera over the built-in one, as the Mac does; use 1280×720 when available. Frames are NV12 or converted, and capture starts only while the camera socket is open, so the webcam light is only on then.
+- **Microphone.** Capture through the Media Foundation audio source (or WASAPI), resampled to 16 kHz mono. Use the first channel and μ-law encode, in chunks of about 0.1 s (`rate/10` samples), exactly as the Mac's `addSound`.
+- **Talk-back.** Decode μ-law to 16 kHz PCM and play it on the default output (WASAPI or MF media session). Play chunks back to back, and drop them when more than about 1 s behind. Accept at most 4000 bytes per message. Ignore them silently unless the camera is open and allowed.
+- **Tickets.** One-time, bound to the session that asked, with a short life as on the Mac.
+- **Ten-minute close.** After 10 minutes the camera closes with the exact `cameraStopped` text.
+- **Owner switch.** "Allow camera & microphone from phone" in the tray, off by default, stored as `cameraFromPhone`. It needs `remoteScreen`. Turning it off stops the camera with the switch-off `cameraStopped` text.
+- **`/status`.** `cameraAllowed` = remoteScreen && cameraFromPhone.
+- **Routes.** `/camera/options` and `/camera/unlock` use the API.md answers (Windows wording through `localize`), going through `ICameraPasskeys`.
+- **Activity log.** "Camera opened from the phone" / "Camera closed".
+- **Lid closed.** If no camera can be opened with the lid closed, send the Mac's lid-closed `cameraError` wording adapted to the PC.
+- **Feature.** `"camera"`.
+
+**Tests:** μ-law encode/decode against the G.711 table; chunk timing and size; talk-back limits and drop-behind; ticket single-use and session binding; the 10-minute close with an injectable clock; the switch-off stop; the routes with a fake `ICameraPasskeys`; a camera socket flow with a fake `ICameraSocket` (setup → frames → `cameraKey` → stop); device choice (external preferred) with a fake device list. Real-device tests must not fail on CI, which has no camera; report what the runner had.
+
 Remaining Phase 3 features, one task each, in this order:
 
 | Feature | Mac source to port | Windows technology |
