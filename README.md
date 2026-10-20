@@ -143,6 +143,7 @@ You don't need to install any programming tools.
    - If Windows says **"Windows protected your PC"**, click **More info** → **Run anyway**.
    - If it asks **"Do you want to run this file?"**, click **Run**.
 5. A window shows each step with **[OK]**. If a line shows **[X]**, it tells you what to do (for example "Tailscale is not signed in"). Do it, then open **Install Lid Awake (Windows)** again.
+6. If you use **Claude Code** on the laptop, the last step asks about **Claude alerts on your phone (optional)**: **Turn it on? [Y/n]**. Press **Enter** to turn it on: your phone then shows your Claude usage after each reply and alerts you when Claude finishes or needs you. It adds Lid Awake to Claude Code's settings and backs them up first. Type **n** to skip it; you can turn it on later from the tray (see **Claude on Windows** below).
 
 > Already have the source ZIP and the .NET 8 SDK installed? The same installer builds the app for you.
 
@@ -166,7 +167,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 ### Every day on Windows
 
 - **Turn it on:** right-click the tray icon → **Lid Awake on**. You can turn it **off** from your phone too; the laptop then says **Turned off from your phone** at the tray.
-- **See how it is at a glance:** the tray icon is a moon while Lid Awake is off and a cup while it's on. It changes within a second when your phone uses the laptop: an **eye** while the screen is viewed (also when the phone falls back to still pictures), a **hand** while the phone clicks or types, a **video camera** while the camera is watched. Point at the icon for the same in words, and for the time left on the timer. The menu's first (grey) line says it too, for example **Turns off in 1:23:45**, **On, no timer** or **Screen being viewed from your phone**, and the grey line below the safety limits shows the battery, for example **Battery 80% · full in 1h 5m · 31.2°C** (or **charging** while the battery can't say how long).
+- **See how it is at a glance:** the tray icon is a moon while Lid Awake is off and a cup while it's on. It changes within a second when your phone uses the laptop: an **eye** while the screen is viewed (also when the phone falls back to still pictures), a **hand** while the phone clicks or types, a **video camera** while the camera is watched. Point at the icon for the same in words, and for the time left on the timer. The menu's first (grey) line says it too, for example **Turns off in 1:23:45**, **On, no timer** or **Screen being viewed from your phone**, and a grey line further down, below the safety limits and the Claude items, shows the battery, for example **Battery 80% · full in 1h 5m · 31.2°C** (or **charging** while the battery can't say how long).
 - **Turn it on for a while only:** tray icon → **Turn off after** (for example 2 hours). When the time is up, Lid Awake turns itself off.
 - **Open the phone page on the laptop:** tray icon → **Open live page** (it needs Tailscale's name for the laptop; until Tailscale has one, a message says so).
 - **Signed-in devices:** tray icon → **Signed-in devices** lists each phone or browser signed in, with the day and how (password, or Face ID or fingerprint). Click one to sign it out, or **Sign out all devices**. After too many wrong passwords, sign-in is locked for a while: **Allow password sign-in again** ends that at once. **Show activity log** is there too.
@@ -237,6 +238,7 @@ These work on the Mac only:
 
 - **Update:** download the new LidAwake-Windows.zip (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are. If Lid Awake is on while you update, the update turns it off and puts the lid setting back. Turn it on again afterwards.
 - **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was (and the screen brightness, if a crash left it lowered).
+- **After removing it, restart any Claude Code sessions that are open:** they keep the hooks they loaded when they started, until you restart them.
 
 ### Make a new release (for the maintainer)
 
