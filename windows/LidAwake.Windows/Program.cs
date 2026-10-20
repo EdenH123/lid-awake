@@ -29,6 +29,7 @@ static class Program
         var log = new AccessLog();
         KeepAwake.Log = log.Write;
         WlanReader.Log = log.Write;
+        TemperatureSources.Log = log.Write;
         // Put back what a crash or a forced stop left behind, before anything else (and before
         // any message could wait for a click): the lid action, and Serve if Lid Awake added it.
         KeepAwake.Off(machine);

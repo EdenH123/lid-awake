@@ -26,9 +26,10 @@ public static class TemperatureMath
 }
 
 // One round of temperature readings, in °C, each null when its source has none. They are kept
-// apart because they mean different things: the battery's own sensor (limit maxBatteryTemp, 40 °C,
-// and the only one sent as batteryTemp), and the ACPI thermal zones, which measure the processor
-// or the board, where 40 to 60 °C is normal (limit MaxPcTemp, 90 °C).
+// apart because they mean different things: the battery (its own sensor, or a laptop maker's
+// sensor labelled for the battery; limit maxBatteryTemp, 40 °C, and the only one sent as
+// batteryTemp), and the thermal zones or a maker's processor or board sensor, where 40 to 60 °C is
+// normal (limit MaxPcTemp, 90 °C).
 public readonly record struct TemperatureReading(double? Battery, double? Zone)
 {
     public static readonly TemperatureReading None = new(null, null);
@@ -37,19 +38,23 @@ public readonly record struct TemperatureReading(double? Battery, double? Zone)
     public bool Any => Battery != null || Zone != null;
 }
 
-// Both sources, every round (as the Mac checks both the battery temperature and the thermal state).
-// Never throws; blocks for up to about 3 seconds (WMI), so never call it on the UI thread
-// (HeatSensor calls it from the safety check's background timer).
+// Windows' own sources every round (as the Mac checks both the battery temperature and the thermal
+// state), and the laptop makers' WMI sensors when those give nothing (TemperatureChain). Never
+// throws; blocks for about 3 seconds per WMI query that answers slowly, so never call it on the UI
+// thread (HeatSensor calls it from the safety check's background timer).
 public static class TemperatureSources
 {
+    // Told which source the temperature comes from, once per source (the tray sets this to the
+    // activity log's Write): "Temperature from HP BIOS sensors".
+    public static Action<string>? Log { get; set; }
+
+    static readonly TemperatureChain chain = new(BatteryTemperature.Read, ThermalZones.Read,
+        () => ThermalZoneReading.Read()?.Hottest, VendorSensors.All, Wmi.Shared, log: text => Log?.Invoke(text));
+
     public static TemperatureReading Read()
     {
-        double? battery = null, zone = null;
-        try { battery = BatteryTemperature.Read(); }
-        catch (Exception) { }
-        try { zone = ThermalZones.Read(); }
-        catch (Exception) { }
-        return new TemperatureReading(battery, zone);
+        try { return chain.Read(); }
+        catch (Exception) { return TemperatureReading.None; }
     }
 }
 
@@ -356,23 +361,9 @@ public static class BatteryTemperature
 public static class ThermalZones
 {
     public static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(3);
-    static readonly object gate = new();
-    static Task<double?>? pending;
+    static readonly OneAtATime<double?> query = new();
 
-    public static double? Read()
-    {
-        try
-        {
-            Task<double?> query;
-            lock (gate)
-            {
-                if (pending is { IsCompleted: false }) return null;
-                query = pending = Task.Run(Query);
-            }
-            return query.Wait(QueryTimeout) ? query.Result : null;
-        }
-        catch (Exception) { return null; }
-    }
+    public static double? Read() => query.Run(Query, QueryTimeout, null);
 
     static double? Query()
     {
@@ -402,17 +393,7 @@ public static class ThermalZones
     // ThermalZoneInformation); anything else (missing, another type) is no reading.
     internal static long? Whole(ManagementBaseObject zone, string name)
     {
-        try
-        {
-            return zone[name] switch
-            {
-                uint u => u,
-                int i => i,
-                long l => l,
-                ulong ul when ul <= long.MaxValue => (long)ul,
-                _ => null,
-            };
-        }
+        try { return WmiValues.Whole(zone[name]); }
         catch (Exception) { return null; }
     }
 }
