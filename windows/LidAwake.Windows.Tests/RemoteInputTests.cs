@@ -973,4 +973,27 @@ public class RemoteControlTests : IDisposable
         Assert.DoesNotContain("control", s.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
         Assert.False(s.GetProperty("controlPermission").GetBoolean());
     }
+
+    // The tray's hand: an accepted command shows it for 5 seconds (the Mac's window); a refused
+    // one doesn't.
+    [Fact]
+    public void ControllingLastsFiveSecondsAfterAnAcceptedCommand()
+    {
+        Assert.False(control.Controlling);
+        control.Perform(J("""{"type":"click"}"""));  // the switches are off: refused
+        Assert.False(control.Controlling);
+        BothOn();
+        control.Perform(J("""{"type":"click"}"""));
+        Assert.True(control.Controlling);
+        now += RemoteControl.ControllingFor - 1;
+        Assert.True(control.Controlling);
+        now += 1;
+        Assert.False(control.Controlling);
+        control.Perform(J("""{"type":"ping"}"""));
+        Assert.True(control.Controlling);
+        control.SetControl(false);  // view only from now on
+        now += RemoteControl.ControllingFor;
+        control.Perform(J("""{"type":"click"}"""));
+        Assert.False(control.Controlling);
+    }
 }

@@ -89,6 +89,10 @@ public sealed class Tailnet
         return r.Ok ? r.Output : null;
     }
 
+    // Funnel (the open internet) was on for this PC and Serve turned it off: the tray says so, as
+    // the Mac does. Raised on the thread that publishes the page; a handler that throws is ignored.
+    public event Action? FunnelTurnedOff;
+
     public string? Host => settings.Get<string>(HostKey);
     public string? Owner => settings.Get<string>(OwnerKey);
 
@@ -270,7 +274,12 @@ public sealed class Tailnet
             var first = exec("serve status --json");
             if (first.Missing) return null;
             var status = first.Ok ? first.Output : "";
-            if (HasFunnel(status)) Run("funnel --https=443 off");
+            // Told only when Tailscale really turned it off.
+            if (HasFunnel(status) && Run("funnel --https=443 off") != null)
+            {
+                try { FunnelTurnedOff?.Invoke(); }
+                catch (Exception) { }
+            }
             var live = livePort;
             // No live socket of ours (it isn't running, or another program holds its port): a
             // /live mapping to that port left from before (a crash) goes, so the phone's cookie

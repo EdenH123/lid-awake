@@ -495,6 +495,7 @@ public sealed class RemoteControl : IInputSink
     readonly object gate = new();
     readonly object offGate = new();
     long lastWake = long.MinValue;
+    long? lastInput;  // under gate: when the phone's last accepted command was carried out
     volatile bool screenOff;
     Task? displayOff;  // the display-off broadcast in flight, if any
 
@@ -524,6 +525,22 @@ public sealed class RemoteControl : IInputSink
 
     public bool LidClosed => Safe(lidClosed);
 
+    // The phone clicked or typed in the last few seconds: the tray icon shows a hand meanwhile, as
+    // the Mac's menu bar does (LiveServer.swift's activity, 5 seconds since the last input).
+    public const long ControllingFor = 5000;
+
+    public bool Controlling
+    {
+        get
+        {
+            lock (gate)
+            {
+                long now = clock();
+                return lastInput is { } at && now - at >= 0 && now - at < ControllingFor;
+            }
+        }
+    }
+
     // From the tray. Turned off, a button the phone was holding is let go.
     public void SetControl(bool on)
     {
@@ -539,6 +556,7 @@ public sealed class RemoteControl : IInputSink
     public void Perform(JsonElement command)
     {
         if (Refusal() != null) return;
+        lock (gate) lastInput = clock();
         WakeSoon();
         injector.Perform(command);
     }

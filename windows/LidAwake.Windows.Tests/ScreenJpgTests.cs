@@ -72,8 +72,11 @@ public class ScreenJpgTests : IAsyncLifetime
     public async Task APictureThenNothingNewThenTheNextOne()
     {
         screens.Changing = false;
+        Assert.False(server.ScreenPolls.Viewed);
         var first = await Send(port, "GET", "/screen.jpg?after=0");
         Assert.Equal(200, (int)first.StatusCode);
+        // The tray shows the eye for a phone on still pictures too.
+        Assert.True(server.ScreenPolls.Viewed);
         Assert.Equal("image/jpeg", first.Content.Headers.ContentType?.MediaType);
         var bytes = await first.Content.ReadAsByteArrayAsync();
         Assert.Equal(new byte[] { 0xFF, 0xD8 }, bytes[..2]);
@@ -104,6 +107,7 @@ public class ScreenJpgTests : IAsyncLifetime
         Assert.Equal(403, (int)r.StatusCode);
         Assert.StartsWith("Screen access is off.", await r.Content.ReadAsStringAsync());
         Assert.False(feed.IsCapturing);
+        Assert.False(server.ScreenPolls.Viewed);  // refused: nobody sees the screen
     }
 
     [Fact]
