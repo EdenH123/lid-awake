@@ -20,32 +20,35 @@ public static class Splash
     // The <link> tags that replace <!--SPLASH--> in the page head, one per size, as on the Mac.
     public static readonly string LinkTags = string.Join("\n", Sizes.Select(s =>
         $"<link rel=\"apple-touch-startup-image\" media=\"(device-width: {s.W}px) and (device-height: {s.H}px) and "
-        + $"(-webkit-device-pixel-ratio: {s.Scale}) and (orientation: portrait)\" href=\"/splash/{s.W * s.Scale}x{s.H * s.Scale}.png\">"));
+        + $"(-webkit-device-pixel-ratio: {s.Scale}) and (orientation: portrait)\" href=\"{PathOf(s)}\">"));
 
     static readonly Dictionary<string, byte[]> cache = new();
     static readonly object gate = new();
 
-    // "/splash/1206x2622.png" → the PNG, for listed sizes only (null otherwise: 404).
+    // "/splash/1206x2622.png" → the PNG, for listed sizes only, spelled exactly as the link tags
+    // spell them (null otherwise: 404). Anything else, "/splash/01206x2622.png" too, is not drawn,
+    // so the cache holds at most one picture per listed size.
     public static byte[]? Png(string path)
     {
-        const string Prefix = "/splash/", Suffix = ".png";
-        if (!path.StartsWith(Prefix, StringComparison.Ordinal) || !path.EndsWith(Suffix, StringComparison.Ordinal)
-            || path.Length <= Prefix.Length + Suffix.Length) return null;
-        var name = path[Prefix.Length..^Suffix.Length];
-        var parts = name.Split('x');
-        if (parts.Length != 2
-            || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var width)
-            || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var height)) return null;
-        int scale = Sizes.FirstOrDefault(s => s.W * s.Scale == width && s.H * s.Scale == height).Scale;
+        var (w, h, scale) = Sizes.FirstOrDefault(s => path == PathOf(s));
         if (scale == 0) return null;
         lock (gate)
         {
-            if (cache.TryGetValue(name, out var cached)) return cached;
-            var png = Draw(width, height, scale);
-            cache[name] = png;
+            if (cache.TryGetValue(path, out var cached)) return cached;
+            var png = Draw(w * scale, h * scale, scale);
+            cache[path] = png;
             return png;
         }
     }
+
+    // How many pictures are kept (for the tests).
+    internal static int Cached
+    {
+        get { lock (gate) return cache.Count; }
+    }
+
+    static string PathOf((int W, int H, int Scale) s) =>
+        string.Create(CultureInfo.InvariantCulture, $"/splash/{s.W * s.Scale}x{s.H * s.Scale}.png");
 
     // A closed laptop on black, exactly where the page's opening animation starts (#intro in the
     // page: the computer is min(58% of the width, 300 pt) wide, centred), so the lid opens

@@ -17,17 +17,21 @@ public interface ISlowReadings
 // A value that takes a while to read (a WMI query, the battery drivers, tailscale.exe), read in the
 // background at most every `every`: Latest answers at once with the last value read (null until
 // the first read is done) and starts a new read when that one is older. One read at a time; a read
-// that throws or answers null keeps the last value. `start` runs the read (Task.Run; tests run it
+// that throws or answers null keeps the last value, but only for MaxAgeTimes `every` after it was
+// read: older than that it counts as unknown (null) until a read succeeds again, so a reading that
+// keeps failing never shows a stale value for long. `start` runs the read (Task.Run; tests run it
 // at once), `clock` is milliseconds that only go forward.
 public sealed class BackgroundValue<T> where T : class
 {
+    public const int MaxAgeTimes = 3;
     readonly Func<T?> read;
     readonly long everyMs;
     readonly Func<long> clock;
     readonly Action<Action> start;
     readonly object gate = new();
     T? value;
-    long? readAt;
+    long valueAt;   // when `value` was read
+    long? readAt;   // when the last read ended, good or not
     bool reading;
 
     public BackgroundValue(Func<T?> read, TimeSpan every, Func<long>? clock = null, Action<Action>? start = null)
@@ -52,7 +56,7 @@ public sealed class BackgroundValue<T> where T : class
                 try { start(Read); }
                 catch (Exception) { lock (gate) reading = false; }
             }
-            lock (gate) return value;
+            lock (gate) return value != null && clock() - valueAt <= everyMs * MaxAgeTimes ? value : null;
         }
     }
 
@@ -63,8 +67,8 @@ public sealed class BackgroundValue<T> where T : class
         catch (Exception) { }
         lock (gate)
         {
-            if (now != null) value = now;
             readAt = clock();
+            if (now != null) (value, valueAt) = (now, readAt.Value);
             reading = false;
         }
     }
@@ -247,8 +251,8 @@ public sealed class SystemReadings : ISystemReadings, ISlowReadings
 
     public long UptimeSeconds() => Environment.TickCount64 / 1000;
 
-    // In points, as the Mac sends it: the page turns the phone's finger movement into the PC's
-    // points with it, and InputInjector turns those back into pixels (DisplayScale).
+    // In points, as the Mac sends it: the page divides it by the picture's width to turn a drag on
+    // the Screen tab into the PC's points for `scroll`.
     public int ScreenWidth()
     {
         try { return Points(Screen.PrimaryScreen?.Bounds.Width ?? 0, DisplayScale.PrimaryDpi()); }

@@ -537,15 +537,17 @@ public sealed record ThermalZoneReading(double? Hottest, int? PassiveLimit)
 
 // thermalState (6.1) from the thermal zones, in the Mac's four words. The hottest zone is measured
 // against the 90 °C limit at which Lid Awake turns off (Limits.MaxPcTemp), and Windows slowing the
-// processor down to cool it (PercentPassiveLimit under 100) counts as the Mac's "serious".
+// processor down to cool it (PercentPassiveLimit under SeriousPassiveLimit, so a moment's light
+// throttling doesn't flicker) counts as the Mac's "serious".
 public static class ThermalState
 {
     public const string Unknown = "unknown";
     // Within this much of the limit: "serious", and within FairBelow: "fair".
     public const int SeriousBelow = 5;
     public const int FairBelow = 15;
-    // The processor held to half its speed or less: "critical", as at the limit itself.
+    // The processor held to half its speed or less: "critical", as at the limit itself; under 90%: "serious".
     public const int CriticalPassiveLimit = 50;
+    public const int SeriousPassiveLimit = 90;
 
     // `zone` is MSAcpi_ThermalZoneTemperature's hottest (HeatSensor), `zones` the performance
     // counters; the hotter of the two counts. "unknown" when neither has anything (the page shows a dash).
@@ -557,7 +559,7 @@ public static class ThermalState
         if (hottest == null && limit == null) return Unknown;
         double t = hottest ?? double.NegativeInfinity;
         if (t >= Limits.MaxPcTemp || limit <= CriticalPassiveLimit) return "critical";
-        if (limit < 100 || t >= Limits.MaxPcTemp - SeriousBelow) return "serious";
+        if (limit < SeriousPassiveLimit || t >= Limits.MaxPcTemp - SeriousBelow) return "serious";
         if (t >= Limits.MaxPcTemp - FairBelow) return "fair";
         return "nominal";
     }

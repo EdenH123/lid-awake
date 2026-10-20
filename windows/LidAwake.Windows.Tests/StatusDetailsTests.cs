@@ -69,7 +69,18 @@ public class StatusDetailsTests
         now = 30_000;
         fail = true;                    // a read that throws: the same
         Assert.Equal("b", value.Latest);
-        Assert.Equal(4, reads);
+        now = 40_000;                   // read 30 seconds ago: still kept
+        Assert.Equal("b", value.Latest);
+        now = 50_000;                   // over three times the interval: unknown
+        Assert.Null(value.Latest);
+        now = 50_001;
+        Assert.Null(value.Latest);      // not read again yet, still unknown
+        now = 60_000;
+        fail = false;
+        next = "c";                     // until a read works again
+        Assert.Equal("c", value.Latest);
+        Assert.Equal(7, reads);
+        Assert.Equal(3, BackgroundValue<string>.MaxAgeTimes);
     }
 
     [Fact]
@@ -210,7 +221,9 @@ public class StatusDetailsTests
     [InlineData(null, 76.0, null, "fair")]
     [InlineData(null, 40.0, 100, "nominal")]
     [InlineData(null, null, 100, "nominal")]
-    [InlineData(null, 40.0, 99, "serious")]             // Windows slows the processor down: throttling
+    [InlineData(null, 40.0, 99, "nominal")]             // a little throttling comes and goes: not counted
+    [InlineData(null, 40.0, 90, "nominal")]
+    [InlineData(null, 40.0, 89, "serious")]             // Windows holds the processor under 90%
     [InlineData(null, null, 51, "serious")]
     [InlineData(null, null, 50, "critical")]
     [InlineData(95.0, 40.0, 100, "critical")]
@@ -486,8 +499,13 @@ public class StatusDetailsTests
         {
             "/splash/1x1.png", "/splash/1320x2868", "/splash/1320x2868.jpg", "/splash/+1320x2868.png", "/splash/1320x2868x1.png",
             "/splash/.png", "/splash/x.png", "/splash/2868x1320.png", "/splash/01320x2868.png.png", "/sky/1320x2868.png",
+            // Only the exact spelling of the link tags: another one would be another drawing to keep.
+            "/splash/01206x2622.png", "/splash/1206x02622.png", "/splash/001206x2622.png", "/splash/1206X2622.png",
+            "/splash/1206x2622.PNG", "/splash/ 1206x2622.png", "/splash/1206x2622.png ", "//splash/1206x2622.png",
         })
             Assert.Null(Splash.Png(path));
+        Assert.NotNull(Splash.Png("/splash/1206x2622.png"));
+        Assert.InRange(Splash.Cached, 1, Splash.Sizes.Length);
     }
 }
 

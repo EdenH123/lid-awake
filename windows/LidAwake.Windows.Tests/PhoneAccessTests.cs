@@ -289,4 +289,35 @@ public class PhoneAccessTests : IDisposable
         Assert.Empty(wait.Lengths);
         Assert.Single(OffCommands());
     }
+
+    // Signing out within the 8 seconds after turning off (Program's OnSessionEnding while off):
+    // the waiting removal is done now, within SessionEnd's few seconds.
+    [Fact]
+    public async Task ASessionEndingWhileARemovalWaitsRemovesItAtOnce()
+    {
+        var port = FreePort();
+        using var server = NewServer(port);
+        server.Start();
+        var wait = new FakeWait();
+        var phone = new PhoneAccess(tailnet, server, delay: wait.Delay);
+        await phone.Set(true);
+        var off = phone.Set(false);
+        Assert.Empty(OffCommands());
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        SessionEnd.Unserve(phone.Off);
+        Assert.True(clock.Elapsed < SessionEnd.MaxWait + TimeSpan.FromSeconds(1), $"took {clock.Elapsed}");
+        Assert.Single(OffCommands());
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.True(wait.Cancelled(0));
+        await off;
+    }
+
+    [Fact]
+    public void ASessionEndingWhileOffLeavesAServeSetupThatIsNotOursAlone()
+    {
+        using var server = NewServer(FreePort());
+        var phone = new PhoneAccess(tailnet, server, delay: (_, _) => Task.Delay(Timeout.Infinite));
+        SessionEnd.Unserve(phone.Off);
+        lock (commands) Assert.Empty(commands);
+    }
 }

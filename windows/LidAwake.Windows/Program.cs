@@ -391,7 +391,8 @@ sealed class TrayApp : ApplicationContext
     // page is not left on Tailscale, waiting at most a few seconds (SessionEnd).
     void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs e)
     {
-        if (!isOn) return;
+        // Already off: only a removal still waiting its 8 seconds, done now.
+        if (!isOn) { SessionEnd.Unserve(phone.Off); return; }
         isOn = false;
         Countdown.Stop();
         CloseSockets();

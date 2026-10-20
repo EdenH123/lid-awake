@@ -141,9 +141,9 @@ public class RemoteInputTests
         Assert.Equal(new[] { Show(MoveTo(110, 180, 1920, 1080)) }, Sent());
     }
 
-    // The page sends points (its finger movement times screenWidth, in points, over the picture's
-    // width): at 150% one point is one and a half pixels, so a drag across the picture still
-    // crosses the whole screen. Scroll stays in points (a wheel notch scrolls 100 of them).
+    // A move is the computer's points, as on the Mac (the trackpad's phone pixels times its speed
+    // gain): at 150% one point is one and a half pixels, so the pointer goes as far as on a Mac at
+    // the same scaling. Scroll stays in points (a wheel notch scrolls 100 of them).
     [Fact]
     public void MoveTurnsPointsIntoPixelsAtTheDisplaysScale()
     {
@@ -152,7 +152,7 @@ public class RemoteInputTests
         fake.Scale = double.NaN;  // nonsense from Windows: taken as 100%
         Run("""{"type":"move","dx":10,"dy":-20}""");
         Assert.Equal(new[] { Show(MoveTo(115, 170, 1920, 1080)), Show(MoveTo(110, 180, 1920, 1080)) }, Sent());
-        // A drag across the whole picture: screenWidth (points) is the whole width in pixels again.
+        // The width in points (screenWidth) is the whole width in pixels again.
         fake.Calls.Clear();
         fake.Scale = 1.5;
         fake.CursorX = 0;
