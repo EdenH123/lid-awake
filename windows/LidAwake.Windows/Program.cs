@@ -59,7 +59,18 @@ static class Program
         // A modifier key an earlier run left held is let go, as the Mac does at start-up.
         try { control.ReleaseModifiers(); }
         catch (Exception) { }
-        var status = new StatusInfo(readings, limits, heat, phoneApps) { Screen = screen, Control = control };
+        // Screen viewing from the phone: the owner's switch (ScreenSwitch, also read by the control
+        // above), the capture and encoders (only while someone watches), and the live socket on
+        // 127.0.0.1:8788. "screenEncoder": "software" in settings.json skips the graphics card's
+        // encoder. While watched (a phone on the socket, or the capture still running for a poll),
+        // the lid screen keeps the display on.
+        bool ScreenAllowed() => ScreenSwitch.IsOn(settings);
+        var grabbers = new ScreenGrabbers { Note = text => log.Write("Screen: " + text) };
+        using var feed = new ScreenFeed(grabbers.Open,
+            MfH264Encoder.Factory(allowHardware: settings.Get<string>("screenEncoder") != "software"),
+            note: text => log.Write("Screen: " + text));
+        feed.WatchingChanged += ScreenWatch.Capturing;
+        var status = new StatusInfo(readings, limits, heat, phoneApps, ScreenAllowed) { Screen = screen, Control = control };
         // Phone alerts (Web Push). The key and the phones are this PC's own (machine.json); a new
         // password forgets the phones. Sign-ins are announced to them as `security` alerts.
         using var push = new WebPush(machine);
@@ -80,7 +91,7 @@ static class Program
                 limits.Set(name, on);
                 tray?.LimitsChanged();
             },
-            push: push, control: control);
+            push: push, control: control, screen: feed, screenAllowed: ScreenAllowed);
         // The graphs: a sample every minute while the app runs, off the UI thread.
         var history = new HistoryStore();
         server.History = history;
@@ -90,11 +101,20 @@ static class Program
         string? startError = null;
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
+        // Input commands on the socket go to the same control as POST /input (7.6).
+        using var live = new LiveServer(auth, tailnet, () => tray?.IsOn == true, ScreenAllowed, feed, log: log, input: control);
+        live.ViewersChanged += ScreenWatch.LiveViewers;
+        string? liveError = null;
+        try { live.Start(); }
+        catch (Exception e) { liveError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, alerts, screen,
-            phoneApps, startMenu, control);
+        // The page works but the screen's /live isn't published: only the activity log says so.
+        tailnet.LiveNotPublished = said => log.Write("Screen viewing not published by Tailscale (the phone page works): " + said);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, alerts, screen,
+            phoneApps, startMenu, control, live);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
+        if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");
         Application.Run(tray);
     }
 }
@@ -102,6 +122,10 @@ static class Program
 sealed class TrayApp : ApplicationContext
 {
     readonly Settings machine;  // the machine-state settings KeepAwake saves the lid values in
+    readonly Settings settings;
+    readonly LiveServer? live;
+    // The owner's switch for screen viewing from the phone, off until ticked (ScreenSwitch).
+    readonly ToolStripMenuItem screenItem = new("Allow screen from phone");
     readonly Auth auth;
     readonly PhoneAccess phone;
     readonly AccessLog log;
@@ -155,12 +179,15 @@ sealed class TrayApp : ApplicationContext
 
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
                    Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts, LidScreen screen,
-                   PhoneApps? apps = null, IStartMenuSource? startMenu = null, RemoteControl? control = null)
+                   PhoneApps? apps = null, IStartMenuSource? startMenu = null, RemoteControl? control = null,
+                   LiveServer? live = null)
     {
         phoneApps = apps;
         this.startMenu = startMenu;
         this.control = control;
         this.machine = machine;
+        this.settings = settings;
+        this.live = live;
         this.auth = auth;
         this.phone = phone;
         this.log = log;
@@ -208,6 +235,13 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(timerMenu);
         menu.Items.Add(batteryItem);
         menu.Items.Add(heatItem);
+        // "Allow screen from phone" (off to start with), then "Allow control from phone", which needs it.
+        if (live != null)
+        {
+            screenItem.Checked = ScreenSwitch.IsOn(settings);
+            screenItem.Click += (_, _) => SetScreenAllowed(!ScreenSwitch.IsOn(settings));
+            menu.Items.Add(screenItem);
+        }
         if (control != null)
         {
             controlItem.Click += (_, _) => FlipControl();
@@ -215,7 +249,7 @@ sealed class TrayApp : ApplicationContext
             ShowControl();
         }
         // Shown as they are now, and read again in the background (the item follows by Changed).
-        menu.Opening += (_, _) => { ShowLimits(); ShowControl(); RefreshTemperature(); };
+        menu.Opening += (_, _) => { ShowLimits(); ShowScreen(); ShowControl(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
         menu.Items.Add(passkeysMenu);
@@ -278,6 +312,7 @@ sealed class TrayApp : ApplicationContext
         if (!isOn) return;
         isOn = false;
         Countdown.Stop();
+        CloseSockets();
         try
         {
             toggle.Checked = false;
@@ -455,6 +490,31 @@ sealed class TrayApp : ApplicationContext
         }
     }
 
+    // The "Allow screen from phone" switch. Turning it off closes every live socket at once (the
+    // Mac does the same) and lets go of anything the phone held; /screen.jpg, POST /input and
+    // POST /power answer 403 from then on. The control item follows (it needs this switch).
+    void SetScreenAllowed(bool allowed)
+    {
+        try { ScreenSwitch.Set(settings, allowed); }
+        catch (Exception) { return; }  // the settings file couldn't be written: the switch stays as it was
+        ShowScreen();
+        ShowControl();
+        if (!allowed) CloseSockets();
+        log.Write(allowed ? "Screen from phone allowed on the PC" : "Screen from phone turned off on the PC");
+    }
+
+    void ShowScreen() => screenItem.Checked = ScreenSwitch.IsOn(settings);
+
+    // Every live socket closes, and a button or modifier key the phone was holding is let go
+    // (CloseAll does that too; this also covers a POST /input drag with no socket).
+    void CloseSockets()
+    {
+        try { live?.CloseAll(); }
+        catch (Exception) { }
+        try { control?.ReleaseHeld(); }
+        catch (Exception) { }
+    }
+
     // A balloon from the tray icon: "New sign-in to Lid Awake".
     public void Announce(string title, string body) =>
         OnUi(() => icon.ShowBalloonTip(5000, title, body, ToolTipIcon.Info));
@@ -485,6 +545,9 @@ sealed class TrayApp : ApplicationContext
         isOn = on;
         toggle.Checked = on;
         icon.Text = on ? "Lid Awake: on" : "Lid Awake: off";
+        // Off: every live socket closes now, not only at the socket's 2-second check, and nothing
+        // the phone was holding stays held.
+        if (!on) CloseSockets();
         // Serve the page to the phone only while on, as on the Mac, and only if it is our page.
         if (on && !phone.PageRunning)
             icon.ShowBalloonTip(5000, "Phone page not available",

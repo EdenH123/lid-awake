@@ -68,6 +68,7 @@ public class LidScreenTests : IDisposable
     public void Dispose()
     {
         ScreenWatch.Connect(null);
+        ScreenWatch.ResetSources();
         try { Directory.Delete(folder, true); }
         catch (Exception) { }
     }
@@ -428,6 +429,28 @@ public class LidScreenTests : IDisposable
         Assert.False(hold.Holding);
         ScreenWatch.SetViewers(2);
         Assert.True(hold.Holding);
+    }
+
+    [Fact]
+    public void TheSocketAndTheCaptureHoldTheDisplayTogether()
+    {
+        ScreenWatch.ResetSources();
+        ScreenWatch.Connect(screen.SetWatching);
+        screen.SetOn(true);
+        ScreenWatch.LiveViewers(1);
+        ScreenWatch.Capturing(true);
+        Assert.True(hold.Holding);
+        // The last phone left, but the capture still runs (a /screen.jpg poll): still held.
+        ScreenWatch.LiveViewers(0);
+        Assert.True(hold.Holding);
+        ScreenWatch.Capturing(false);
+        Assert.False(hold.Holding);
+        // A phone on the socket alone is enough too.
+        ScreenWatch.LiveViewers(2);
+        Assert.True(hold.Holding);
+        ScreenWatch.LiveViewers(0);
+        Assert.False(hold.Holding);
+        ScreenWatch.ResetSources();
     }
 
     [Fact]

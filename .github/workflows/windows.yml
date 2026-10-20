@@ -28,7 +28,8 @@ jobs:
         run: dotnet build windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release
       - name: Test
         if: hashFiles('windows/LidAwake.Windows.Tests/*.csproj') != ''
-        run: dotnet test windows/LidAwake.Windows.Tests/LidAwake.Windows.Tests.csproj -c Release --logger "console;verbosity=normal"
+        # Detailed, so the output of passing tests shows too (the screen tests say what the runner has: "RUNNER: ...").
+        run: dotnet test windows/LidAwake.Windows.Tests/LidAwake.Windows.Tests.csproj -c Release --logger "console;verbosity=detailed"
       - name: Publish the app for the installer test
         shell: powershell
         run: dotnet publish windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=false -o windows/app

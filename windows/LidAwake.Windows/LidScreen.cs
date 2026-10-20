@@ -311,9 +311,9 @@ public sealed class LidScreen
     }
 }
 
-// What the controller calls when the live screen socket's viewers change (at merge:
-// ScreenWatch.SetViewers(count) or ScreenWatch.SetWatching(count > 0)). Without a listener
-// nothing happens. Program connects it to the LidScreen.
+// What the screen viewing calls when its watchers change (Program: LiveViewers from the live
+// socket, Capturing from the capture). Without a listener nothing happens. Program connects it
+// to the LidScreen.
 public static class ScreenWatch
 {
     static volatile Action<bool>? listener;
@@ -341,6 +341,38 @@ public static class ScreenWatch
     }
 
     public static void SetViewers(int count) => SetWatching(count > 0);
+
+    // The screen's two sources, joined: phones on the live socket (LiveServer.ViewersChanged) and
+    // the capture (ScreenFeed.WatchingChanged, which also runs for /screen.jpg and a little after
+    // the last watcher). Watched while either says so, so one going quiet can't drop the hold
+    // the other still needs. Told under one lock, so the last thing told is the truth.
+    static readonly object sources = new();
+    static int liveViewers;
+    static bool capturing;
+
+    public static void LiveViewers(int count)
+    {
+        lock (sources)
+        {
+            liveViewers = Math.Max(0, count);
+            SetWatching(liveViewers > 0 || capturing);
+        }
+    }
+
+    public static void Capturing(bool on)
+    {
+        lock (sources)
+        {
+            capturing = on;
+            SetWatching(liveViewers > 0 || capturing);
+        }
+    }
+
+    // For the tests: back to nobody watching, without telling anyone.
+    internal static void ResetSources()
+    {
+        lock (sources) { liveViewers = 0; capturing = false; }
+    }
 }
 
 // The real brightness: WMI, root\WMI. WmiMonitorBrightness has one instance per built-in panel

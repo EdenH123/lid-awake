@@ -446,8 +446,8 @@ public sealed class InputRateLimiter
     }
 }
 
-// What the live socket needs to pass input on (docs/API.md 7.6), so it can be wired in when the
-// screen branch lands. The socket does, for each input message: Refusal() (an error sentence, or
+// What the live socket needs to pass input on (docs/API.md 7.6; LiveServer.HandOffInput). The
+// socket does, for each input message: Refusal() (an error sentence, or
 // null; it covers "Lid Awake is on" too), then its InputRateLimiter (drop silently), then
 // TooLong (error TooMuchText), then "ping" → {"pong": true}, else Perform. When a phone that sent
 // input leaves: ReleaseHeld(). Perform checks Refusal() again itself, so a caller that forgets
@@ -465,10 +465,11 @@ public interface IInputSink
 }
 
 // The owner's switches, the input and the power actions, shared by POST /input, POST /power,
-// /status, the tray and (later) the live socket.
+// /status, the tray and the live socket.
 public sealed class RemoteControl : IInputSink
 {
-    public const string ScreenKey = "remoteScreen";
+    // The screen switch is ScreenSwitch's (LiveServer.cs); this is its key, for the tests.
+    public const string ScreenKey = ScreenSwitch.Key;
     public const string ControlKey = "remoteControl";
     public const string ScreenOffText = "Screen access is off.";
     public const string ViewOnlyText = "View only: control from the phone is off in the Lid Awake menu on your PC.";
@@ -503,8 +504,8 @@ public sealed class RemoteControl : IInputSink
         this.lidClosed = lidClosed ?? (() => false);
     }
 
-    // The owner's screen switch (the screen feature adds its tray item; this only reads it).
-    public bool ScreenAllowed => Read(ScreenKey) == true;
+    // The owner's screen switch (the tray's "Allow screen from phone"; this only reads it).
+    public bool ScreenAllowed => ScreenSwitch.IsOn(settings);
 
     // "Allow control from phone": needs the screen switch. Never set, it follows the screen
     // switch, as on the Mac; with nothing set both are off.

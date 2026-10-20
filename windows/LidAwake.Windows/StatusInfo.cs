@@ -99,6 +99,7 @@ public sealed class StatusInfo
     readonly Limits? limits;
     readonly HeatSensor? heat;
     readonly PhoneApps? apps;
+    readonly Func<bool>? screenAllowed;
     readonly object gate = new();
     readonly CpuMeter cpu = new();
     readonly NetMeter net = new();
@@ -113,12 +114,16 @@ public sealed class StatusInfo
     // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
     // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp). `apps` is
     // the owner's list for the phone's Apps page (none: empty lists, and no "apps" in features).
-    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null, PhoneApps? apps = null)
+    // `screenAllowed` is the owner's "Allow screen from phone" switch (ScreenSwitch): with it,
+    // "screen" is in features and remoteScreen follows it (none: no screen viewing on this PC).
+    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null, PhoneApps? apps = null,
+                      Func<bool>? screenAllowed = null)
     {
         this.apps = apps;
         this.readings = readings;
         this.limits = limits;
         this.heat = heat;
+        this.screenAllowed = screenAllowed;
     }
 
     // `timer` is the "Turn off after" setting: timerMinutes is its length and timerRemaining the
@@ -165,6 +170,17 @@ public sealed class StatusInfo
             // "heat" while either source works: the battery's sensor or the thermal zones.
             ["features"] = FeatureList(temperature.Any),
         };
+
+        // 6.2: screen viewing ("screen" is in features, FeatureList). Windows needs no permission
+        // to capture the screen.
+        if (screenAllowed != null)
+        {
+            bool allowed;
+            try { allowed = screenAllowed(); }
+            catch (Exception) { allowed = false; }
+            s["remoteScreen"] = allowed;
+            s["screenPermission"] = true;
+        }
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
         if (lidAwake && timer?.Remaining() is { } left) s["timerRemaining"] = left;
@@ -224,13 +240,15 @@ public sealed class StatusInfo
         return s;
     }
 
-    // "apps" is listed only when the apps routes exist (an app list was given), and "control"
-    // after it only when the control routes do (a RemoteControl was given).
+    // "apps" is listed only when the apps routes exist (an app list was given), "control" after it
+    // only when the control routes do (a RemoteControl was given), and "screen" last only when
+    // /screen.jpg and the live socket do (the screen switch was given).
     string[] FeatureList(bool withHeat)
     {
         IEnumerable<string> list = withHeat ? FeaturesWithHeat : Features;
         if (apps != null) list = list.Append("apps");
         if (Control != null) list = list.Append("control");
+        if (screenAllowed != null) list = list.Append("screen");
         return list.ToArray();
     }
 
