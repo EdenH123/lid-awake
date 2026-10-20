@@ -334,6 +334,86 @@ public class TailnetTests : IDisposable
         Assert.Equal(new[] { "serve --https=443 off" }, commands);
     }
 
+    // The flag that says "Lid Awake added the mapping" is cleared only when the mapping is really
+    // gone: the off command worked, or `serve status` (which itself worked) no longer shows it.
+    const string Off = "serve --https=443 off";
+    const string StatusCommand = "serve status --json";
+
+    [Fact]
+    public async Task AFailedRemovalKeepsTheFlagAndTheNextCallsRetry()
+    {
+        var settings = NewSettings();
+        settings.Set(Tailnet.ServedKey, true);
+        bool offWorks = false;
+        var t = NewTailnet(args => args == Off ? (offWorks ? "" : null) : args == StatusCommand ? Mapped(8787) : "", settings);
+
+        // Turning off: the command fails and the mapping is still there.
+        await t.SetServed(false, 8787);
+        Assert.True(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.Equal(new[] { Off, StatusCommand }, commands);
+
+        // The minute check (the tray runs it while off, too) tries again.
+        commands.Clear();
+        await t.Recheck();
+        Assert.True(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.Equal(new[] { Off, StatusCommand }, commands);
+
+        // So does the next turn-off or start; once it works the flag is cleared.
+        offWorks = true;
+        commands.Clear();
+        await t.SetServed(false, 8787);
+        Assert.Equal(new[] { Off }, commands);
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+
+        // Nothing left to retry.
+        commands.Clear();
+        await t.Recheck();
+        Assert.Empty(commands);
+    }
+
+    [Fact]
+    public void ASuccessfulRemovalClearsTheFlag()
+    {
+        var settings = NewSettings();
+        settings.Set(Tailnet.ServedKey, true);
+        var t = NewTailnet(_ => "", settings);
+        t.UnserveIfOurs();
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.Equal(new[] { Off }, commands);
+    }
+
+    [Fact]
+    public void AFailedCommandWithNoMappingLeftClearsTheFlag()
+    {
+        // The off command failed, but the status shows nothing of ours: it is gone anyway.
+        var settings = NewSettings();
+        settings.Set(Tailnet.ServedKey, true);
+        var t = NewTailnet(args => args == Off ? null : "{}", settings);
+        t.UnserveIfOurs();
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.Equal(new[] { Off, StatusCommand }, commands);
+    }
+
+    [Fact]
+    public void AMappingToAnotherPortDoesNotKeepTheFlag()
+    {
+        var settings = NewSettings();
+        settings.Set(Tailnet.ServedKey, true);
+        var t = NewTailnet(args => args == Off ? null : Mapped(87870), settings);
+        t.UnserveIfOurs();
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+    }
+
+    [Fact]
+    public void WhenTheStatusCannotBeReadEitherTheFlagStays()
+    {
+        var settings = NewSettings();
+        settings.Set(Tailnet.ServedKey, true);
+        var t = NewTailnet(_ => null, settings);
+        t.UnserveIfOurs();
+        Assert.True(settings.Get<bool?>(Tailnet.ServedKey));
+    }
+
     [Fact]
     public void LoopbackIsOnlyThePcItself()
     {

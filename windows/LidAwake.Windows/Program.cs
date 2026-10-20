@@ -54,7 +54,8 @@ sealed class TrayApp : ApplicationContext
     readonly ToolStripMenuItem timerMenu = new("Turn off after");
     // Checked every couple of seconds on the UI thread: when the time is up, Lid Awake turns off.
     readonly System.Windows.Forms.Timer timerCheck = new() { Interval = 2000 };
-    // While on, Tailscale Serve is checked again every minute, as on the Mac (docs/API.md 9).
+    // Tailscale Serve is checked again every minute, as on the Mac (docs/API.md 9): added back
+    // while on, and while off a removal that failed earlier is tried again.
     readonly System.Windows.Forms.Timer serveCheck = new() { Interval = 60_000 };
     // "The phone page isn't published yet" is shown once each time Lid Awake is turned on.
     bool warnedNotPublished;
@@ -85,7 +86,7 @@ sealed class TrayApp : ApplicationContext
         timerCheck.Tick += (_, _) => CheckTimer();
         timerCheck.Start();
         // In the background: the UI thread never waits for Tailscale.
-        serveCheck.Tick += (_, _) => { if (isOn) phone.Recheck(); };
+        serveCheck.Tick += (_, _) => phone.Recheck();
         serveCheck.Start();
         var menu = new ContextMenuStrip();
         menu.Items.Add(toggle);

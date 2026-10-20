@@ -26,6 +26,9 @@ public sealed class Tailnet
     readonly Func<string, CliResult> exec;
     readonly object applyGate = new();
     volatile int wantedPort;  // 0: not served
+    // The port of our page, remembered even while off, to check `serve status` for after a failed
+    // removal. 0 until known; then the default port is used.
+    volatile int knownPort;
 
     // `run` takes the arguments and returns the output, or null when the command could not be
     // run or failed. Tests pass a fake one.
@@ -102,6 +105,7 @@ public sealed class Tailnet
     {
         try
         {
+            knownPort = port;
             var first = exec("serve status --json");
             if (first.Missing) return null;
             var status = first.Ok ? first.Output : "";
@@ -122,18 +126,31 @@ public sealed class Tailnet
     // Take everything away, so nothing on the tailnet can reach the page.
     public void Unserve()
     {
-        try { Run("serve --https=443 off"); }
+        try { TryUnserve(); }
         catch (Exception) { }
     }
 
-    // Unserve, but only when Lid Awake added the mapping (ServedKey); then forget it.
+    // True when the mapping is gone: the off command succeeded, or it failed but `serve status`
+    // (which must itself have worked) no longer maps our port. Otherwise false, and the caller
+    // keeps what it remembered so a later attempt tries again.
+    bool TryUnserve()
+    {
+        if (exec("serve --https=443 off").Ok) return true;
+        var status = exec("serve status --json");
+        if (!status.Ok) return false;
+        var port = knownPort != 0 ? knownPort : WebServer.DefaultPort;
+        return !Maps(status.Output, port);
+    }
+
+    // Unserve, but only when Lid Awake added the mapping (ServedKey); then forget it, but only
+    // once the mapping is really gone. A failed removal keeps the flag, so the next start, the
+    // next turn-off and the minute check try again.
     public void UnserveIfOurs()
     {
         try
         {
             if (settings.Get<bool?>(ServedKey) != true) return;
-            Unserve();
-            settings.Set(ServedKey, false);
+            if (TryUnserve()) settings.Set(ServedKey, false);
         }
         catch (Exception) { }
     }
@@ -144,16 +161,21 @@ public sealed class Tailnet
     public Task SetServed(bool on, int port)
     {
         wantedPort = on ? port : 0;
+        knownPort = port;
         try { return Task.Run(Apply); }
         catch (Exception) { return Task.CompletedTask; }
     }
 
     // The check every 60 seconds while on (section 9): the name and owner are read again, and
-    // Serve is added back if it went missing. Does nothing while the wish is "not served".
+    // Serve is added back if it went missing. While the wish is "not served" it does nothing,
+    // except trying again to remove a mapping whose earlier removal failed (the flag is still set).
     public Task Recheck()
     {
-        if (wantedPort == 0) return Task.CompletedTask;
-        try { return Task.Run(Apply); }
+        try
+        {
+            if (wantedPort == 0 && settings.Get<bool?>(ServedKey) != true) return Task.CompletedTask;
+            return Task.Run(Apply);
+        }
         catch (Exception) { return Task.CompletedTask; }
     }
 
