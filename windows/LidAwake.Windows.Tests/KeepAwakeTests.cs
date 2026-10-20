@@ -245,7 +245,7 @@ public class KeepAwakeTests : IDisposable
     [Fact]
     public void OnReadsFreshWhenOnlyOneSavedValueExists()
     {
-        settings.Set("savedLidAc", 9);
+        settings.Set("savedLidAc", 3);
 
         KeepAwake.On(settings);
 
@@ -543,24 +543,24 @@ public class KeepAwakeTests : IDisposable
     [Fact]
     public void OnWithValuesSavedForAGonePlanStartsAgainFromTheCurrentPlan()
     {
-        fake.Schemes[PowerSaver] = (5, 6);
+        fake.Schemes[PowerSaver] = (1, 2);
         fake.Active = PowerSaver;
         fake.Schemes.Remove(Balanced);
-        settings.Set("savedLidAc", 1);
-        settings.Set("savedLidDc", 2);
+        settings.Set("savedLidAc", 2);
+        settings.Set("savedLidDc", 3);
         settings.Set("savedLidScheme", Balanced);  // not in the list of plans
 
         Assert.Equal(LidResult.Changed, KeepAwake.On(settings));
 
         Assert.Equal(PowerSaver, settings.Get<string>("savedLidScheme"));
-        Assert.Equal<int?>(5, settings.Get<int?>("savedLidAc"));
-        Assert.Equal<int?>(6, settings.Get<int?>("savedLidDc"));
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));
         Assert.Equal((0, 0), fake.Schemes[PowerSaver]);
         Assert.Contains(KeepAwake.PlanGoneNote, notes);
 
         KeepAwake.Off(settings);
 
-        Assert.Equal((5, 6), fake.Schemes[PowerSaver]);
+        Assert.Equal((1, 2), fake.Schemes[PowerSaver]);
     }
 
     // Saved values that are not lid actions (0 to 3) are treated like a missing plan: nothing is
