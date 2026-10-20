@@ -422,9 +422,10 @@ sealed class TrayApp : ApplicationContext
         // The countdown starts when it goes from off to on, and ends when it goes off.
         if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; }
         else if (!on) Countdown.Stop();
-        // Off (from the tray, the phone, the timer, a safety limit, or Quit): the camera closes now.
-        if (!on) camera?.StopAll();
         isOn = on;
+        // Off (from the tray, the phone, the timer, a safety limit, or Quit): the camera closes now,
+        // after isOn is false, so a phone asking for the camera meanwhile is refused.
+        if (!on) camera?.StopAll();
         toggle.Checked = on;
         icon.Text = on ? "Lid Awake: on" : "Lid Awake: off";
         // Serve the page to the phone only while on, as on the Mac, and only if it is our page.

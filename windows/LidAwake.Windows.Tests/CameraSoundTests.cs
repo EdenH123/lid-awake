@@ -287,6 +287,19 @@ public class TalkPlayerTests
     }
 
     [Fact]
+    public void AStopWhileTheSpeakersAreStartingWins()
+    {
+        TalkPlayer? p = null;
+        var late = new FakeOutput();
+        // The camera closes (Stop) while the speakers are still being opened.
+        p = new TalkPlayer(_ => { p!.Stop(); return late; }, () => now);
+        Assert.False(p.Play(Voice(640)));
+        Assert.True(late.Disposed);
+        Assert.False(p.Playing);
+        Assert.Equal(0, p.SecondsAhead);
+    }
+
+    [Fact]
     public void AnOutputThatThrowsCountsAsNoSpeakers()
     {
         var p = new TalkPlayer(_ => throw new InvalidOperationException("no device"), () => now);

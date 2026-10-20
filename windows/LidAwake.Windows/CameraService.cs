@@ -8,12 +8,14 @@ namespace LidAwake;
 // time in microseconds.
 public sealed record CameraFrame(byte[] Nv12, int Width, int Height, long Micros);
 
-// Where the camera's pictures, sound and problems go, on the capture threads.
+// Where the camera's pictures and sound go, on the capture threads. Failed: the camera stopped
+// for good (a read error, the end of the stream, unplugged, Windows' privacy switch); the whole
+// capture ends, microphone included, and the phone is told why.
 public interface ICameraSink
 {
     void Frame(CameraFrame frame);
     void Sound(ReadOnlySpan<float> firstChannel, int rate);
-    void Problem(string text);
+    void Failed(string text);
 }
 
 // A running camera (and microphone). Disposing it stops both: the webcam light goes off.
@@ -216,10 +218,19 @@ public sealed class CameraService : IDisposable
             ended = EndCapture();
         }
         talk?.Stop();
-        if (ended == null) return;
-        if (wait) { lock (deviceGate) Close(ended); }
-        else run(() => { lock (deviceGate) Close(ended); });
+        if (!wait)
+        {
+            if (ended != null) run(() => { lock (deviceGate) Close(ended); });
+            return;
+        }
+        // Quit: wait (at most about 3 seconds) for a device close or open still under way, then
+        // close this one. Past that, the app ends anyway and Windows lets go of the camera.
+        if (!Monitor.TryEnter(deviceGate, DisposeWait)) return;
+        try { Close(ended); }
+        finally { Monitor.Exit(deviceGate); }
     }
+
+    public static readonly TimeSpan DisposeWait = TimeSpan.FromSeconds(3);
 
     // Under `gate`: the capture stops being used. Closing the device is the caller's, outside the lock.
     ICameraCapture? EndCapture()
@@ -293,7 +304,13 @@ public sealed class CameraService : IDisposable
             if (!viewers.ContainsKey(socket)) return;
             if (!viewer.Talked) { viewer.Talked = true; Log($"Talked through the PC's speakers · {socket.Device}"); }
         }
-        talk?.Play(bytes.AsSpan(0, n));
+        if (talk == null) return;
+        talk.Play(bytes.AsSpan(0, n));
+        // The last phone may have closed the camera while this was starting the speakers: then
+        // they are let go again (TalkPlayer also drops an open that finishes after its Stop).
+        bool nobody;
+        lock (gate) nobody = viewers.Count == 0;
+        if (nobody) talk.Stop();
     }
 
     void Log(string text)
@@ -389,13 +406,21 @@ public sealed class CameraService : IDisposable
         }
     }
 
-    void OnProblem(int fromGeneration, string text)
+    // The camera stopped for good: the phones are told, and the whole capture (microphone
+    // included) is closed. The phones stay on the camera view, and the next phone that opens the
+    // camera starts a new capture.
+    void OnFailed(int fromGeneration, string text)
     {
+        ICameraCapture? ended;
         lock (gate)
         {
-            if (fromGeneration != generation || viewers.Count == 0) return;
+            if (fromGeneration != generation) return;
             Broadcast(v => v.SendCameraError(text));
+            ended = EndCapture();
         }
+        Log("Camera stopped: " + text);
+        // Off the capture's own thread (closing it waits for that thread to end).
+        if (ended != null) run(() => { lock (deviceGate) Close(ended); });
     }
 
     // The capture's view of this service, tied to the capture it was given to.
@@ -406,7 +431,7 @@ public sealed class CameraService : IDisposable
         public Sink(CameraService owner, int fromGeneration) => (this.owner, this.fromGeneration) = (owner, fromGeneration);
         public void Frame(CameraFrame frame) => owner.OnFrame(fromGeneration, frame);
         public void Sound(ReadOnlySpan<float> firstChannel, int rate) => owner.OnSound(fromGeneration, firstChannel, rate);
-        public void Problem(string text) => owner.OnProblem(fromGeneration, text);
+        public void Failed(string text) => owner.OnFailed(fromGeneration, text);
     }
 
     // Quit: the camera stops before the app ends.
@@ -480,25 +505,36 @@ public sealed class WireCameraSocket : ICameraSocket
 
 // Where a camera is. Windows says a camera is part of the PC when it has an enclosure location
 // (front or back panel, or in the lid: DeviceInformation.EnclosureLocation); a USB camera without
-// one is plugged in. Anything else (a virtual camera, a phone lent as a camera) comes last.
-public enum CameraPlace { External, BuiltIn, Other }
+// one is plugged in. Anything else comes last. Phone: a phone lent to Windows as a camera, never
+// used (as on the Mac, the phone would only film itself).
+public enum CameraPlace { External, BuiltIn, Other, Phone }
 
 public sealed record CameraDevice(string Name, string Link, CameraPlace Place);
 
 public static class CameraChoice
 {
     // `inEnclosure`: Windows put the camera in the PC's enclosure; null when it couldn't say.
-    public static CameraPlace PlaceOf(string link, bool? inEnclosure)
+    public static CameraPlace PlaceOf(string name, string link, bool? inEnclosure)
     {
+        if (IsPhone(name, link)) return CameraPlace.Phone;
         if (inEnclosure == true) return CameraPlace.BuiltIn;
         return link.StartsWith(@"\\?\usb#", StringComparison.OrdinalIgnoreCase) ? CameraPlace.External : CameraPlace.Other;
     }
 
+    // A phone lent to Windows as a camera. Phone Link's "connected camera" (Windows 11) is made
+    // through Windows' virtual-camera API, whose cameras have a device path under
+    // SWD\VCAMDEVAPI; that path is what is checked, since the camera is named after the phone.
+    // A name with iPhone, iPad or Phone Link in it counts too (the Mac's own rule, by name).
+    public static bool IsPhone(string name, string link) =>
+        link.Contains("#VCAMDEVAPI#", StringComparison.OrdinalIgnoreCase)
+        || new[] { "iPhone", "iPad", "Phone Link" }.Any(w => name.Contains(w, StringComparison.OrdinalIgnoreCase));
+
     // The order to try them in: a plugged-in camera first (unlike the built-in one, it keeps
     // working with the lid closed, as on the Mac), then the built-in one, then the rest; in
-    // Windows' order within each.
+    // Windows' order within each. A phone is left out.
     public static List<CameraDevice> Order(IEnumerable<CameraDevice> cameras) =>
-        cameras.Select((c, i) => (c, i)).OrderBy(x => (int)x.c.Place).ThenBy(x => x.i).Select(x => x.c).ToList();
+        cameras.Where(c => c.Place != CameraPlace.Phone)
+            .Select((c, i) => (c, i)).OrderBy(x => (int)x.c.Place).ThenBy(x => x.i).Select(x => x.c).ToList();
 }
 
 // One format a camera offers.

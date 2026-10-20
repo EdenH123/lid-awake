@@ -27,10 +27,12 @@ public sealed class FakeCameraSocket : ICameraSocket
 // The camera and microphone, driven by hand.
 public sealed class FakeCameraHardware : ICameraHardware
 {
+    // The camera and its microphone: both stop on Dispose.
     public sealed class Capture : ICameraCapture
     {
         public bool Disposed;
-        public void Dispose() => Disposed = true;
+        public bool MicLive = true;
+        public void Dispose() { Disposed = true; MicLive = false; }
     }
 
     public readonly List<Capture> Opened = new();
@@ -366,11 +368,98 @@ public sealed class CameraServiceTests : IDisposable
     }
 
     [Fact]
-    public void AProblemWhileRunningIsSaid()
+    public void ACameraThatFailsEndsTheWholeCaptureMicrophoneIncluded()
     {
         var phone = Watch();
-        hardware.Sink!.Problem(CameraTexts.NotAllowed);
-        Assert.Equal(new[] { "error " + CameraTexts.NotAllowed }, phone.Sent);
+        var sink = hardware.Sink!;
+        sink.Frame(Frame(0));
+        sink.Sound(new float[1600], 16000);
+        var capture = hardware.Opened.Single();
+        Assert.True(capture.MicLive);
+
+        sink.Failed(CameraTexts.NotAllowed);
+        Assert.Equal("error " + CameraTexts.NotAllowed, phone.Sent[^1]);
+        Assert.False(camera.Capturing);
+        Assert.True(capture.Disposed);
+        Assert.False(capture.MicLive);
+        Assert.Equal(1, encoders.Disposed);
+        // The phone stays on the camera view, but nothing more comes from the failed capture.
+        Assert.True(camera.IsOpen(phone));
+        int count = phone.Sent.Count;
+        sink.Sound(new float[1600], 16000);
+        sink.Frame(Frame(100_000));
+        sink.Failed(CameraTexts.Stalled);
+        Assert.Equal(count, phone.Sent.Count);
+        Assert.Contains("Camera stopped: " + CameraTexts.NotAllowed, LogLines());
+
+        // The next phone opens it again, with a new setup.
+        var next = Watch("session-b");
+        Assert.Equal(2, hardware.Opened.Count);
+        Assert.True(camera.Capturing);
+        hardware.Sink!.Frame(Frame(200_000));
+        Assert.StartsWith("setup", next.Sent[0]);
+        Assert.Equal("video 3 200000", next.Sent[1]);
+        // The 2-second check finds nothing more to say about the failed one.
+        camera.Tick();
+        Assert.True(camera.IsOpen(phone));
+    }
+
+    [Fact]
+    public void AFailureWhileTheCameraIsStillStartingClosesItToo()
+    {
+        var slow = new SlowHardware();
+        using var service = new CameraService(tickets, () => allowed, slow, encoders, talk, log, () => now, a => a());
+        var phone = new FakeCameraSocket("s");
+        service.Receive(phone, Json($"{{\"camera\":true,\"ticket\":\"{tickets.Issue("s")}\"}}"));
+        Assert.Equal(new[] { "error " + CameraTexts.Stalled }, phone.Sent);
+        Assert.False(service.Capturing);
+        Assert.True(slow.Started!.Disposed);
+        Assert.False(slow.Started!.MicLive);
+    }
+
+    // Fails from inside Open, before Open has returned the capture.
+    sealed class SlowHardware : ICameraHardware
+    {
+        public FakeCameraHardware.Capture? Started;
+        public ICameraCapture? Open(ICameraSink sink, out string? problem)
+        {
+            problem = null;
+            Started = new FakeCameraHardware.Capture();
+            sink.Failed(CameraTexts.Stalled);
+            return Started;
+        }
+    }
+
+    [Fact]
+    public void DisposeWaitsOnlyAboutThreeSecondsForTheDevice()
+    {
+        var stuck = new StuckHardware();
+        var service = new CameraService(tickets, () => allowed, stuck, encoders, talk, log, () => now, a => Task.Run(a));
+        var phone = new FakeCameraSocket("s");
+        service.Receive(phone, Json($"{{\"camera\":true,\"ticket\":\"{tickets.Issue("s")}\"}}"));
+        Assert.True(stuck.Entered.Wait(TimeSpan.FromSeconds(10)));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        service.Dispose();
+        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(2.5), TimeSpan.FromSeconds(6));
+        Assert.False(service.IsOpen(phone));
+        stuck.Release.Set();
+        // The open that finished after everyone left is closed at once.
+        Assert.True(SpinWait.SpinUntil(() => stuck.Started?.Disposed == true, TimeSpan.FromSeconds(10)));
+    }
+
+    // A camera whose open hangs until the test lets it go.
+    sealed class StuckHardware : ICameraHardware
+    {
+        public readonly ManualResetEventSlim Entered = new();
+        public readonly ManualResetEventSlim Release = new();
+        public volatile FakeCameraHardware.Capture? Started;
+        public ICameraCapture? Open(ICameraSink sink, out string? problem)
+        {
+            problem = null;
+            Entered.Set();
+            Release.Wait(TimeSpan.FromSeconds(30));
+            return Started = new FakeCameraHardware.Capture();
+        }
     }
 
     static string Talk(int bytes) => Convert.ToBase64String(Enumerable.Repeat((byte)0x80, bytes).ToArray());
@@ -489,14 +578,34 @@ public class CameraChoiceTests
     const string UsbInternal = @"\\?\USB#VID_0BDA&PID_58FD&MI_00#6&2d4#0000#{e5323777-f976-4f5b-9b55-b94699c46e44}\GLOBAL";
     const string Virtual = @"\\?\SWD#VCAMDEVAPI#{e5323777-f976-4f5b-9b55-b94699c46e44}";
 
+    const string Dshow = @"\\?\ROOT#IMAGE#0000#{e5323777-f976-4f5b-9b55-b94699c46e44}";
+
     [Fact]
     public void WhereACameraIs()
     {
-        Assert.Equal(CameraPlace.External, CameraChoice.PlaceOf(Usb, false));
-        Assert.Equal(CameraPlace.External, CameraChoice.PlaceOf(Usb, null));
-        Assert.Equal(CameraPlace.BuiltIn, CameraChoice.PlaceOf(UsbInternal, true));
-        Assert.Equal(CameraPlace.Other, CameraChoice.PlaceOf(Virtual, false));
-        Assert.Equal(CameraPlace.Other, CameraChoice.PlaceOf("", null));
+        Assert.Equal(CameraPlace.External, CameraChoice.PlaceOf("Logitech C920", Usb, false));
+        Assert.Equal(CameraPlace.External, CameraChoice.PlaceOf("Logitech C920", Usb, null));
+        Assert.Equal(CameraPlace.BuiltIn, CameraChoice.PlaceOf("Integrated Camera", UsbInternal, true));
+        Assert.Equal(CameraPlace.Other, CameraChoice.PlaceOf("Some camera", Dshow, false));
+        Assert.Equal(CameraPlace.Other, CameraChoice.PlaceOf("", "", null));
+    }
+
+    [Fact]
+    public void APhoneLentAsACameraIsNeverUsed()
+    {
+        // Phone Link's connected camera: Windows' virtual-camera API, named after the phone.
+        Assert.Equal(CameraPlace.Phone, CameraChoice.PlaceOf("Galaxy S24", Virtual, null));
+        Assert.Equal(CameraPlace.Phone, CameraChoice.PlaceOf("Galaxy S24", Virtual.ToLowerInvariant(), false));
+        Assert.Equal(CameraPlace.Phone, CameraChoice.PlaceOf("Eden's iPhone Camera", Usb, false));
+        Assert.Equal(CameraPlace.Phone, CameraChoice.PlaceOf("iPad camera", Usb, true));
+        Assert.Equal(CameraPlace.Phone, CameraChoice.PlaceOf("Phone Link camera", Dshow, null));
+        var list = new[]
+        {
+            new CameraDevice("Galaxy S24", Virtual, CameraPlace.Phone),
+            new CameraDevice("Integrated Camera", UsbInternal, CameraPlace.BuiltIn),
+        };
+        Assert.Equal(new[] { "Integrated Camera" }, CameraChoice.Order(list).Select(c => c.Name));
+        Assert.Empty(CameraChoice.Order(list.Take(1)));
     }
 
     [Fact]
@@ -505,11 +614,11 @@ public class CameraChoiceTests
         var list = new[]
         {
             new CameraDevice("Integrated Camera", UsbInternal, CameraPlace.BuiltIn),
-            new CameraDevice("OBS Virtual Camera", Virtual, CameraPlace.Other),
+            new CameraDevice("Some other camera", Dshow, CameraPlace.Other),
             new CameraDevice("Logitech C920", Usb, CameraPlace.External),
             new CameraDevice("Second USB", Usb + "2", CameraPlace.External),
         };
-        Assert.Equal(new[] { "Logitech C920", "Second USB", "Integrated Camera", "OBS Virtual Camera" },
+        Assert.Equal(new[] { "Logitech C920", "Second USB", "Integrated Camera", "Some other camera" },
             CameraChoice.Order(list).Select(c => c.Name));
         Assert.Equal(new[] { "Integrated Camera" }, CameraChoice.Order(list.Take(1)).Select(c => c.Name));
         Assert.Empty(CameraChoice.Order(Array.Empty<CameraDevice>()));

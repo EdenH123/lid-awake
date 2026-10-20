@@ -90,7 +90,7 @@ public class CameraDeviceTests
     {
         public void Frame(CameraFrame frame) { }
         public void Sound(ReadOnlySpan<float> firstChannel, int rate) { }
-        public void Problem(string text) { }
+        public void Failed(string text) { }
     }
 
     [Fact]

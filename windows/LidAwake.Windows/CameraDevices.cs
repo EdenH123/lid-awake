@@ -364,8 +364,9 @@ internal sealed unsafe class MfCapture : ICameraCapture
                     if (stopping) break;
                     if (hr < 0 || (flags & (Mf.ReaderError | Mf.ReaderEndOfStream)) != 0)
                     {
-                        // Unplugged, or Windows took the camera away (privacy switch, lid).
-                        sink.Problem(hr == Mf.EAccessDenied ? CameraTexts.NotAllowed : CameraTexts.Stalled);
+                        // Unplugged, or Windows took the camera away (privacy switch, lid): the
+                        // whole capture ends, microphone included.
+                        sink.Failed(hr == Mf.EAccessDenied ? CameraTexts.NotAllowed : CameraTexts.Stalled);
                         break;
                     }
                     if ((flags & Mf.ReaderTypeChanged) != 0) ReadCurrentType();
@@ -401,6 +402,8 @@ internal sealed unsafe class MfCapture : ICameraCapture
         stopping = true;
         var t = thread;
         if (t == null) { Close(); return; }
+        // Asked from the capture thread itself (its failure handler): it closes on its way out.
+        if (t == Thread.CurrentThread) return;
         if (t.Join(1500)) return;
         // A camera that stopped delivering keeps ReadSample waiting: shutting the source down ends it.
         lock (sourceGate)
@@ -415,8 +418,9 @@ internal sealed unsafe class MfCapture : ICameraCapture
 internal sealed class WasapiMicrophone : IDisposable
 {
     readonly WasapiCapture capture;
+    readonly MMDevice device;
 
-    WasapiMicrophone(WasapiCapture capture) => this.capture = capture;
+    WasapiMicrophone(WasapiCapture capture, MMDevice device) => (this.capture, this.device) = (capture, device);
 
     static readonly Guid FloatSubFormat = new("00000003-0000-0010-8000-00aa00389b71");
 
@@ -424,15 +428,16 @@ internal sealed class WasapiMicrophone : IDisposable
     public static WasapiMicrophone? Open(Action<float[], int> sound)
     {
         WasapiCapture? capture = null;
+        MMDevice? mic = null;
         try
         {
-            var devices = new MMDeviceEnumerator();
-            var mic = devices.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+            using (var devices = new MMDeviceEnumerator())
+                mic = devices.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
             capture = new WasapiCapture(mic);
             var format = capture.WaveFormat;
             bool isFloat = format.Encoding == WaveFormatEncoding.IeeeFloat
                 || (format is WaveFormatExtensible ext && ext.SubFormat == FloatSubFormat);
-            if (SoundChunker.KindOf(isFloat, format.BitsPerSample) is not { } kind) { capture.Dispose(); return null; }
+            if (SoundChunker.KindOf(isFloat, format.BitsPerSample) is not { } kind) { capture.Dispose(); mic.Dispose(); return null; }
             int channels = format.Channels, rate = format.SampleRate;
             capture.DataAvailable += (_, e) =>
             {
@@ -440,11 +445,13 @@ internal sealed class WasapiMicrophone : IDisposable
                 catch (Exception) { }
             };
             capture.StartRecording();
-            return new WasapiMicrophone(capture);
+            return new WasapiMicrophone(capture, mic);
         }
         catch (Exception)
         {
             try { capture?.Dispose(); }
+            catch (Exception) { }
+            try { mic?.Dispose(); }
             catch (Exception) { }
             return null;
         }
@@ -456,6 +463,8 @@ internal sealed class WasapiMicrophone : IDisposable
         catch (Exception) { }
         try { capture.Dispose(); }
         catch (Exception) { }
+        try { device.Dispose(); }
+        catch (Exception) { }
     }
 }
 
@@ -465,6 +474,7 @@ internal sealed class WasapiTalkOutput : ITalkOutput, IWaveProvider
     static readonly Guid FloatSubFormat = new("00000003-0000-0010-8000-00aa00389b71");
 
     readonly WasapiOut player;
+    readonly MMDevice device;
     readonly TalkPlayer source;
     readonly TalkResampler resampler;
     readonly bool isFloat;
@@ -475,6 +485,7 @@ internal sealed class WasapiTalkOutput : ITalkOutput, IWaveProvider
     WasapiTalkOutput(MMDevice speakers, WaveFormat mix, bool isFloat, TalkPlayer source)
     {
         WaveFormat = mix;
+        device = speakers;
         this.isFloat = isFloat;
         this.source = source;
         resampler = new TalkResampler(mix.SampleRate);
@@ -485,13 +496,16 @@ internal sealed class WasapiTalkOutput : ITalkOutput, IWaveProvider
     public static ITalkOutput? Open(TalkPlayer source)
     {
         WasapiTalkOutput? output = null;
+        MMDevice? speakers = null;
         try
         {
-            var devices = new MMDeviceEnumerator();
-            var speakers = devices.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            var mix = speakers.AudioClient.MixFormat;
+            using (var devices = new MMDeviceEnumerator())
+                speakers = devices.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            WaveFormat mix;
+            // A new AudioClient each time it is asked for (NAudio): this one only reads the format.
+            using (var client = speakers.AudioClient) mix = client.MixFormat;
             bool isFloat = mix.Encoding == WaveFormatEncoding.IeeeFloat || (mix is WaveFormatExtensible ext && ext.SubFormat == FloatSubFormat);
-            if (!(isFloat && mix.BitsPerSample == 32) && !(!isFloat && mix.BitsPerSample == 16)) return null;
+            if (!(isFloat && mix.BitsPerSample == 32) && !(!isFloat && mix.BitsPerSample == 16)) { speakers.Dispose(); return null; }
             output = new WasapiTalkOutput(speakers, mix, isFloat, source);
             output.player.Init(output);
             output.player.Play();
@@ -499,7 +513,12 @@ internal sealed class WasapiTalkOutput : ITalkOutput, IWaveProvider
         }
         catch (Exception)
         {
-            output?.Dispose();
+            if (output != null) output.Dispose();
+            else
+            {
+                try { speakers?.Dispose(); }
+                catch (Exception) { }
+            }
             return null;
         }
     }
@@ -531,6 +550,8 @@ internal sealed class WasapiTalkOutput : ITalkOutput, IWaveProvider
         catch (Exception) { }
         try { player.Dispose(); }
         catch (Exception) { }
+        try { device.Dispose(); }
+        catch (Exception) { }
     }
 }
 
@@ -553,7 +574,7 @@ public sealed class CameraHardware : ICameraHardware
         foreach (var (name, link, act) in Mf.VideoDevices())
         {
             Mf.Release(act);
-            cameras.Add(new CameraDevice(name, link, CameraChoice.PlaceOf(link, builtIn.TryGetValue(link, out var b) ? b : null)));
+            cameras.Add(new CameraDevice(name, link, CameraChoice.PlaceOf(name, link, builtIn.TryGetValue(link, out var b) ? b : null)));
         }
         return cameras;
     }
@@ -586,9 +607,13 @@ public sealed class CameraHardware : ICameraHardware
         int firstError = 0;
         foreach (var camera in cameras)
         {
-            int hr = MfCapture.TryOpen(camera.Link, sink, out var video);
+            var running = new Running(sink);
+            int hr = MfCapture.TryOpen(camera.Link, running, out var video);
             if (hr >= 0 && video != null)
-                return new Running(video, WasapiMicrophone.Open((mono, rate) => sink.Sound(mono, rate)));
+            {
+                running.Start(video);
+                return running;
+            }
             if (firstError == 0 || hr == Mf.EAccessDenied) firstError = hr;
         }
         problem = CameraTexts.OpenFailed(cameras.Count > 0, SafeLid(), firstError);
@@ -601,16 +626,62 @@ public sealed class CameraHardware : ICameraHardware
         catch (Exception) { return false; }
     }
 
-    sealed class Running : ICameraCapture
+    // The camera and the microphone together. When the camera fails for good, the microphone is
+    // stopped right there, before the service is told: it never stays on without the camera.
+    sealed class Running : ICameraCapture, ICameraSink
     {
-        readonly MfCapture video;
-        readonly WasapiMicrophone? mic;
-        public Running(MfCapture video, WasapiMicrophone? mic) => (this.video, this.mic) = (video, mic);
+        readonly ICameraSink sink;
+        readonly object gate = new();
+        MfCapture? video;
+        WasapiMicrophone? mic;
+        bool ended;
+
+        public Running(ICameraSink sink) => this.sink = sink;
+
+        public void Start(MfCapture opened)
+        {
+            var started = WasapiMicrophone.Open((mono, rate) => Sound(mono, rate));
+            lock (gate)
+            {
+                video = opened;
+                if (!ended) { mic = started; return; }
+            }
+            started?.Dispose();  // the camera already failed while the microphone was starting
+        }
+
+        public void Frame(CameraFrame frame) => sink.Frame(frame);
+
+        public void Sound(ReadOnlySpan<float> firstChannel, int rate)
+        {
+            lock (gate) { if (ended) return; }
+            sink.Sound(firstChannel, rate);
+        }
+
+        public void Failed(string text)
+        {
+            StopMic();
+            sink.Failed(text);
+        }
+
+        WasapiMicrophone? TakeMic()
+        {
+            lock (gate)
+            {
+                ended = true;
+                var m = mic;
+                mic = null;
+                return m;
+            }
+        }
+
+        void StopMic() => TakeMic()?.Dispose();
 
         public void Dispose()
         {
-            mic?.Dispose();
-            video.Dispose();
+            StopMic();
+            MfCapture? v;
+            lock (gate) { v = video; video = null; }
+            v?.Dispose();
         }
     }
 }

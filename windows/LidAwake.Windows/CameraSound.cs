@@ -183,6 +183,7 @@ public sealed class TalkPlayer : IDisposable
     int queued;        // samples waiting
     ITalkOutput? output;
     bool opening;
+    int stops;         // counts Stop calls: an open that finishes after one is dropped
     DateTimeOffset lastVoice;
     DateTimeOffset? failedAt;
 
@@ -203,8 +204,10 @@ public sealed class TalkPlayer : IDisposable
         if (mulaw.IsEmpty) return false;
         var samples = Mulaw.DecodeAll(mulaw);
         bool start;
+        int stopsBefore;
         lock (gate)
         {
+            stopsBefore = stops;
             if (queued >= Rate * MaxBehind.TotalSeconds) return false;
             if (output == null && !opening && failedAt is { } at && now() - at < RetryAfter) return false;
             chunks.Enqueue(samples);
@@ -220,11 +223,13 @@ public sealed class TalkPlayer : IDisposable
         lock (gate)
         {
             opening = false;
-            if (started != null) { output = started; failedAt = null; return true; }
-            failedAt = now();
+            if (started != null && stops == stopsBefore) { output = started; failedAt = null; return true; }
+            if (started == null) failedAt = now();
             Clear();
-            return false;
         }
+        // Stopped while the speakers were starting (the camera closed): let them go again.
+        Release(started);
+        return false;
     }
 
     // The next samples to play (-1..1, 16 kHz), silence once nothing is waiting. Always fills `dest`.
@@ -263,7 +268,7 @@ public sealed class TalkPlayer : IDisposable
     public void Stop()
     {
         ITalkOutput? done;
-        lock (gate) { done = output; output = null; Clear(); }
+        lock (gate) { done = output; output = null; stops++; Clear(); }
         Release(done);
     }
 
