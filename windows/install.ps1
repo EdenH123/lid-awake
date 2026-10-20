@@ -132,6 +132,8 @@ try {
     }
     New-Item -ItemType Directory -Path $dest -Force | Out-Null
     # Only the program folder is replaced. Settings live in %APPDATA%\LidAwake and are not touched.
+    # The program folder also holds machine.json (the saved lid setting) and the activity log:
+    # the installer must never delete them. That is why only 'web' and 'sky' are wiped below.
     foreach ($sub in 'web', 'sky') {
         $old = Join-Path $dest $sub
         if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }

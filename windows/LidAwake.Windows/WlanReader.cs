@@ -10,7 +10,9 @@ public readonly record struct WifiReading(int Quality, string? Ssid);
 // The Native Wifi API (wlanapi.dll): the signal and network name of the connected Wi-Fi. Every
 // failure answers null and never throws: no wlanapi.dll (Windows Server without the wireless
 // feature), the WLAN AutoConfig service not running (ERROR_SERVICE_NOT_ACTIVE, 1062), no Wi-Fi
-// adapter, or none connected. Nothing is kept between calls, so it is safe from any thread.
+// adapter, none connected, or (Windows 11) no Location consent for this app (ERROR_ACCESS_DENIED,
+// 5; the first call shows a one-time system prompt). That last one is also noted once in the
+// activity log. Nothing is kept between calls, so it is safe from any thread.
 //
 // Layouts, from wlanapi.h / windot11.h (all fields 4-byte aligned, natural packing):
 //
@@ -39,6 +41,30 @@ public static class WlanReader
     const int StateConnected = 1;               // wlan_interface_state_connected
     const int OpcodeCurrentConnection = 7;      // wlan_intf_opcode_current_connection
     const int ListHeaderBytes = 8;              // dwNumberOfItems, dwIndex
+    const uint ErrorAccessDenied = 5;           // Windows 11: no Location consent for this app
+
+    // Told things worth a line in the activity log (the tray sets this to the log's Write).
+    public static Action<string>? Log { get; set; }
+
+    // What the activity log says the first time Windows refuses the signal for lack of Location.
+    public const string LocationNote =
+        "Wi-Fi signal needs Location to be allowed for Lid Awake (Settings -> Privacy & security -> Location)";
+
+    // Once per run, whatever the thread.
+    static int deniedNoted;
+
+    // Every failing native call comes through here. Only "access denied" is told to the log, and
+    // only the first time in this run. The reading itself stays null either way.
+    internal static void NoteError(uint error)
+    {
+        if (error != ErrorAccessDenied) return;
+        if (Interlocked.Exchange(ref deniedNoted, 1) != 0) return;
+        try { Log?.Invoke(LocationNote); }
+        catch (Exception) { }
+    }
+
+    // For tests: forget that the denial was already told.
+    internal static void ResetDeniedNote() => Interlocked.Exchange(ref deniedNoted, 0);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal struct WlanInterfaceInfo
@@ -112,8 +138,10 @@ public static class WlanReader
         IntPtr handle = IntPtr.Zero, list = IntPtr.Zero;
         try
         {
-            if (WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out handle) != 0) { handle = IntPtr.Zero; return null; }
-            if (WlanEnumInterfaces(handle, IntPtr.Zero, out list) != 0) { list = IntPtr.Zero; return null; }
+            var error = WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out handle);
+            if (error != 0) { handle = IntPtr.Zero; NoteError(error); return null; }
+            error = WlanEnumInterfaces(handle, IntPtr.Zero, out list);
+            if (error != 0) { list = IntPtr.Zero; NoteError(error); return null; }
             Guid? preferred = Guid.TryParse(adapterId, out var g) ? g : null;
             foreach (var guid in ConnectedInterfaces(list, preferred))
                 if (Query(handle, guid) is { } reading) return reading;
@@ -134,8 +162,8 @@ public static class WlanReader
         IntPtr data = IntPtr.Zero;
         try
         {
-            if (WlanQueryInterface(handle, ref guid, OpcodeCurrentConnection, IntPtr.Zero, out int size, out data, IntPtr.Zero) != 0)
-            { data = IntPtr.Zero; return null; }
+            var error = WlanQueryInterface(handle, ref guid, OpcodeCurrentConnection, IntPtr.Zero, out int size, out data, IntPtr.Zero);
+            if (error != 0) { data = IntPtr.Zero; NoteError(error); return null; }
             return FromConnection(data, size);
         }
         catch (Exception) { return null; }

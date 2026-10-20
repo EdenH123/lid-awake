@@ -166,6 +166,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - **See what happened:** tray icon → **Show activity log**.
 - **Keep it plugged in, and don't leave it closed in a bag or a tight space;** on Windows Lid Awake doesn't watch the temperature yet. It doesn't turn itself off when the battery is low either.
 - **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
+- **Wi-Fi signal bars need Location.** On Windows, the bars on your phone need Location to be on for Lid Awake. Windows asks once, when you turn Lid Awake on. If you say no, or Location is off, your phone shows "Connected" without bars. You can change it in **Settings → Privacy & security → Location**.
 - **After you choose Quit Lid Awake**, start it again from the Start menu (**Lid Awake**).
 
 ### What works on Windows so far
@@ -192,7 +193,7 @@ Don't rely on these on Windows. They work on the Mac only, for now.
 
 ### Update or remove it on Windows
 
-- **Update:** download the new LidAwake-Windows ZIP (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are.
+- **Update:** download the new LidAwake-Windows ZIP (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are. If Lid Awake is on while you update, the update turns it off and puts the lid setting back. Turn it on again afterwards.
 - **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was.
 
 ---

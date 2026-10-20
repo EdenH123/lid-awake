@@ -563,6 +563,53 @@ public class KeepAwakeTests : IDisposable
         Assert.Equal((5, 6), fake.Schemes[PowerSaver]);
     }
 
+    // Saved values that are not lid actions (0 to 3) are treated like a missing plan: nothing is
+    // written, they are forgotten, and the log says so. The uninstaller does the same.
+    [Theory]
+    [InlineData(7, 2)]
+    [InlineData(1, 4)]
+    [InlineData(-1, 0)]
+    [InlineData(1, -5)]
+    public void OffWithSavedValuesOutsideZeroToThreeWritesNothingAndForgetsThem(int ac, int dc)
+    {
+        settings.Set("savedLidAc", ac);
+        settings.Set("savedLidDc", dc);
+        settings.Set("savedLidScheme", Balanced);
+        fake.Ac = 0;
+        fake.Dc = 0;
+
+        KeepAwake.Off(settings);
+
+        Assert.Empty(fake.Writes);
+        Assert.Empty(fake.Activations);
+        Assert.Equal((0, 0), fake.Schemes[Balanced]);
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+        Assert.Null(settings.Get<int?>("savedLidDc"));
+        Assert.Null(settings.Get<string>("savedLidScheme"));
+        Assert.Equal(new[] { KeepAwake.BadSavedNote }, notes);
+    }
+
+    [Fact]
+    public void OnWithSavedValuesOutsideZeroToThreeForgetsThemAndSavesFreshOnes()
+    {
+        settings.Set("savedLidAc", 1);
+        settings.Set("savedLidDc", 9);
+        settings.Set("savedLidScheme", Balanced);
+
+        Assert.Equal(LidResult.Changed, KeepAwake.On(settings));
+
+        Assert.Contains(KeepAwake.BadSavedNote, notes);
+        Assert.Equal<int?>(1, settings.Get<int?>("savedLidAc"));  // read from the plan: Ac = 1
+        Assert.Equal<int?>(2, settings.Get<int?>("savedLidDc"));  // read from the plan: Dc = 2
+        Assert.Equal(Balanced, settings.Get<string>("savedLidScheme"));
+        Assert.Equal((0, 0), fake.Schemes[Balanced]);
+
+        KeepAwake.Off(settings);
+
+        Assert.Equal((1, 2), fake.Schemes[Balanced]);
+        Assert.Null(settings.Get<int?>("savedLidAc"));
+    }
+
     [Fact]
     public void ASavedPlanThatIsNotAGuidIsIgnored()
     {

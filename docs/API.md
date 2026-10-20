@@ -800,9 +800,9 @@ These come from `SystemInfo.snapshot()`. Two objects, `mac` and `net` (the key i
 | Field | Type | Meaning | If unknown |
 |---|---|---|---|
 | `wifi` | string | Wi-Fi network name (the Mac needs Location permission to read it; Windows sends it when the name is valid UTF-8 and not hidden) | omit |
-| `rssi` | integer, dBm | Wi-Fi signal. `0` is never sent. On Windows it is approximated from the Native Wifi signal quality (0 to 100): `quality / 2 - 100`, so always -100 to -50 | omit |
+| `rssi` | integer, dBm | Wi-Fi signal. `0` is never sent. On Windows it is approximated from the Native Wifi signal quality (0 to 100): `quality / 2 - 100`, so always -100 to -50. Also omitted when location consent is denied (Windows 11): the Native Wifi call answers access denied until the owner allows Location for Lid Awake (Settings -> Privacy & security -> Location); Windows asks once, and the agent triggers that prompt the first time the owner turns Lid Awake on from the tray | omit |
 | `iface` | string | the network interface in use (for example `en0`) | omit |
-| `wired` | boolean | the interface in use is not Wi-Fi. The page shows Ethernet when `true`, otherwise Wi-Fi (and "Not connected" with no `rssi`; when `os` is `"windows"` and `wired` is `false` with no `rssi`, it reads "Connected" without signal bars, which happens when Windows can't read the signal: no WLAN service, or the Native Wifi call failed) | omit (set `true` on a desktop with no Wi-Fi) |
+| `wired` | boolean | the interface in use is not Wi-Fi. The page shows Ethernet when `true`, otherwise Wi-Fi (and "Not connected" with no `rssi`; when `os` is `"windows"` and `wired` is `false` with no `rssi`, it reads "Connected" without signal bars, which happens when Windows can't read the signal: no WLAN service, location consent denied (Windows 11), or the Native Wifi call failed) | omit (set `true` on a desktop with no Wi-Fi) |
 | `down` | number, bytes per second | received, since the previous status request | omit |
 | `up` | number, bytes per second | sent, since the previous status request | omit |
 
@@ -1049,7 +1049,7 @@ tailscale serve --https=443 off
 
 On the Mac the Tailscale binary is `/Applications/Tailscale.app/Contents/MacOS/Tailscale` run with the environment variable `TAILSCALE_BE_CLI=1`.
 
-**Windows differs in three ways.** It removes Serve only when it added the mapping itself (remembered as `servedByLidAwake` in its settings, and cleared once removed), so a Serve setup of the owner's own stays; this is checked at start-up too, after a crash. It matches `127.0.0.1:<port>` exactly (`8787` does not match `87870`). After `serve --bg` it reads `serve status --json` again; if the mapping is missing, the command timed out, or Tailscale printed a link (to allow Serve or HTTPS for the tailnet), it writes what Tailscale printed to the activity log and tells the owner at the tray.
+**Windows differs in three ways.** It removes Serve only when it added the mapping itself (remembered as `servedByLidAwake` in its settings, and cleared once removed), so a Serve setup of the owner's own stays; this is checked at start-up too, after a crash. While off, a removal that failed is retried by the one-minute check until it is confirmed. It matches `127.0.0.1:<port>` exactly (`8787` does not match `87870`). After `serve --bg` it reads `serve status --json` again; if the mapping is missing, the command timed out, or Tailscale printed a link (to allow Serve or HTTPS for the tailnet), it writes what Tailscale printed to the activity log and tells the owner at the tray.
 
 For `link` in `/status` (6.6) the agent runs `tailscale status --json` at most every 10 seconds, in the background.
 

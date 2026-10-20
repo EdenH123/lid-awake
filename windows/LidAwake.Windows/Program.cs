@@ -19,6 +19,7 @@ static class Program
         var tailnet = new Tailnet(settings);
         var log = new AccessLog();
         KeepAwake.Log = log.Write;
+        WlanReader.Log = log.Write;
         // Put back what a crash or a forced stop left behind, before anything else (and before
         // any message could wait for a click): the lid action, and Serve if Lid Awake added it.
         KeepAwake.Off(machine);
@@ -79,7 +80,12 @@ sealed class TrayApp : ApplicationContext
         this.phone = phone;
         this.log = log;
         Countdown = new AutoOff(settings);
-        toggle.Click += (_, _) => SetAwake(!isOn);
+        toggle.Click += (_, _) =>
+        {
+            var turningOn = !isOn;
+            SetAwake(turningOn);
+            if (turningOn) AskForLocation();
+        };
         foreach (var (minutes, title) in AutoOff.Choices)
         {
             var choice = minutes;  // the menu item keeps its own copy
@@ -253,6 +259,15 @@ sealed class TrayApp : ApplicationContext
                 "Couldn't change what closing the lid does. Keep the lid open, or see Lid Awake's help.", ToolTipIcon.Warning);
         return phone.Set(on);
     }
+
+    // Windows 11 asks once, on the first Wi-Fi read, whether Lid Awake may use Location (the
+    // phone's signal bars need it). Turning on from the tray menu is when the owner is at the PC,
+    // so read once now, in the background, and ignore the result.
+    static void AskForLocation() => Task.Run(() =>
+    {
+        try { WlanReader.Read(null); }
+        catch (Exception) { }
+    });
 
     bool passwordFormOpen;
 

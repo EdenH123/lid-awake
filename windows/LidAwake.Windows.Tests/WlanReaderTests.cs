@@ -48,6 +48,65 @@ public class WlanReaderTests
         Assert.Equal(4, (int)Marshal.OffsetOf<WlanReader.Dot11Ssid>("Bytes"));
     }
 
+    // ---- Windows 11: no Location consent (ERROR_ACCESS_DENIED, 5) ----
+
+    [Fact]
+    public void AccessDeniedIsToldToTheLogOncePerRun()
+    {
+        var told = new List<string>();
+        var original = WlanReader.Log;
+        WlanReader.ResetDeniedNote();
+        WlanReader.Log = told.Add;
+        try
+        {
+            WlanReader.NoteError(5);
+            WlanReader.NoteError(5);
+            Assert.Equal(new[] { WlanReader.LocationNote }, told);
+            Assert.Equal("Wi-Fi signal needs Location to be allowed for Lid Awake (Settings -> Privacy & security -> Location)", told[0]);
+        }
+        finally
+        {
+            WlanReader.Log = original;
+            WlanReader.ResetDeniedNote();
+        }
+    }
+
+    [Fact]
+    public void OtherFailuresAreNotToldAndDoNotUseUpTheNote()
+    {
+        var told = new List<string>();
+        var original = WlanReader.Log;
+        WlanReader.ResetDeniedNote();
+        WlanReader.Log = told.Add;
+        try
+        {
+            WlanReader.NoteError(1062);  // WLAN AutoConfig not running
+            WlanReader.NoteError(2);
+            Assert.Empty(told);
+            WlanReader.NoteError(5);
+            Assert.Single(told);
+        }
+        finally
+        {
+            WlanReader.Log = original;
+            WlanReader.ResetDeniedNote();
+        }
+    }
+
+    [Fact]
+    public void ALogThatThrowsDoesNotBreakTheReader()
+    {
+        var original = WlanReader.Log;
+        WlanReader.ResetDeniedNote();
+        WlanReader.Log = _ => throw new InvalidOperationException("log failed");
+        try { WlanReader.NoteError(5); }
+        finally
+        {
+            WlanReader.Log = original;
+            WlanReader.ResetDeniedNote();
+        }
+    }
+
     // ---- hand-built WLAN_CONNECTION_ATTRIBUTES ----
 
     // A zeroed native block of `size` bytes, freed on dispose.

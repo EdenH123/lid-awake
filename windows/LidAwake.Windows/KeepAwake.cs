@@ -26,6 +26,9 @@ public static class KeepAwake
     const string SchemeKey = "savedLidScheme";
     // What Lid Awake says (to the activity log) when the plan it changed has been deleted since.
     public const string PlanGoneNote = "The power plan Lid Awake changed no longer exists; nothing to put back";
+    // ... and when the saved values are not lid actions at all (0 do nothing, 1 sleep, 2 hibernate,
+    // 3 shut down). The uninstaller agrees: it puts back only values from 0 to 3.
+    public const string BadSavedNote = "The saved lid setting looked wrong; Lid Awake left the lid setting alone";
     // A power plan's GUID. Matching the GUID rather than the label keeps this independent of the
     // Windows display language.
     const string GuidPattern = @"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}";
@@ -149,6 +152,13 @@ public static class KeepAwake
         // The plan that gets changed is always the plan that gets restored: when values are
         // already saved (On twice, or after a crash) that is the plan saved with them.
         var scheme = CurrentScheme;
+        if (settings.Get<int?>("savedLidAc") is int savedAc && settings.Get<int?>("savedLidDc") is int savedDc
+            && !IsLidAction(savedAc, savedDc))
+        {
+            // Not lid actions: never write them. Forget them; fresh ones are saved below.
+            ForgetSaved(settings);
+            Note(BadSavedNote);
+        }
         if (settings.Get<int?>("savedLidAc") is not null && settings.Get<int?>("savedLidDc") is not null)
         {
             var saved = SchemeToRestore(settings);
@@ -178,6 +188,8 @@ public static class KeepAwake
         return now is { } n && n.ac == 0 && n.dc == 0 ? LidResult.Changed : LidResult.Failed;
     }
 
+    static bool IsLidAction(int ac, int dc) => ac is >= 0 and <= 3 && dc is >= 0 and <= 3;
+
     // Forget the saved values and their plan. The plan goes last: values without their plan
     // would be restored elsewhere.
     static void ForgetSaved(Settings settings)
@@ -196,8 +208,13 @@ public static class KeepAwake
                 // Only put back what On() saved: never touch a lid setting Lid Awake didn't change.
                 if (settings.Get<int?>("savedLidAc") is int ac && settings.Get<int?>("savedLidDc") is int dc)
                 {
-                    var scheme = SchemeToRestore(settings);
-                    if (scheme is null)
+                    if (!IsLidAction(ac, dc))
+                    {
+                        // Not lid actions: write nothing, and forget them.
+                        ForgetSaved(settings);
+                        Note(BadSavedNote);
+                    }
+                    else if (SchemeToRestore(settings) is not { } scheme)
                     {
                         // The plan Lid Awake changed was deleted since: nothing to put back, and
                         // no other plan may be changed for it.
