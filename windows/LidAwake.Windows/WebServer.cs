@@ -74,6 +74,10 @@ public sealed partial class WebServer : IDisposable
     // routes answer 404, as for a feature the PC doesn't have). Set before Start.
     public HistoryStore? History { get; set; }
 
+    // POST /camera/options and /camera/unlock (none: both answer 404, as for a feature the PC
+    // doesn't have). Set only once the camera is wired to passkeys and the live socket. Set before Start.
+    public CameraAccess? Camera { get; set; }
+
     // True after Start succeeded, until Stop or Dispose. Tailscale Serve may only point at the
     // port while this is true (PhoneAccess).
     public bool IsRunning => app != null;
@@ -365,6 +369,12 @@ public sealed partial class WebServer : IDisposable
             case ("GET", "/screen.jpg") when screen is { } feed:
                 await ScreenJpg(c, feed);
                 return;
+            case ("POST", "/camera/options") when Camera is { } cameraOptions:
+                await SendCamera(c, cameraOptions.Options(host));
+                return;
+            case ("POST", "/camera/unlock") when Camera is { } cameraUnlock:
+                await SendCamera(c, cameraUnlock.Unlock(host, SessionOf(auth, tokens), await ReadJson(c.Request)));
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
@@ -462,6 +472,14 @@ public sealed partial class WebServer : IDisposable
             return doc.RootElement.ValueKind == JsonValueKind.Object ? doc.RootElement.Clone() : null;
         }
         catch (JsonException) { return null; }
+    }
+
+    static Task SendCamera(HttpContext c, CameraAccess.Answer a)
+    {
+        if (a.Json == null) return SendText(c, a.Code, a.Text ?? "");
+        c.Response.StatusCode = a.Code;
+        c.Response.ContentType = "application/json";
+        return c.Response.WriteAsync(a.Json);
     }
 
     // POST /sessions/signout: `others: true` signs out every session but the caller's, `id` one
@@ -567,6 +585,16 @@ public sealed partial class WebServer : IDisposable
                 return;
         }
     }
+
+    // The session a request acts as: the first valid token of its cookies. POST /camera/unlock binds
+    // its ticket to this one, and the live socket's handshake picks its session the same way, so
+    // the ticket is redeemed for the same session it was issued to (5.4).
+    internal static string? SessionOf(Auth auth, IEnumerable<string> tokens) =>
+        tokens.FirstOrDefault(t =>
+        {
+            try { return auth.IsValid(t); }
+            catch (Exception) { return false; }
+        });
 
     // Every session token in the Cookie header, whichever way the header is split (2.5). The live
     // socket's handshake reads them the same way.

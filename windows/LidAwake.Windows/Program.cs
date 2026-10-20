@@ -76,6 +76,20 @@ static class Program
         using var push = new WebPush(machine);
         auth.PasswordSet += push.RemoveAll;
         var alerts = new PhoneAlerts(push.Send, readings.Power, () => heat.Latest.Battery, () => limits.HeatGuard);
+        // The camera and microphone (docs/API.md 5.4, 7.5), through its three seams: Task 18's
+        // passkeys (a "camera" challenge, never a sign-in one), the screen's Media Foundation H.264
+        // encoder, and the live socket (LiveServer hands it each phone's messages first, and tells
+        // it when a socket closes). It needs the screen switch too (CameraSwitch). Nothing here
+        // opens the camera: only a phone on the live socket with a ticket, while the owner's switch
+        // is on. With the lid closed, a camera that can't open says so.
+        ICameraPasskeys cameraPasskeys = new PasskeyCamera(auth.Passkeys);
+        IVideoEncoderFactory cameraEncoders = new MfCameraEncoders(allowHardware: settings.Get<string>("screenEncoder") != "software",
+            note: log.Write);
+        var cameraSwitch = new CameraSwitch(settings);
+        status.CameraAllowed = () => cameraSwitch.Allowed;
+        var cameraTickets = new CameraTickets();
+        using var camera = new CameraService(cameraTickets, () => tray?.IsOn == true && cameraSwitch.Allowed,
+            new CameraHardware(() => screen.LidClosed), cameraEncoders, new TalkPlayer(WasapiTalkOutput.Open), log);
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) =>
@@ -92,6 +106,19 @@ static class Program
                 tray?.LimitsChanged();
             },
             push: push, control: control, screen: feed, screenAllowed: ScreenAllowed);
+        // The live socket (started below, after the page). Input commands on it go to the same
+        // control as POST /input (7.6); camera messages go to the camera first, and a socket that
+        // closes closes its camera.
+        using var live = new LiveServer(auth, tailnet, () => tray?.IsOn == true, ScreenAllowed, feed, log: log, input: control,
+            camera: camera);
+        live.ViewersChanged += ScreenWatch.LiveViewers;
+        // All three seams are there: "camera" is offered and its two routes exist (set before Start).
+        if (CameraFeature.Ready(cameraPasskeys, cameraEncoders, live.CameraWired))
+        {
+            status.CameraFeature = true;
+            server.Camera = new CameraAccess(cameraPasskeys, cameraTickets, () => cameraSwitch.Allowed);
+        }
+        camera.Start();
         // The graphs: a sample every minute while the app runs, off the UI thread.
         var history = new HistoryStore();
         server.History = history;
@@ -101,9 +128,6 @@ static class Program
         string? startError = null;
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
-        // Input commands on the socket go to the same control as POST /input (7.6).
-        using var live = new LiveServer(auth, tailnet, () => tray?.IsOn == true, ScreenAllowed, feed, log: log, input: control);
-        live.ViewersChanged += ScreenWatch.LiveViewers;
         string? liveError = null;
         try { live.Start(); }
         catch (Exception e) { liveError = e.Message; }
@@ -111,7 +135,7 @@ static class Program
         // The page works but the screen's /live isn't published: only the activity log says so.
         tailnet.LiveNotPublished = said => log.Write("Screen viewing not published by Tailscale (the phone page works): " + said);
         tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, alerts, screen,
-            phoneApps, startMenu, control, live);
+            phoneApps, startMenu, control, live, cameraSwitch, camera);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");
@@ -155,6 +179,10 @@ sealed class TrayApp : ApplicationContext
     readonly RemoteControl? control;
     const string ControlTitle = "Allow control from phone";
     readonly ToolStripMenuItem controlItem = new(ControlTitle);
+    // "Allow camera & microphone from phone", off by default; it needs the screen switch (Mac menu).
+    readonly ToolStripMenuItem cameraItem = new("Allow camera & microphone from phone");
+    readonly CameraSwitch? cameraSwitch;
+    readonly CameraService? camera;
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
@@ -180,8 +208,10 @@ sealed class TrayApp : ApplicationContext
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
                    Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts, LidScreen screen,
                    PhoneApps? apps = null, IStartMenuSource? startMenu = null, RemoteControl? control = null,
-                   LiveServer? live = null)
+                   LiveServer? live = null, CameraSwitch? cameraSwitch = null, CameraService? camera = null)
     {
+        this.cameraSwitch = cameraSwitch;
+        this.camera = camera;
         phoneApps = apps;
         this.startMenu = startMenu;
         this.control = control;
@@ -248,8 +278,12 @@ sealed class TrayApp : ApplicationContext
             menu.Items.Add(controlItem);
             ShowControl();
         }
+        // "Allow camera & microphone from phone", which needs the screen switch too.
+        cameraItem.Click += (_, _) => FlipCamera();
+        if (cameraSwitch != null) menu.Items.Add(cameraItem);
+        ShowCamera();
         // Shown as they are now, and read again in the background (the item follows by Changed).
-        menu.Opening += (_, _) => { ShowLimits(); ShowScreen(); ShowControl(); RefreshTemperature(); };
+        menu.Opening += (_, _) => { ShowLimits(); ShowScreen(); ShowControl(); ShowCamera(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
         menu.Items.Add(passkeysMenu);
@@ -319,11 +353,35 @@ sealed class TrayApp : ApplicationContext
             icon.Text = "Lid Awake: off";
         }
         catch (Exception) { }
+        camera?.StopAll();
         // The brightness goes back at the same time (off this thread), not after the rest.
         var screenDone = screen.SetOn(false);
         SessionEnd.TurnOff(machine, () => phone.Set(false), log);
         try { screenDone.Wait(TimeSpan.FromSeconds(2)); }
         catch (Exception) { }
+    }
+
+    // ---- Camera & microphone from the phone (the Mac's toggleCamera) ----
+
+    void FlipCamera()
+    {
+        if (cameraSwitch == null) return;
+        bool on = !cameraSwitch.Allowed;
+        try { cameraSwitch.Set(on); }
+        catch (Exception) { }  // the settings file couldn't be written: the switch stays as it was
+        if (cameraSwitch.FromPhone == on)
+            log.Write(on ? "Camera & microphone from phone allowed on the PC" : "Camera & microphone from phone turned off");
+        ShowCamera();
+        // Turned off: a phone watching now is closed at once, with the switch-off sentence.
+        if (camera != null) Task.Run(camera.Tick);
+    }
+
+    // Ticked only with the screen switch on too, and greyed out without it, as on the Mac.
+    void ShowCamera()
+    {
+        if (cameraSwitch == null) return;
+        cameraItem.Checked = cameraSwitch.Allowed;
+        cameraItem.Enabled = cameraSwitch.RemoteScreen;
     }
 
     // The phone page's port was taken when Lid Awake started (Main).
@@ -499,6 +557,7 @@ sealed class TrayApp : ApplicationContext
         catch (Exception) { return; }  // the settings file couldn't be written: the switch stays as it was
         ShowScreen();
         ShowControl();
+        ShowCamera();
         if (!allowed) CloseSockets();
         log.Write(allowed ? "Screen from phone allowed on the PC" : "Screen from phone turned off on the PC");
     }
@@ -543,6 +602,9 @@ sealed class TrayApp : ApplicationContext
         if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; alerts.TurnedOn(); }
         else if (!on) Countdown.Stop();
         isOn = on;
+        // Off (from the tray, the phone, the timer, a safety limit, or Quit): the camera closes now,
+        // after isOn is false, so a phone asking for the camera meanwhile is refused.
+        if (!on) camera?.StopAll();
         toggle.Checked = on;
         icon.Text = on ? "Lid Awake: on" : "Lid Awake: off";
         // Off: every live socket closes now, not only at the socket's 2-second check, and nothing

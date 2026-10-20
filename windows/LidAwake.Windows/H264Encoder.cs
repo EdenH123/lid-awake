@@ -403,11 +403,27 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
     public IReadOnlyList<(VideoConfig Config, VideoChunk Chunk)> Encode(ScreenImage image, long timestamp, bool forceKey)
     {
         if (image.Width != Width || image.Height != Height) throw new ArgumentException("The picture's size changed.", nameof(image));
+        return EncodeSample(() => MakeSample(image, null, timestamp), forceKey);
+    }
+
+    // A picture that is NV12 already (the camera's: Y plane, then interleaved U and V, rows exactly
+    // Width bytes), with its time in microseconds.
+    public IReadOnlyList<(VideoConfig Config, VideoChunk Chunk)> EncodeNv12(byte[] nv12, long timestamp, bool forceKey)
+    {
+        if (nv12.Length != Nv12.Size(Width, Height)) throw new ArgumentException("The picture's size changed.", nameof(nv12));
+        return EncodeSample(() => MakeSample(null, nv12, timestamp), forceKey);
+    }
+
+    // The SPS and PPS of the stream so far (null until the encoder has given them).
+    internal (byte[]? Sps, byte[]? Pps) ParameterSets => (sps, pps);
+
+    IReadOnlyList<(VideoConfig Config, VideoChunk Chunk)> EncodeSample(Func<IntPtr> makeSample, bool forceKey)
+    {
         var produced = new List<(VideoConfig, VideoChunk)>();
         try
         {
             if (forceKey) SetCodecValue(CODECAPI_AVEncVideoForceKeyFrame, new Variant { Type = VT_UI4, UInt = 1 });
-            var sample = MakeSample(image, timestamp);
+            var sample = makeSample();
             try
             {
                 if (isAsync) FeedAsync(sample, produced);
@@ -596,7 +612,8 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
         finally { Com.Release(ref type); }
     }
 
-    IntPtr MakeSample(ScreenImage image, long timestamp)
+    // From the screen's BGRA picture (`image`), or from NV12 as it is (`nv12`).
+    IntPtr MakeSample(ScreenImage? image, byte[]? nv12, long timestamp)
     {
         uint size = (uint)Nv12.Size(Width, Height);
         IntPtr buffer, sample = IntPtr.Zero;
@@ -606,7 +623,11 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
             byte* bytes;
             uint max, length;
             Com.Check(((delegate* unmanaged[Stdcall]<IntPtr, byte**, uint*, uint*, int>)Com.Slot(buffer, 3))(buffer, &bytes, &max, &length), "Lock");
-            try { Nv12.FromBgra(image, bytes); }
+            try
+            {
+                if (image is { } picture) Nv12.FromBgra(picture, bytes);
+                else if (nv12 != null) nv12.AsSpan(0, (int)size).CopyTo(new Span<byte>(bytes, (int)size));
+            }
             finally { ((delegate* unmanaged[Stdcall]<IntPtr, int>)Com.Slot(buffer, 4))(buffer); }
             // IMFMediaBuffer::SetCurrentLength
             Com.Check(((delegate* unmanaged[Stdcall]<IntPtr, uint, int>)Com.Slot(buffer, 6))(buffer, size), "SetCurrentLength");

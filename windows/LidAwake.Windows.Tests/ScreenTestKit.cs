@@ -314,7 +314,9 @@ sealed class LiveHarness : IAsyncDisposable
 
     // `encoders`: null for JPEG only (no encoder), or a factory (the fake one when not given).
     // `input`: the input sink for commands on the socket (none: the server's own, which does nothing).
-    public LiveHarness(bool video = true, VideoEncoderFactory? encoders = null, TimeSpan? idleStop = null, IInputSink? input = null)
+    // `camera`: the camera behind the socket (none: camera messages are ignored).
+    public LiveHarness(bool video = true, VideoEncoderFactory? encoders = null, TimeSpan? idleStop = null, IInputSink? input = null,
+                       CameraService? camera = null)
     {
         Settings = new Settings(Path.Combine(folder, "settings"));
         Settings.Set("tailnetHost", LiveClient.TailHost);
@@ -324,7 +326,7 @@ sealed class LiveHarness : IAsyncDisposable
         Token = Auth.Login("correct horse battery", "iPhone").Token!;
         Feed = new ScreenFeed(Screens.Open, video ? encoders ?? Encoders.Make : null, idleStop ?? TimeSpan.FromMilliseconds(500));
         Port = FreePort();
-        Live = new LiveServer(Auth, new Tailnet(Settings, _ => null), () => On, () => Allowed, Feed, Port, input: input);
+        Live = new LiveServer(Auth, new Tailnet(Settings, _ => null), () => On, () => Allowed, Feed, Port, input: input, camera: camera);
         Live.Start();
     }
 

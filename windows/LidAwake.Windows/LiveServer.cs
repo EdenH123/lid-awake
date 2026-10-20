@@ -34,7 +34,8 @@ public static class ScreenSwitch
 // session cookie is valid, Lid Awake is on and the owner allows the screen. Pictures go out as
 // binary messages (JPEG, or H.264 for pages that can play it), with the Mac's flow control;
 // quality and video choices come in as JSON text. Input commands go to the control's IInputSink
-// (7.6). Camera messages are not acted on yet.
+// (7.6), and camera messages to the CameraService (7.5): while a phone's camera is open, that
+// socket gets the camera instead of the screen.
 public sealed class LiveServer : IDisposable
 {
     public const int DefaultPort = 8788;
@@ -48,6 +49,7 @@ public sealed class LiveServer : IDisposable
     readonly Func<bool> screenAllowed;
     readonly ScreenFeed feed;
     readonly IInputSink input;
+    readonly CameraService? camera;
     readonly AccessLog? log;
     readonly int port;
     readonly object gate = new();
@@ -57,16 +59,22 @@ public sealed class LiveServer : IDisposable
 
     // `input` carries out the phone's input commands (RemoteControl; none: no control on this PC,
     // so commands are checked like the Mac's and then do nothing, and `ping` is still answered).
+    // `camera` is the phone's view of the PC's camera and microphone (none: camera messages are
+    // ignored).
     public LiveServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<bool> screenAllowed, ScreenFeed feed,
-                      int port = DefaultPort, AccessLog? log = null, IInputSink? input = null)
+                      int port = DefaultPort, AccessLog? log = null, IInputSink? input = null, CameraService? camera = null)
     {
         (this.auth, this.tailnet, this.isOn, this.screenAllowed, this.feed) = (auth, tailnet, isOn, screenAllowed, feed);
         this.port = port;
         this.log = log;
         this.input = input ?? new NoInput(Allowed);
+        this.camera = camera;
     }
 
     public int Port => port;
+
+    // The camera's socket seam is connected (a CameraService was given): CameraFeature.Ready.
+    public bool CameraWired => camera != null;
 
     // True after Start succeeded, until Stop or Dispose. Serve maps /live only while it is.
     public bool IsRunning => app != null;
@@ -163,9 +171,11 @@ public sealed class LiveServer : IDisposable
     }
 
     // Every 2 seconds, as on the Mac: off or not allowed closes everything; a signed-out or
-    // expired session closes its sockets; a socket that sent nothing for 15 seconds while it had
-    // something to send (the phone stopped reading) closes.
-    void Housekeeping()
+    // expired session closes its sockets (and so its camera); a socket that sent nothing for 15
+    // seconds while it had something to send (the phone stopped reading) closes. A camera that
+    // closed by itself (the owner's camera switch, the 10 minutes: CameraService's own 2-second
+    // check) gives the socket back its screen.
+    internal void Housekeeping()
     {
         try
         {
@@ -176,6 +186,7 @@ public sealed class LiveServer : IDisposable
             foreach (var p in all)
             {
                 if (!SessionValid(p.Session) || p.Stuck(15)) p.Abort();
+                else SyncCamera(p);
             }
         }
         catch (Exception) { }
@@ -242,7 +253,8 @@ public sealed class LiveServer : IDisposable
         if (Tailnet.IsLoopback(host) || !tailnet.IsOwner(host, req.Headers["Tailscale-User-Login"].ToString())) return null;
         if (req.Headers.Origin.ToString() != "https://" + host) return null;
         if (req.Headers.ContainsKey("Sec-Fetch-Site") && req.Headers["Sec-Fetch-Site"].ToString() != "same-origin") return null;
-        var token = WebServer.CookieTokens(req).FirstOrDefault(SessionValid);
+        // The same choice as POST /camera/unlock, so a camera ticket matches this socket's session.
+        var token = WebServer.SessionOf(auth, WebServer.CookieTokens(req));
         if (token == null) return null;
         if (!Allowed()) return null;
         return token;
@@ -259,15 +271,22 @@ public sealed class LiveServer : IDisposable
         var sender = Task.Run(() => SendLoop(peer));
         try
         {
-            feed.Subscribe(peer.Id,
-                jpeg => { peer.SetPending(jpeg); },
-                () => SendText(peer, new { error = WakingText }));
+            if (camera != null)
+                peer.CameraSocket = new WireCameraSocket(peer.Session, peer.Device,
+                    text => SendRaw(peer, Encoding.UTF8.GetBytes(text)), bytes => EnqueueCamera(peer, bytes));
+            Subscribe(peer);
             await ReceiveLoop(peer);
         }
         catch (Exception) { }
         finally
         {
             peer.Abort();
+            // The camera stops with its socket (the last phone's turns the webcam light off).
+            if (camera != null && peer.CameraSocket is { } cs)
+            {
+                try { camera.Closed(cs); }
+                catch (Exception) { }
+            }
             feed.Unsubscribe(peer.Id);
             lock (gate) { peers.Remove(peer.Id); count = peers.Count; }
             Changed(count);
@@ -278,6 +297,61 @@ public sealed class LiveServer : IDisposable
             catch (Exception) { }
             peer.Release();
         }
+    }
+
+    // The screen's pictures for this phone, unless its camera is open.
+    void Subscribe(Peer peer) =>
+        feed.Subscribe(peer.Id,
+            jpeg => { if (!peer.CameraOn) peer.SetPending(jpeg); },
+            () => { if (!peer.CameraOn) SendText(peer, new { error = WakingText }); });
+
+    // The camera opened or closed for this phone (after a camera message, and every 2 seconds):
+    // open, its screen stops (no screen picture or video is sent, and what waits of it is dropped)
+    // so only one video uses the link (7.5); closed, the screen comes back, as JPEG until the page
+    // asks for video again.
+    void SyncCamera(Peer peer)
+    {
+        if (camera == null || peer.CameraSocket is not { } cs) return;
+        lock (peer.CameraGate)
+        {
+            bool open;
+            try { open = camera.IsOpen(cs); }
+            catch (Exception) { open = false; }
+            if (open == peer.CameraOn) return;
+            peer.CameraOn = open;
+            if (open)
+            {
+                feed.Unsubscribe(peer.Id);
+                peer.Video = false;
+                peer.SetPending(null);
+                peer.ClearOutbox();
+            }
+            else
+            {
+                peer.DropCamera();
+                Subscribe(peer);
+            }
+        }
+    }
+
+    // Camera video and sound (binary, 7.2): no confirmations, so never held back by the screen's
+    // flow control. More than 90 waiting: dropped, and the camera starts again from a keyframe.
+    void EnqueueCamera(Peer peer, byte[] data)
+    {
+        switch (peer.Enqueue(data, text: false, video: false, camera: true))
+        {
+            case Peer.Queued.CameraDropped:
+                // Not from inside the camera's own call (ICameraSocket): it is told on another thread.
+                if (camera is { } c) ThreadPool.QueueUserWorkItem(_ => { try { c.RequestKeyframe(); } catch (Exception) { } });
+                break;
+            case Peer.Queued.Overflow: peer.Abort(); break;
+        }
+    }
+
+    // A camera text message, already JSON.
+    static void SendRaw(Peer peer, byte[] json)
+    {
+        if (peer.Enqueue(json, text: true, video: false) == Peer.Queued.Overflow) peer.Abort();
     }
 
     void Changed(int count)
@@ -351,24 +425,35 @@ public sealed class LiveServer : IDisposable
             var m = doc.RootElement;
             if (m.ValueKind != JsonValueKind.Object) return;
             if (Bool(m, "acks") == true) peer.FlowControl = true;
-            // The camera comes with a later task: its messages are ignored for now.
+            // The camera's own messages first: `camera` (with its ticket), `cameraKey`, `talk`.
+            if (camera != null && peer.CameraSocket is { } cs)
+            {
+                bool handled;
+                try { handled = camera.Receive(cs, m); }
+                catch (Exception) { handled = false; }
+                if (handled) { SyncCamera(peer); return; }
+            }
+            // Never input, whatever they hold (and ignored without a camera).
             if (Bool(m, "camera") != null || m.TryGetProperty("cameraKey", out _) || m.TryGetProperty("talk", out _)) return;
             // A video switch and a decoder restart each force a keyframe: they count toward this
-            // socket's 240 a second, like input, and a flood of them is dropped silently.
-            bool videoChange = Bool(m, "video") is { } asked && asked != peer.Video;
+            // socket's 240 a second, like input, and a flood of them is dropped silently. While
+            // the camera is open the screen's video can't be turned on.
+            bool videoChange = !peer.CameraOn && Bool(m, "video") is { } asked && asked != peer.Video;
             if ((videoChange || m.TryGetProperty("videoRestart", out _)) && !peer.InputRate.TryTake(Environment.TickCount64)) return;
-            if (Bool(m, "video") is { } wantsVideo && wantsVideo != peer.Video)
+            if (videoChange && Bool(m, "video") is { } wantsVideo)
             {
                 peer.Video = wantsVideo;
                 // A JPEG still waiting is old news once video starts; video waiting is dropped on
                 // the way back to JPEG.
                 if (wantsVideo) peer.SetPending(null);
-                feed.SetVideo(peer.Id, wantsVideo ? new VideoSink(packet => Enqueue(peer, packet), peer.VideoReady) : null);
+                feed.SetVideo(peer.Id, wantsVideo
+                    ? new VideoSink(packet => { if (!peer.CameraOn) Enqueue(peer, packet); }, () => !peer.CameraOn && peer.VideoReady())
+                    : null);
                 if (!wantsVideo) peer.ClearOutbox();
             }
             if (m.TryGetProperty("videoRestart", out _))
             {
-                feed.RestartVideo(peer.Id);
+                if (!peer.CameraOn) feed.RestartVideo(peer.Id);
                 return;
             }
             if (m.TryGetProperty("ack", out _))
@@ -477,8 +562,14 @@ public sealed class LiveServer : IDisposable
         public const int MaxQueued = 256;
         public const long MaxQueuedBytes = 8L * 1024 * 1024;
         public const int MaxVideoQueued = 60;
+        // The camera's video and sound waiting (the Mac's camera limit).
+        public const int MaxCameraQueued = 90;
 
-        public enum Queued { Ok, VideoDropped, Overflow }
+        public enum Queued { Ok, VideoDropped, CameraDropped, Overflow }
+
+        // What a message in the outbox is: text, the screen's video (confirmed by the page's
+        // acks), or the camera's video and sound (never confirmed).
+        enum Kind { Text, Screen, Camera }
 
         public readonly Guid Id = Guid.NewGuid();
         // At most 240 input messages a second (7.6).
@@ -493,7 +584,7 @@ public sealed class LiveServer : IDisposable
         // Under gate.
         bool sending;
         byte[]? pending;                                   // JPEG: the newest picture waiting its turn
-        readonly Queue<(byte[] Data, bool Text)> outbox = new();  // text and video, all in order
+        readonly Queue<(byte[] Data, Kind Kind)> outbox = new();  // text, video and camera, all in order
         long outboxBytes;
         int unconfirmed;
         double waitingSince;
@@ -516,6 +607,11 @@ public sealed class LiveServer : IDisposable
         public bool Closed => cancel.IsCancellationRequested;
         public volatile bool FlowControl;
         public volatile bool Video;
+        // The camera's side of this socket (with a CameraService), and whether its camera is open
+        // (then the screen sends this phone nothing). CameraGate keeps the switch-over in order.
+        public ICameraSocket? CameraSocket;
+        public volatile bool CameraOn;
+        public readonly object CameraGate = new();
         // This phone sent an input command that was carried out (its leaving lets go of held keys).
         public volatile bool UsedInput;
 
@@ -553,20 +649,28 @@ public sealed class LiveServer : IDisposable
             if (jpeg != null) Wake();
         }
 
-        // VideoDropped: more than 60 video messages waited and the binary ones were dropped (the
-        // caller restarts from a keyframe). Overflow: too much waits in all; the caller closes
-        // the socket.
-        public Queued Enqueue(byte[] data, bool text, bool video)
+        // VideoDropped: more than 60 video messages waited and the screen's video was dropped (the
+        // caller restarts from a keyframe). CameraDropped: more than 90 camera messages waited and
+        // they were dropped (the caller asks the camera for a keyframe). Overflow: too much waits
+        // in all (256 messages or 8 MB); the caller closes the socket. `camera`: a camera picture
+        // or sound (binary).
+        public Queued Enqueue(byte[] data, bool text, bool video, bool camera = false)
         {
             var result = Queued.Ok;
+            var kind = text ? Kind.Text : camera ? Kind.Camera : Kind.Screen;
             lock (gate)
             {
-                outbox.Enqueue((data, text));
+                outbox.Enqueue((data, kind));
                 outboxBytes += data.Length;
                 if (video && outbox.Count > MaxVideoQueued)
                 {
-                    DropBinary();
+                    Drop(Kind.Screen);
                     result = Queued.VideoDropped;
+                }
+                if (kind == Kind.Camera && outbox.Count(m => m.Kind == Kind.Camera) > MaxCameraQueued)
+                {
+                    Drop(Kind.Camera);
+                    result = Queued.CameraDropped;
                 }
                 if (outbox.Count > MaxQueued || outboxBytes > MaxQueuedBytes) result = Queued.Overflow;
                 backlog = outbox.Count + (sending ? 1 : 0);
@@ -575,27 +679,44 @@ public sealed class LiveServer : IDisposable
             return result;
         }
 
-        // Back to JPEG: the video pictures waiting go; text (a setup, an error, a pong) stays.
+        // Back to JPEG (or over to the camera): the screen's video waiting goes; text (a setup, an
+        // error, a pong) and the camera's messages stay.
         public void ClearOutbox()
         {
             lock (gate)
             {
-                DropBinary();
+                Drop(Kind.Screen);
+                backlog = outbox.Count + (sending ? 1 : 0);
+            }
+        }
+
+        // The camera closed: its pictures and sound still waiting go.
+        public void DropCamera()
+        {
+            lock (gate)
+            {
+                Drop(Kind.Camera);
                 backlog = outbox.Count + (sending ? 1 : 0);
             }
         }
 
         // Under gate.
-        void DropBinary()
+        void Drop(Kind kind)
         {
-            var keep = outbox.Where(m => m.Text).ToList();
+            var keep = outbox.Where(m => m.Kind != kind).ToList();
             outbox.Clear();
             foreach (var m in keep) outbox.Enqueue(m);
             outboxBytes = keep.Sum(m => (long)m.Data.Length);
         }
 
         // For the tests: what waits, oldest first (true: text).
-        internal List<bool> Waiting() { lock (gate) return outbox.Select(m => m.Text).ToList(); }
+        internal List<bool> Waiting() { lock (gate) return outbox.Select(m => m.Kind == Kind.Text).ToList(); }
+
+        // For the tests: how many camera messages wait.
+        internal int CameraWaiting() { lock (gate) return outbox.Count(m => m.Kind == Kind.Camera); }
+
+        // For the tests: screen pictures sent and not yet confirmed.
+        internal int Unconfirmed { get { lock (gate) return unconfirmed; } }
 
         // The next message to send, or null (nothing waits, or the JPEG must wait for a
         // confirmation). Marks it as being sent.
@@ -604,13 +725,13 @@ public sealed class LiveServer : IDisposable
             lock (gate)
             {
                 if (sending) return null;
-                (byte[] Data, bool Text, bool Key) item;
+                (byte[] Data, Kind Kind, bool Key) item;
                 if (outbox.Count > 0)
                 {
                     var next = outbox.Dequeue();
                     outboxBytes -= next.Data.Length;
                     backlog = outbox.Count + 1;
-                    item = (next.Data, next.Text, !next.Text && next.Data.Length > 0 && next.Data[0] == 1);
+                    item = (next.Data, next.Kind, next.Kind == Kind.Screen && next.Data.Length > 0 && next.Data[0] == 1);
                 }
                 else if (pending != null)
                 {
@@ -622,19 +743,20 @@ public sealed class LiveServer : IDisposable
                         if (stuck) { unconfirmed = 0; sentAt.Clear(); }
                         if (full && !stuck) return null;
                     }
-                    item = (pending, false, false);
+                    item = (pending, Kind.Screen, false);
                     pending = null;
                 }
                 else return null;
                 sending = true;
                 sendStarted = Now();
-                if (!item.Text)
+                // Only the screen's pictures are confirmed by the page (the camera's never are).
+                if (item.Kind == Kind.Screen)
                 {
                     if (unconfirmed == 0) waitingSince = Now();
                     unconfirmed++;
                     if (FlowControl) sentAt.Add((Now(), item.Data.Length, item.Key));
                 }
-                return (item.Data, item.Text);
+                return (item.Data, item.Kind == Kind.Text);
             }
         }
 

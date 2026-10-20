@@ -95,6 +95,13 @@ public sealed class StatusInfo
     public static readonly string[] Features = { "limits", "history", "passkeys", "push" };
     public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat", "passkeys", "push" };
 
+    // "camera" too, but only once the camera is wired to passkeys, the H.264 encoder and the live
+    // socket (CameraFeature.Ready, in Program). Off by default, so a build without them never offers it.
+    public bool CameraFeature { get; set; }
+
+    // cameraAllowed: the owner's screen and camera switches (CameraSwitch.Allowed). None: false.
+    public Func<bool>? CameraAllowed { get; set; }
+
     readonly ISystemReadings readings;
     readonly Limits? limits;
     readonly HeatSensor? heat;
@@ -154,7 +161,7 @@ public sealed class StatusInfo
             // The control switch, which needs the screen switch. SendInput needs no permission
             // (only windows of an elevated program are out of reach, by Windows' UIPI).
             ["remoteControl"] = Control?.ControlAllowed ?? false,
-            ["cameraAllowed"] = false,
+            ["cameraAllowed"] = CameraAllowed?.Invoke() ?? false,
             ["screenPermission"] = false,
             ["controlPermission"] = Control != null,
             ["screenWidth"] = Math.Max(0, readings.ScreenWidth()),
@@ -242,13 +249,15 @@ public sealed class StatusInfo
 
     // "apps" is listed only when the apps routes exist (an app list was given), "control" after it
     // only when the control routes do (a RemoteControl was given), and "screen" last only when
-    // /screen.jpg and the live socket do (the screen switch was given).
+    // /screen.jpg and the live socket do (the screen switch was given). "camera" after them only
+    // once the camera is wired (CameraFeature).
     string[] FeatureList(bool withHeat)
     {
         IEnumerable<string> list = withHeat ? FeaturesWithHeat : Features;
         if (apps != null) list = list.Append("apps");
         if (Control != null) list = list.Append("control");
         if (screenAllowed != null) list = list.Append("screen");
+        if (CameraFeature) list = list.Append("camera");
         return list.ToArray();
     }
 
