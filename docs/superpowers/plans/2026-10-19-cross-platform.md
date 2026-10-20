@@ -1728,6 +1728,67 @@ Branch `claude/windows-phase-3`, stacked on `claude/windows-phase-2`. Each task 
 
 
 
+### Parallel group A (Tasks 18–20)
+
+These three run at the same time. Each runs in its own worktree on its own branch off `claude/windows-phase-3`: `claude/windows-phase-3-passkeys`, `-push` and `-history`. The controller merges them back one by one and resolves the shared spots: the `features` list, the WebServer route switch, the tray, README and API.md.
+
+**Shared rules:**
+- Each adds its feature name to the Windows `features` list only.
+- Each touches the shared files minimally, by adding, not reshaping.
+- Each new route goes in the authenticated section unless API.md says it's public.
+- Never break the Mac.
+- CI runs on every `claude/windows-phase-3*` branch.
+
+### Task 18: Face ID / fingerprint sign-in on Windows (passkeys)
+
+**Contract:** docs/API.md `/passkey/login-options`, `/passkey/login`, `/passkey/register-options`, `/passkey/register`, `GET /auth` `faceID`, `/sessions` `faceID`. Mac reference: Passkeys.swift and its tests in tests/passkeys/main.swift (port the test vectors), plus Server.swift's passkey cases.
+
+**Windows:**
+- A C# port of Passkeys.swift (WebAuthn, ES256 only): challenges (purpose, 2-minute life, cap), clientDataJSON checks (type, challenge, origin `https://<tailnet host>`), authenticatorData (rpIdHash, UP+UV flags, counter rule incl. 0/0), COSE EC2 P-256 key parsing, `04||x||y` storage, at most 20 keys, never replace an id.
+- Signature verification with `ECDsa` (P-256, SHA-256, DER signature → `DSASignatureFormat.Rfc3279DerSequence`).
+- Sessions created by passkey count as `faceID` in /sessions.
+- A new password removes all passkeys.
+- Register needs the password (shares the lockout).
+- The sign-in announcement says "with Face ID or fingerprint".
+- Feature `"passkeys"`.
+
+**Tests:** the ported Mac vectors; tampered clientData, rpId, flags and signature; counter rules; caps; the routes end to end with a software-generated P-256 key acting as the phone.
+
+### Task 19: Phone alerts on Windows (Web Push)
+
+**Contract:** docs/API.md `/push/key`, `/push/subscribe`, `/push/settings`, and the alert kinds. Mac reference: WebPush.swift (RFC 8291 aes128gcm, RFC 8292 VAPID ES256 JWT, allowed push hosts, 10 phones, per-phone `off` list), tests/webpush (decrypt.js), and the main.swift `WebPush.send` call sites.
+
+**Windows:**
+- A C# port with `ECDiffieHellman` P-256, HKDF (`System.Security.Cryptography.HKDF`), `AesGcm`, and an ES256 JWT. The VAPID key lives in machine.json.
+- Sending goes over HttpClient with a timeout, never blocks the UI, and drops subscriptions the push service answers 404/410 for.
+- Kinds Windows sends:
+  - `security`: sign-ins and passkey changes;
+  - `turnedOff`: why, and how long it was on;
+  - `lowBattery`: the Mac's thresholds and wording, with "PC" for "Mac";
+  - `warm`: only when a battery temperature exists.
+- `claudeUsage` and `claudeSession` aren't sent on Windows.
+- A new password removes all subscriptions.
+- Feature `"push"`.
+
+**Tests:** encrypt with C#, then decrypt with an independent receiver implementation in the test (the RFC 8291 test vector if available); the JWT's shape and signature; the allowed-host rules; 404/410 pruning with a fake HttpMessageHandler; the routes end to end.
+
+### Task 20: History graphs on Windows
+
+Windows has no readable power log, so Lid Awake records its own samples (ruling P3-4).
+
+**Contract:** docs/API.md `/temp-history`, `/battery-history`, `/cpu-history` and `/cpu-icon`. Match the shapes exactly. Mac reference: PowerHistory.swift.
+
+**Windows:**
+- A sampler records battery %, charging and battery temperature (if any) every minute, and overall CPU %. It runs only while the app runs.
+- Samples go to `%LOCALAPPDATA%\LidAwake\history.json`, keeping 48 h, written atomically and rolled.
+- The routes take the same `hours` clamp as the Mac.
+- `/cpu-history` sends overall CPU only, plus whatever per-app shape the page tolerates as empty. Check the page.
+- `/cpu-icon` answers 404.
+- Feature `"history"`.
+- README: on Windows the graphs only cover the time Lid Awake has been running.
+
+**Tests:** sampling with fakes; trimming at 48 h; atomic write; the route shapes against the API.md examples; empty history.
+
 Remaining Phase 3 features, one task each, in this order:
 
 | Feature | Mac source to port | Windows technology |
