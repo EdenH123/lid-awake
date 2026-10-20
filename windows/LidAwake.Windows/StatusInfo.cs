@@ -96,14 +96,17 @@ public sealed class StatusInfo
     readonly ISystemReadings readings;
     readonly Limits? limits;
     readonly HeatSensor? heat;
+    readonly PhoneApps? apps;
     readonly object gate = new();
     readonly CpuMeter cpu = new();
     readonly NetMeter net = new();
 
     // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
-    // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp).
-    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null)
+    // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp). `apps` is
+    // the owner's list for the phone's Apps page (none: empty lists, and no "apps" in features).
+    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null, PhoneApps? apps = null)
     {
+        this.apps = apps;
         this.readings = readings;
         this.limits = limits;
         this.heat = heat;
@@ -141,13 +144,13 @@ public sealed class StatusInfo
             ["lidClosed"] = false,
             ["displayAsleep"] = false,
             // 6.3
-            ["apps"] = Array.Empty<object>(),
-            ["otherApps"] = Array.Empty<object>(),
+            ["apps"] = AppList(a => a.List()),
+            ["otherApps"] = AppList(a => a.Others()),
             ["claude"] = null,
             // 6.6
             ["os"] = "windows",
             // "heat" while either source works: the battery's sensor or the thermal zones.
-            ["features"] = temperature.Any ? FeaturesWithHeat : Features,
+            ["features"] = FeatureList(temperature.Any),
         };
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
@@ -206,6 +209,21 @@ public sealed class StatusInfo
         s["mac"] = mac;
         s["net"] = netInfo;
         return s;
+    }
+
+    // "apps" is listed only when the apps routes exist (an app list was given).
+    string[] FeatureList(bool withHeat)
+    {
+        var list = withHeat ? FeaturesWithHeat : Features;
+        return apps == null ? list : list.Append("apps").ToArray();
+    }
+
+    // Never lets a failing process or settings read take the whole status down: an empty list.
+    object AppList(Func<PhoneApps, List<Dictionary<string, object>>> read)
+    {
+        if (apps == null) return Array.Empty<object>();
+        try { return read(apps); }
+        catch (Exception) { return Array.Empty<object>(); }
     }
 
     // Windows gives Wi-Fi signal as a quality from 0 to 100, not dBm. The usual approximation:
