@@ -105,6 +105,28 @@ public class MediaTests
         Assert.True(forced[^1].Chunk.Timestamp > first[0].Chunk.Timestamp);
     }
 
+    // Keyframes only on request, like the Mac (MaxKeyFrameInterval 100 000): 120 pictures of a
+    // still screen make one keyframe, the first.
+    [Fact]
+    public void NoKeyframesUnlessAsked()
+    {
+        foreach (var hardware in new[] { false, true })
+        {
+            using var encoder = TryCreate(hardware);
+            if (encoder == null || (hardware && !encoder.Hardware)) continue;
+            using var picture = new Picture();
+            var still = picture.Frame(7);
+            var got = new List<VideoChunk>();
+            for (int n = 0; n < 120; n++)
+                got.AddRange(encoder.Encode(still, n * 33_333L, forceKey: n == 0).Select(f => f.Chunk));
+            int keys = got.Count(c => c.Key);
+            output.WriteLine($"RUNNER: {encoder.Name}: 120 still pictures gave {got.Count} out, {keys} keyframes");
+            Assert.True(got.Count >= 100, $"only {got.Count} pictures came out");
+            Assert.True(got[0].Key);
+            Assert.Equal(1, keys);
+        }
+    }
+
     [Fact]
     public void TheBestEncoderThisMachineHas()
     {

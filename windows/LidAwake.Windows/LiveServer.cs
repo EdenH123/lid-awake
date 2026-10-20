@@ -261,6 +261,7 @@ public sealed class LiveServer : IDisposable
             LogQuietly("Screen viewing ended · " + peer.Device);
             try { await sender; }
             catch (Exception) { }
+            peer.Release();
         }
     }
 
@@ -368,19 +369,26 @@ public sealed class LiveServer : IDisposable
     // (after the screen check); clicks, typing and scrolling do nothing.
     void HandOffInput(Peer peer, JsonElement message)
     {
+        // At most 240 a second per socket (7.6); extra ones get nothing, not even an answer.
+        if (!peer.InputRate.TryTake(Environment.TickCount64)) return;
         if (!Allowed()) { SendText(peer, new { error = ScreenOffText }); return; }
         if (message.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == "ping")
         {
             SendText(peer, new { pong = true });
             return;
         }
-        // Input commands: not carried out yet (Task 23 hands `message` to its IInputSink here).
+        // Input commands: not carried out yet. Task 23 plugs its IInputSink in here (after its
+        // control-switch and permission checks), handing it `message`.
     }
 
     static bool? Bool(JsonElement m, string name) =>
         m.TryGetProperty(name, out var v) ? v.ValueKind switch { JsonValueKind.True => true, JsonValueKind.False => false, _ => null } : null;
 
-    static void SendText(Peer peer, object message) => peer.Enqueue(JsonSerializer.SerializeToUtf8Bytes(message), text: true, video: false);
+    // A text reply. A phone that lets too much pile up is closed (Peer.Enqueue).
+    static void SendText(Peer peer, object message)
+    {
+        if (peer.Enqueue(JsonSerializer.SerializeToUtf8Bytes(message), text: true, video: false) == Peer.Queued.Overflow) peer.Abort();
+    }
 
     // Video for one phone: the setup as text, each picture as [1 keyframe | 2 other][8-byte
     // timestamp, µs, big-endian][AVCC] (7.2). More than 60 waiting: dropped, and started again
@@ -414,7 +422,27 @@ public sealed class LiveServer : IDisposable
             default:
                 return;
         }
-        if (peer.Enqueue(data, text, video: true)) feed.RestartVideo(peer.Id);
+        switch (peer.Enqueue(data, text, video: true))
+        {
+            case Peer.Queued.VideoDropped: feed.RestartVideo(peer.Id); break;
+            case Peer.Queued.Overflow: peer.Abort(); break;
+        }
+    }
+
+    // At most 240 input messages a second on one socket (7.6), counted per whole second as on
+    // the Mac. A stand-in with the same TryTake as phase 3's InputRateLimiter (RemoteInput.cs,
+    // PerSecond = 240), which replaces it when the control task is merged.
+    internal sealed class InputRate
+    {
+        public const int PerSecond = 240;
+        long windowStart = long.MinValue / 2;
+        int count;
+
+        public bool TryTake(long nowMs)
+        {
+            if (nowMs - windowStart >= 1000) { windowStart = nowMs; count = 0; }
+            return ++count <= PerSecond;
+        }
     }
 
     // One phone's socket. A send "completes" once the data is handed to the network, not when the
@@ -422,9 +450,18 @@ public sealed class LiveServer : IDisposable
     // JPEGs (newer ones replace the one waiting: the latest wins), and video is only encoded while
     // fewer than 6 pictures are unconfirmed and fewer than 4 messages wait (VideoReady). A page
     // that stops confirming for 3 seconds starts afresh, so the stream never freezes.
-    sealed class Peer
+    internal sealed class Peer
     {
+        // Everything waiting for one phone, text and video together: past this the phone isn't
+        // reading (or floods replies), and its socket is closed.
+        public const int MaxQueued = 256;
+        public const long MaxQueuedBytes = 8L * 1024 * 1024;
+        public const int MaxVideoQueued = 60;
+
+        public enum Queued { Ok, VideoDropped, Overflow }
+
         public readonly Guid Id = Guid.NewGuid();
+        public readonly InputRate InputRate = new();
         public readonly WebSocket Socket;
         public readonly string Session;  // the session token the handshake used
         public readonly string Device;
@@ -436,6 +473,7 @@ public sealed class LiveServer : IDisposable
         bool sending;
         byte[]? pending;                                   // JPEG: the newest picture waiting its turn
         readonly Queue<(byte[] Data, bool Text)> outbox = new();  // text and video, all in order
+        long outboxBytes;
         int unconfirmed;
         double waitingSince;
         readonly List<(double At, int Bytes, bool Key)> sentAt = new();  // unconfirmed pictures
@@ -466,6 +504,16 @@ public sealed class LiveServer : IDisposable
             catch (Exception) { }
         }
 
+        // Once the socket's loops have ended.
+        public void Release()
+        {
+            Abort();
+            try { cancel.Dispose(); }
+            catch (Exception) { }
+            try { work.Dispose(); }
+            catch (Exception) { }
+        }
+
         public void Wake()
         {
             try { if (work.CurrentCount == 0) work.Release(); }
@@ -482,32 +530,49 @@ public sealed class LiveServer : IDisposable
             if (jpeg != null) Wake();
         }
 
-        // True when too much video waited and was dropped (the caller restarts from a keyframe).
-        public bool Enqueue(byte[] data, bool text, bool video)
+        // VideoDropped: more than 60 video messages waited and the binary ones were dropped (the
+        // caller restarts from a keyframe). Overflow: too much waits in all; the caller closes
+        // the socket.
+        public Queued Enqueue(byte[] data, bool text, bool video)
         {
-            bool dropped = false;
+            var result = Queued.Ok;
             lock (gate)
             {
                 outbox.Enqueue((data, text));
-                if (video && outbox.Count > 60)
+                outboxBytes += data.Length;
+                if (video && outbox.Count > MaxVideoQueued)
                 {
-                    outbox.Clear();
-                    dropped = true;
+                    DropBinary();
+                    result = Queued.VideoDropped;
                 }
+                if (outbox.Count > MaxQueued || outboxBytes > MaxQueuedBytes) result = Queued.Overflow;
                 backlog = outbox.Count + (sending ? 1 : 0);
             }
-            Wake();
-            return dropped;
+            if (result != Queued.Overflow) Wake();
+            return result;
         }
 
+        // Back to JPEG: the video pictures waiting go; text (a setup, an error, a pong) stays.
         public void ClearOutbox()
         {
             lock (gate)
             {
-                outbox.Clear();
-                backlog = sending ? 1 : 0;
+                DropBinary();
+                backlog = outbox.Count + (sending ? 1 : 0);
             }
         }
+
+        // Under gate.
+        void DropBinary()
+        {
+            var keep = outbox.Where(m => m.Text).ToList();
+            outbox.Clear();
+            foreach (var m in keep) outbox.Enqueue(m);
+            outboxBytes = keep.Sum(m => (long)m.Data.Length);
+        }
+
+        // For the tests: what waits, oldest first (true: text).
+        internal List<bool> Waiting() { lock (gate) return outbox.Select(m => m.Text).ToList(); }
 
         // The next message to send, or null (nothing waits, or the JPEG must wait for a
         // confirmation). Marks it as being sent.
@@ -520,6 +585,7 @@ public sealed class LiveServer : IDisposable
                 if (outbox.Count > 0)
                 {
                     var next = outbox.Dequeue();
+                    outboxBytes -= next.Data.Length;
                     backlog = outbox.Count + 1;
                     item = (next.Data, next.Text, !next.Text && next.Data.Length > 0 && next.Data[0] == 1);
                 }

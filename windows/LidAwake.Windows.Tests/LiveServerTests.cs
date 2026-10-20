@@ -210,6 +210,22 @@ public class LiveServerTests
     }
 
     [Fact]
+    public async Task AFloodOfPingsGetsAtMost240AnswersASecond()
+    {
+        await using var h = new LiveHarness(video: false);
+        var c = await h.Connect();
+        var started = DateTime.UtcNow;
+        for (int i = 0; i < 1000; i++) await c.Send("{\"type\":\"ping\"}");
+        double seconds = (DateTime.UtcNow - started).TotalSeconds;
+        var got = await c.Collect(TimeSpan.FromSeconds(1.5));
+        int pongs = got.Count(m => m.Text && Encoding.UTF8.GetString(m.Data) == "{\"pong\":true}");
+        output.WriteLine($"1000 pings in {seconds:0.00} s: {pongs} answers");
+        Assert.InRange(pongs, 1, LiveServer.InputRate.PerSecond * ((int)Math.Ceiling(seconds) + 1));
+        Assert.True(pongs < 1000);
+        Assert.False(c.Closed);
+    }
+
+    [Fact]
     public async Task AtMostEightSockets()
     {
         await using var h = new LiveHarness(video: false);

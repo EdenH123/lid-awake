@@ -98,6 +98,8 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
     static readonly Guid CODECAPI_AVEncCommonMeanBitRate = new("f7222374-2144-4815-b550-a37f8e12ee52");
     static readonly Guid CODECAPI_AVEncMPVDefaultBPictureCount = new("8d390aac-dc5c-4200-b57f-814d04babab2");
     static readonly Guid CODECAPI_AVEncVideoForceKeyFrame = new("398c1b98-8353-475a-9ef2-8f265d260345");
+    static readonly Guid CODECAPI_AVEncMPVGOPSize = new("95f31b26-95a4-41aa-9303-246a7fc6eef1");
+    static readonly Guid CODECAPI_AVEncVideoMaxKeyframeDistance = new("2987123a-ba93-4704-b489-ec1e5f25292c");
 
     const uint MF_VERSION = 0x00020070;
     const uint MFT_ENUM_FLAG_SYNCMFT = 0x1, MFT_ENUM_FLAG_HARDWARE = 0x4, MFT_ENUM_FLAG_LOCALMFT = 0x10, MFT_ENUM_FLAG_SORTANDFILTER = 0x40;
@@ -326,7 +328,17 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
         SetCodecValue(CODECAPI_AVEncCommonRateControlMode, new Variant { Type = VT_UI4, UInt = 0 });  // CBR
         SetCodecValue(CODECAPI_AVEncCommonMeanBitRate, new Variant { Type = VT_UI4, UInt = (uint)bitrate });
         SetCodecValue(CODECAPI_AVEncMPVDefaultBPictureCount, new Variant { Type = VT_UI4, UInt = 0 });
+        // Keyframes only on request, like the Mac's MaxKeyFrameInterval 100 000: a very long GOP
+        // (0 means "the encoder's default" on some MFTs, so an explicit number), the largest one
+        // the encoder takes. The SDK has no IDR-interval setting; the keyframe distance is the
+        // closest, set the same way where it exists.
+        foreach (var gop in LongGops)
+            if (SetCodecValue(CODECAPI_AVEncMPVGOPSize, new Variant { Type = VT_UI4, UInt = gop })) break;
+        foreach (var gop in LongGops)
+            if (SetCodecValue(CODECAPI_AVEncVideoMaxKeyframeDistance, new Variant { Type = VT_UI4, UInt = gop })) break;
     }
+
+    static readonly uint[] LongGops = { 1_000_000, 100_000, 65_535, 30_000 };
 
     // Output before input, as Media Foundation's encoders want it.
     void SetOutputType(int bitrate)
@@ -426,8 +438,10 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
     void DrainSync(List<(VideoConfig, VideoChunk)> produced)
     {
         for (int guard = 0; guard < 64; guard++)
-            if (!ProcessOneOutput(produced)) return;
+            if (ProcessOneOutput(produced) == Output.NeedsInput) return;
     }
+
+    enum Output { NeedsInput, Taken, FormatChanged }
 
     // Asynchronous: the picture goes in once the encoder asks for one (METransformNeedInput);
     // whatever is ready meanwhile is taken out (METransformHaveOutput). Then a short wait for this
@@ -444,7 +458,11 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
             while (NextEvent() is { } type)
             {
                 if (type == METransformNeedInput) needInput++;
-                else if (type == METransformHaveOutput) ProcessOneOutput(produced);
+                else if (type == METransformHaveOutput)
+                {
+                    // After a format change the same output is still waiting: take it now.
+                    for (int tries = 0; tries < 4 && ProcessOneOutput(produced) == Output.FormatChanged; tries++) { }
+                }
             }
             if (!fed && needInput > 0)
             {
@@ -488,8 +506,9 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
         // IMFTransform::ProcessInput
         ((delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr, uint, int>)Com.Slot(transform, 24))(transform, 0, sample, 0);
 
-    // One ProcessOutput. False when the encoder needs more input first.
-    bool ProcessOneOutput(List<(VideoConfig, VideoChunk)> produced)
+    // One ProcessOutput: a picture taken (or nothing to take yet), or the output format changed
+    // (the output is still there for the next call).
+    Output ProcessOneOutput(List<(VideoConfig, VideoChunk)> produced)
     {
         IntPtr ours = IntPtr.Zero;
         if (!providesSamples) ours = MakeOutputSample();
@@ -501,16 +520,16 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
         var got = buffer.Sample;
         try
         {
-            if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) return false;
+            if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) return Output.NeedsInput;
             if (hr == MF_E_TRANSFORM_STREAM_CHANGE)
             {
                 // The encoder settled its output format (with SPS and PPS): take its own type.
                 ResetOutputType();
-                return true;
+                return Output.FormatChanged;
             }
             Com.Check(hr, "ProcessOutput");
             if (got != IntPtr.Zero) Read(got, produced);
-            return true;
+            return Output.Taken;
         }
         finally
         {
@@ -628,11 +647,12 @@ public sealed unsafe class MfH264Encoder : IVideoEncoder
         // IMFTransform::ProcessMessage
         Com.Check(((delegate* unmanaged[Stdcall]<IntPtr, int, nuint, int>)Com.Slot(transform, 23))(transform, message, 0), "ProcessMessage");
 
-    void SetCodecValue(Guid key, Variant value)
+    // True when the encoder took it.
+    bool SetCodecValue(Guid key, Variant value)
     {
-        if (codecApi == IntPtr.Zero) return;
+        if (codecApi == IntPtr.Zero) return false;
         // ICodecAPI::SetValue; a setting the encoder doesn't support is left out.
-        ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, Variant*, int>)Com.Slot(codecApi, 9))(codecApi, &key, &value);
+        return ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, Variant*, int>)Com.Slot(codecApi, 9))(codecApi, &key, &value) >= 0;
     }
 
     // IMFAttributes (slots 3 to 32), shared by media types, samples, events and activation objects.

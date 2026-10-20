@@ -126,32 +126,76 @@ public sealed class Tailnet
             var status = first.Ok ? first.Output : "";
             if (HasFunnel(status)) Run("funnel --https=443 off");
             var live = livePort;
-            bool pageMapped = Maps(status, port), liveMapped = live == 0 || Maps(status, live);
-            if (pageMapped && liveMapped) return null;
+            // No live socket of ours (it isn't running, or another program holds its port): a
+            // /live mapping to that port left from before (a crash) goes, so the phone's cookie
+            // can't reach whatever listens there.
+            if (live == 0 && MapsLive(status, LastLivePort) && exec(LiveOff).Ok && settings.Get<bool?>(LiveServedKey) == true)
+                settings.Set(LiveServedKey, false);
+            bool pageMapped = Maps(status, port), liveMapped = live == 0 || MapsLive(status, live);
+            if (pageMapped && liveMapped) { lastLiveProblem = null; return null; }
             // Remembered first, so a crash halfway still gets the mapping removed at the next start.
-            settings.Set(ServedKey, true);
-            var said = "";
-            bool timedOut = false;
+            // When the page is the owner's own mapping, only /live is ours to take away later.
+            if (!pageMapped) settings.Set(ServedKey, true);
+            else if (settings.Get<bool?>(ServedKey) != true) settings.Set(LiveServedKey, true);
+            string saidPage = "", saidLive = "";
+            bool pageTimedOut = false, liveTimedOut = false;
             if (!pageMapped)
             {
                 var added = exec($"serve --bg {port}");
-                said = (added.Output + "\n" + added.Error).Trim();
-                timedOut = added.TimedOut;
+                saidPage = (added.Output + "\n" + added.Error).Trim();
+                pageTimedOut = added.TimedOut;
             }
             if (!liveMapped)
             {
                 // The live socket for the Screen tab: wss://<pc>.ts.net/live.
                 var added = exec($"serve --bg --set-path /live http://127.0.0.1:{live}");
-                said = (said + "\n" + added.Output + "\n" + added.Error).Trim();
-                timedOut |= added.TimedOut;
+                saidLive = (added.Output + "\n" + added.Error).Trim();
+                liveTimedOut = added.TimedOut;
             }
             var after = Run("serve status --json") ?? "";
-            if (!timedOut && Maps(after, port) && (live == 0 || Maps(after, live)) && !AsksForConsent(said)) return null;
-            if (said.Length == 0) said = timedOut ? "Tailscale did not answer in time." : "Tailscale printed nothing.";
+            bool pageOk = !pageTimedOut && Maps(after, port) && !AsksForConsent(saidPage);
+            bool liveOk = live == 0 || (!liveTimedOut && MapsLive(after, live) && !AsksForConsent(saidLive));
+            if (pageOk)
+            {
+                // The page works and only the screen's socket isn't published: that is said apart
+                // (LiveNotPublished), not as "the phone page isn't published".
+                if (!liveOk) TellLive(Brief(saidLive.Length > 0 ? saidLive : liveTimedOut ? "Tailscale did not answer in time." : "Tailscale printed nothing."));
+                else lastLiveProblem = null;
+                return null;
+            }
+            var said = (saidPage + "\n" + saidLive).Trim();
+            if (said.Length == 0) said = pageTimedOut || liveTimedOut ? "Tailscale did not answer in time." : "Tailscale printed nothing.";
             return Brief(said);
         }
         catch (Exception) { return null; }
     }
+
+    // Removes only Lid Awake's /live, leaving the rest of Serve as it is.
+    const string LiveOff = "serve --set-path /live off";
+
+    // Set while Serve holds a /live mapping Lid Awake added to a Serve setup of the owner's own
+    // (the owner already mapped the page): then turning off removes only /live.
+    public const string LiveServedKey = "liveServedByLidAwake";
+
+    // Called (on a background thread) when the page is published but /live, the screen's live
+    // socket, is not: with what Tailscale printed. Once per problem, not every minute.
+    public Action<string>? LiveNotPublished { get; set; }
+    string? lastLiveProblem;
+
+    void TellLive(string said)
+    {
+        if (said == lastLiveProblem) return;
+        lastLiveProblem = said;
+        try { LiveNotPublished?.Invoke(said); }
+        catch (Exception) { }
+    }
+
+    int LastLivePort => knownLivePort != 0 ? knownLivePort : LiveServer.DefaultPort;
+
+    // `serve status` maps the path /live to 127.0.0.1:<port> exactly.
+    public static bool MapsLive(string status, int port) =>
+        Regex.IsMatch(status ?? "", "\"/live\"\\s*:\\s*\\{[^{}]*(?<![\\d.])127\\.0\\.0\\.1:"
+                                    + port.ToString(System.Globalization.CultureInfo.InvariantCulture) + "(?!\\d)");
 
     // Take everything away, so nothing on the tailnet can reach the page.
     public void Unserve()
@@ -170,18 +214,35 @@ public sealed class Tailnet
         if (!status.Ok) return false;
         var port = knownPort != 0 ? knownPort : WebServer.DefaultPort;
         var live = knownLivePort;
-        return !Maps(status.Output, port) && (live == 0 || !Maps(status.Output, live));
+        return !Maps(status.Output, port) && (live == 0 || !MapsLive(status.Output, live));
+    }
+
+    // Only /live, the same way: the off command worked, or the status no longer shows it.
+    bool TryUnserveLive()
+    {
+        if (exec(LiveOff).Ok) return true;
+        var status = exec("serve status --json");
+        return status.Ok && !MapsLive(status.Output, LastLivePort);
     }
 
     // Unserve, but only when Lid Awake added the mapping (ServedKey); then forget it, but only
     // once the mapping is really gone. A failed removal keeps the flag, so the next start, the
-    // next turn-off and the minute check try again.
+    // next turn-off and the minute check try again. When Lid Awake only added /live to the
+    // owner's own Serve setup (LiveServedKey), only /live is removed.
     public void UnserveIfOurs()
     {
         try
         {
-            if (settings.Get<bool?>(ServedKey) != true) return;
-            if (TryUnserve()) settings.Set(ServedKey, false);
+            if (settings.Get<bool?>(ServedKey) == true)
+            {
+                if (TryUnserve())
+                {
+                    settings.Set(ServedKey, false);
+                    if (settings.Get<bool?>(LiveServedKey) == true) settings.Set(LiveServedKey, false);
+                }
+                return;
+            }
+            if (settings.Get<bool?>(LiveServedKey) == true && TryUnserveLive()) settings.Set(LiveServedKey, false);
         }
         catch (Exception) { }
     }
@@ -204,7 +265,8 @@ public sealed class Tailnet
     {
         try
         {
-            if (wantedPort == 0 && settings.Get<bool?>(ServedKey) != true) return Task.CompletedTask;
+            if (wantedPort == 0 && settings.Get<bool?>(ServedKey) != true && settings.Get<bool?>(LiveServedKey) != true)
+                return Task.CompletedTask;
             return Task.Run(Apply);
         }
         catch (Exception) { return Task.CompletedTask; }

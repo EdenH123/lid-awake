@@ -68,6 +68,8 @@ static class Program
         try { live.Start(); }
         catch (Exception e) { liveError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
+        // The page works but the screen's /live isn't published: only the activity log says so.
+        tailnet.LiveNotPublished = said => log.Write("Screen viewing not published by Tailscale (the phone page works): " + said);
         tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, live);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);

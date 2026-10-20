@@ -123,10 +123,118 @@ public class ScreenWiringTests : IDisposable
         var settings = new Settings(folder);
         settings.Set(Tailnet.ServedKey, true);
         // `serve --https=443 off` fails, and the status still shows /live.
-        var t = NewTailnet(args => args == "serve status --json" ? "{\"Proxy\":\"http://127.0.0.1:8788\"}" : null, settings);
+        var t = NewTailnet(args => args == "serve status --json" ? "{\"Handlers\":{\"/live\":{\"Proxy\":\"http://127.0.0.1:8788\"}}}" : null, settings);
         t.LivePort = LiveServer.DefaultPort;
         t.UnserveIfOurs();
         Assert.True(settings.Get<bool?>(Tailnet.ServedKey));
+    }
+
+    // A Tailscale with a given Serve status, which can be changed by the commands it is given.
+    sealed class FakeServe
+    {
+        public bool Page, Live, LiveAddWorks = true, LiveOffWorks = true;
+
+        public string? Answer(string args)
+        {
+            switch (args)
+            {
+                case "serve --bg 8787": Page = true; return "";
+                case "serve --bg --set-path /live http://127.0.0.1:8788": if (LiveAddWorks) Live = true; return LiveAddWorks ? "" : null;
+                case "serve --set-path /live off": if (LiveOffWorks) Live = false; return LiveOffWorks ? "" : null;
+                case "serve --https=443 off": Page = Live = false; return "";
+                case "serve status --json":
+                    var proxies = new List<string>();
+                    if (Page) proxies.Add("\"/\":{\"Proxy\":\"http://127.0.0.1:8787\"}");
+                    if (Live) proxies.Add("\"/live\":{\"Proxy\":\"http://127.0.0.1:8788\"}");
+                    return "{\"Web\":{\"pc.ts.net:443\":{\"Handlers\":{" + string.Join(",", proxies) + "}}}}";
+                default: return "";
+            }
+        }
+    }
+
+    [Fact]
+    public void AStaleLiveMappingGoesWhenThereIsNoLiveSocket()
+    {
+        // Left from a crash, or 8788 now belongs to another program: LivePort is 0.
+        var serve = new FakeServe { Page = true, Live = true };
+        var t = NewTailnet(serve.Answer);
+        Assert.Null(t.Serve(8787));
+        lock (commands) Assert.Contains("serve --set-path /live off", commands);
+        Assert.False(serve.Live);
+        Assert.True(serve.Page);
+    }
+
+    [Fact]
+    public void OnTheOwnersOwnServeOnlyLiveIsOursToRemove()
+    {
+        var settings = new Settings(folder);
+        // The owner mapped the page themselves: Lid Awake never added it.
+        var serve = new FakeServe { Page = true };
+        var t = NewTailnet(serve.Answer, settings);
+        t.LivePort = LiveServer.DefaultPort;
+        Assert.Null(t.Serve(8787));
+        Assert.True(serve.Live);
+        Assert.NotEqual(true, settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.True(settings.Get<bool?>(Tailnet.LiveServedKey));
+
+        lock (commands) commands.Clear();
+        t.UnserveIfOurs();
+        lock (commands)
+        {
+            Assert.Contains("serve --set-path /live off", commands);
+            Assert.DoesNotContain("serve --https=443 off", commands);
+        }
+        Assert.True(serve.Page);  // the owner's own mapping stays
+        Assert.False(serve.Live);
+        Assert.False(settings.Get<bool?>(Tailnet.LiveServedKey));
+    }
+
+    [Fact]
+    public void AFailedLiveRemovalIsTriedAgain()
+    {
+        var settings = new Settings(folder);
+        var serve = new FakeServe { Page = true };
+        var t = NewTailnet(serve.Answer, settings);
+        t.LivePort = LiveServer.DefaultPort;
+        t.Serve(8787);
+        serve.LiveOffWorks = false;
+        t.UnserveIfOurs();
+        Assert.True(settings.Get<bool?>(Tailnet.LiveServedKey));
+        serve.LiveOffWorks = true;
+        t.UnserveIfOurs();
+        Assert.False(settings.Get<bool?>(Tailnet.LiveServedKey));
+    }
+
+    [Fact]
+    public void WhenLidAwakeAddedThePageEverythingGoesOnTurnOff()
+    {
+        var settings = new Settings(folder);
+        var serve = new FakeServe();
+        var t = NewTailnet(serve.Answer, settings);
+        t.LivePort = LiveServer.DefaultPort;
+        Assert.Null(t.Serve(8787));
+        Assert.True(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.NotEqual(true, settings.Get<bool?>(Tailnet.LiveServedKey));
+        lock (commands) commands.Clear();
+        t.UnserveIfOurs();
+        lock (commands) Assert.Equal(new[] { "serve --https=443 off" }, commands);
+        Assert.False(serve.Page || serve.Live);
+    }
+
+    [Fact]
+    public void OnlyTheLiveSocketFailingIsNotThePageFailing()
+    {
+        var serve = new FakeServe { LiveAddWorks = false };
+        var t = NewTailnet(serve.Answer);
+        t.LivePort = LiveServer.DefaultPort;
+        var told = new List<string>();
+        t.LiveNotPublished = said => told.Add(said);
+        // The page is published: no "phone page not published".
+        Assert.Null(t.Serve(8787));
+        Assert.Single(told);
+        // Told once, not at every minute's check.
+        Assert.Null(t.Serve(8787));
+        Assert.Single(told);
     }
 
     [Fact]
