@@ -134,6 +134,28 @@ public sealed class ClaudeUsage
         catch (Exception) { return false; }
     }
 
+    // Claude Code runs the status line as often as every 300 ms: the same numbers saved less than
+    // this long ago are not written (and flushed to the disk) again.
+    public static readonly TimeSpan SameNumbersKept = TimeSpan.FromSeconds(60);
+
+    // True when `path` already holds exactly these rate_limits, saved (its "updated") less than
+    // SameNumbersKept before `at`. Anything unexpected is false, and the numbers are saved.
+    public static bool AlreadySaved(string path, JsonObject rateLimits, DateTimeOffset at)
+    {
+        try
+        {
+            if (ReadSmallFile(path) is not { } data || JsonNode.Parse(data) is not JsonObject root || root["rate_limits"] is not JsonObject saved
+                || root["updated"] is not JsonValue updated) return false;
+            long seconds;
+            if (updated.TryGetValue<long>(out var l)) seconds = l;
+            else if (updated.TryGetValue<JsonElement>(out var e) && e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var el)) seconds = el;
+            else return false;
+            long age = at.ToUnixTimeSeconds() - seconds;
+            return age >= 0 && age < (long)SameNumbersKept.TotalSeconds && saved.ToJsonString() == rateLimits.ToJsonString();
+        }
+        catch (Exception) { return false; }
+    }
+
     // The Mac's claudeUsage(): a regular file under 64 KB (not a folder, a link or a device), a JSON
     // object with `rate_limits`; each window only with a finite percent from 0 to 1000, and times
     // only when finite, positive and below 1e11 (else 0). Anything else is null.
@@ -141,19 +163,7 @@ public sealed class ClaudeUsage
     {
         try
         {
-            var info = new FileInfo(path);
-            if (!info.Exists || (info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0
-                || info.Length >= MaxFileBytes) return null;
-            byte[] data;
-            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-            {
-                // It may have grown since: never more than the limit.
-                data = new byte[MaxFileBytes];
-                int total = 0, n;
-                while (total < data.Length && (n = stream.Read(data, total, data.Length - total)) > 0) total += n;
-                if (total >= MaxFileBytes) return null;
-                Array.Resize(ref data, total);
-            }
+            if (ReadSmallFile(path) is not { } data) return null;
             using var doc = JsonDocument.Parse(data);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("rate_limits", out var limits)
@@ -161,6 +171,23 @@ public sealed class ClaudeUsage
             return new Snapshot(Stamp(root, "updated"), WindowOf(limits, "five_hour"), WindowOf(limits, "seven_day"));
         }
         catch (Exception) { return null; }
+    }
+
+    // The file's bytes when it is a regular file under MaxFileBytes (not a folder, a link or a
+    // device), else null. Throws when it can't be read.
+    static byte[]? ReadSmallFile(string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists || (info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0
+            || info.Length >= MaxFileBytes) return null;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        // It may have grown since: never more than the limit.
+        var data = new byte[MaxFileBytes];
+        int total = 0, n;
+        while (total < data.Length && (n = stream.Read(data, total, data.Length - total)) > 0) total += n;
+        if (total >= MaxFileBytes) return null;
+        Array.Resize(ref data, total);
+        return data;
     }
 
     static Window? WindowOf(JsonElement limits, string key)

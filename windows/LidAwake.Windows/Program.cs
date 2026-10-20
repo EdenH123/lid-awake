@@ -141,8 +141,10 @@ static class Program
         // The graphs: a sample every minute while the app runs, off the UI thread.
         var history = new HistoryStore();
         server.History = history;
+        // The rows not saved yet are written when the process exits (here), and when Windows
+        // signs out or shuts down (the tray, after its own more urgent work: FlushAtSessionEnd).
         using var sampler = new HistorySampler(history, readings, () => heat.Latest.Battery, processes: ProcessTable.Shared, report: new PowercfgReport())
-            { FlushAtSessionEnd = true };
+            { FlushAtExit = true };
         server.Memory = new MemoryInfo(readings, ProcessTable.Shared);
         sampler.Start();
         server.Apps = phoneApps;
@@ -159,16 +161,19 @@ static class Program
             phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet, readings.Power, server.ScreenPolls,
             () => TrayText.MinutesToFull(readings.Charge()));
         // Claude in the tray (TrayClaude): its items after the safety limits, its "Claude 59% ·
-        // 1h40m" as the tooltip's last line (the tray composes it), then attached, once the items
-        // are in the menu (Attach finds the menu through them).
+        // 1h40m" as the tooltip's last line (the tray composes it), brought up to date each time
+        // the menu opens (TrayApp.MenuOpening), then attached.
         var trayClaude = new TrayClaude(settings, claudeUsage, new ClaudeSettingsFile(), log.Write);
+        tray.FlushAtSessionEnd = () => history.Flush();
         tray.InsertAfterLimits(trayClaude.Items);
         tray.ExtraTooltip = trayClaude.TooltipText;
+        tray.MenuOpening += trayClaude.MenuOpened;
         trayClaude.Attach(tray.OnUi);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");
         Application.Run(tray);
+        trayClaude.Stop();
         tray.Dispose();
     }
 }
@@ -264,8 +269,12 @@ sealed class TrayApp : ApplicationContext
     readonly ScreenPolls? screenPolls;
 
     // Raised on the UI thread each time the menu opens, after Lid Awake's own items are brought up
-    // to date (for the Claude task's items). A handler that throws is ignored.
+    // to date (TrayClaude.MenuOpened). A handler that throws is ignored.
     public event Action? MenuOpening;
+
+    // Writes the history's unsaved rows (HistoryStore.Flush) when Windows signs out or shuts
+    // down: run by OnSessionEnding off the UI thread, after the lid and Serve have started.
+    public Action? FlushAtSessionEnd { get; set; }
 
     // More for the tooltip, after Lid Awake's own lines (Claude usage, "59% · 1h40m"), read every
     // second on the UI thread. Null or empty: nothing. A getter that throws is ignored.
@@ -492,8 +501,8 @@ sealed class TrayApp : ApplicationContext
     // page is not left on Tailscale, waiting at most a few seconds (SessionEnd).
     void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs e)
     {
-        // Already off: only a removal still waiting its 8 seconds, done now.
-        if (!isOn) { SessionEnd.Unserve(phone.Off); return; }
+        // Already off: only a removal still waiting its 8 seconds, done now (and the history).
+        if (!isOn) { SessionEnd.Unserve(phone.Off, flush: FlushAtSessionEnd); return; }
         isOn = false;
         Countdown.Stop();
         CloseSockets();
@@ -504,11 +513,9 @@ sealed class TrayApp : ApplicationContext
         }
         catch (Exception) { }
         camera?.StopAll();
-        // The brightness goes back at the same time (off this thread), not after the rest.
-        var screenDone = screen.SetOn(false);
-        SessionEnd.TurnOff(machine, phone.Off, log);
-        try { screenDone.Wait(TimeSpan.FromSeconds(2)); }
-        catch (Exception) { }
+        // Serve's removal and the brightness start first (off this thread), then the lid action,
+        // then the history: all waited for together, at most SessionEnd.MaxWait.
+        SessionEnd.TurnOff(machine, phone.Off, log, brightness: () => screen.SetOn(false), flush: FlushAtSessionEnd);
     }
 
     // ---- Camera & microphone from the phone (the Mac's toggleCamera) ----

@@ -706,9 +706,10 @@ public sealed class HistorySampler : IDisposable
     // A program's name from its exe (tests set their own).
     public Func<string, string> NameOf { get; init; } = ProcessSource.NameOf;
 
-    // Also write the rows not saved yet when Windows signs out or shuts down, and when the process
-    // exits (the app sets it; tests don't, so they hook nothing global).
-    public bool FlushAtSessionEnd { get; init; }
+    // Also write the rows not saved yet when the process exits (the app sets it; tests don't, so
+    // they hook nothing global). When Windows signs out or shuts down, the tray writes them
+    // (TrayApp.FlushAtSessionEnd), after its own more urgent work has started.
+    public bool FlushAtExit { get; init; }
 
     // The first sample is taken at once (it also starts the processor measurement and the backfill).
     public void Start()
@@ -716,17 +717,14 @@ public sealed class HistorySampler : IDisposable
         lock (timerGate)
         {
             timer ??= new System.Threading.Timer(_ => Sample(), null, TimeSpan.Zero, Every);
-            if (FlushAtSessionEnd && !hooked)
+            if (FlushAtExit && !hooked)
             {
                 hooked = true;
-                try { Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding; }
-                catch (Exception) { }
                 AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
             }
         }
     }
 
-    void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs e) => store.Flush();
     void OnProcessExit(object? sender, EventArgs e) => store.Flush();
 
     // Stops the samples and writes what isn't in the file yet.
@@ -739,8 +737,6 @@ public sealed class HistorySampler : IDisposable
             if (hooked)
             {
                 hooked = false;
-                try { Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding; }
-                catch (Exception) { }
                 AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
             }
         }

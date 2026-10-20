@@ -166,6 +166,34 @@ public class ClaudeHookTests : IDisposable
         Assert.True(u.Updated > 0);
     }
 
+    // Claude Code runs the status line several times a second: the same numbers are written again
+    // only once the file is a minute old; new numbers are written at once.
+    [Fact]
+    public void TheStatusLineWritesTheSameNumbersAtMostOnceAMinute()
+    {
+        var usageFile = Path.Combine(NewFolder(), ClaudeUsage.FileName);
+        var json = Encoding.UTF8.GetBytes("{\"rate_limits\":{\"five_hour\":{\"used_percentage\":59,\"resets_at\":1760010000}}}");
+        var at = DateTimeOffset.FromUnixTimeSeconds(1760000000);
+        ClaudeHook.StatusLine(json, usageFile, at);
+        Assert.Equal(1760000000, ClaudeUsage.ReadFile(usageFile)!.Updated);
+        // A mark only a rewrite would remove.
+        var marked = File.ReadAllText(usageFile).Replace("\"updated\"", "\"mark\":1,\"updated\"");
+        File.WriteAllText(usageFile, marked);
+
+        ClaudeHook.StatusLine(json, usageFile, at.AddSeconds(30));
+        Assert.Equal(marked, File.ReadAllText(usageFile));
+
+        var other = Encoding.UTF8.GetBytes("{\"rate_limits\":{\"five_hour\":{\"used_percentage\":60,\"resets_at\":1760010000}}}");
+        ClaudeHook.StatusLine(other, usageFile, at.AddSeconds(31));
+        Assert.Equal(60, ClaudeUsage.ReadFile(usageFile)!.FiveHour!.Value.Pct);
+        Assert.DoesNotContain("\"mark\"", File.ReadAllText(usageFile));
+
+        File.WriteAllText(usageFile, File.ReadAllText(usageFile).Replace("\"updated\"", "\"mark\":1,\"updated\""));
+        ClaudeHook.StatusLine(other, usageFile, at.AddSeconds(31 + 60));
+        Assert.DoesNotContain("\"mark\"", File.ReadAllText(usageFile));
+        Assert.Equal(1760000000 + 91, ClaudeUsage.ReadFile(usageFile)!.Updated);
+    }
+
     [Fact]
     public void AStatusLineWithoutNumbersSavesNothing()
     {

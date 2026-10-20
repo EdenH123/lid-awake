@@ -57,6 +57,10 @@ public sealed class CameraService : IDisposable
     // Opening and closing the device, one at a time, so a new open waits for the old one to let go.
     readonly object deviceGate = new();
     readonly Dictionary<ICameraSocket, Viewer> viewers = new(ReferenceEqualityComparer.Instance);
+    // viewers.Count, set under `gate` whenever it changes and read without it (Watchers): the
+    // tray reads it every second on the UI thread, and `gate` is held while the encoder starts
+    // and while each picture is encoded.
+    volatile int watchers;
     System.Threading.Timer? timer;
 
     // The capture and what belongs to it. `generation` changes whenever the capture ends, so
@@ -109,7 +113,7 @@ public sealed class CameraService : IDisposable
 
     // Phones that have the camera open right now (the tray icon shows a video camera meanwhile, as
     // the Mac's menu bar does). One whose capture failed still counts until it closes the camera.
-    public int Watchers { get { lock (gate) return viewers.Count; } }
+    public int Watchers => watchers;
 
     // A message from the phone on its live socket (7.3). True when it was a camera message
     // (`camera`, `cameraKey`, `talk` as a string), which the socket then handles no further.
@@ -151,6 +155,7 @@ public sealed class CameraService : IDisposable
             if (!SafeAllowed()) { socket.SendCameraError(CameraTexts.Off); return; }
             if (!tickets.Redeem(ticket, socket.SessionToken)) { socket.SendCameraError(CameraTexts.NeedsPasskey); return; }
             viewers[socket] = new Viewer { Since = now() };
+            watchers = viewers.Count;
             Log($"Camera and microphone opened from the phone · {socket.Device}");
             if (capture == null && !opening)
             {
@@ -200,6 +205,7 @@ public sealed class CameraService : IDisposable
         lock (gate)
         {
             if (!viewers.Remove(socket)) return;
+            watchers = viewers.Count;
             Log($"Camera and microphone closed · {socket.Device}");
             if (reason != null) socket.SendCameraStopped(reason);
             last = viewers.Count == 0;
@@ -219,6 +225,7 @@ public sealed class CameraService : IDisposable
         {
             foreach (var socket in viewers.Keys) Log($"Camera and microphone closed · {socket.Device}");
             viewers.Clear();
+            watchers = 0;
             ended = EndCapture();
         }
         talk?.Stop();

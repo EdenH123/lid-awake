@@ -10,7 +10,8 @@ namespace LidAwake;
 // sets Claude Code up to send its numbers and session events here (ClaudeSettingsFile).
 //
 // The tray puts Items in its menu (TrayApp.InsertAfterLimits), shows TooltipText() as the
-// tooltip's last line (TrayApp.ExtraTooltip, composed by TrayText.Tooltip), then calls Attach.
+// tooltip's last line (TrayApp.ExtraTooltip, composed by TrayText.Tooltip), calls MenuOpened each
+// time its menu opens (TrayApp.MenuOpening), then calls Attach, and Stop when the app ends.
 public sealed class TrayClaude
 {
     public const string BarTitle = "Show Claude usage by the clock";
@@ -28,6 +29,15 @@ public sealed class TrayClaude
     // Every 30 seconds the saved numbers, as on the Mac (the tray reads TooltipText every second).
     readonly System.Windows.Forms.Timer tick = new() { Interval = 30_000 };
     string? tipExtra;
+    // Whether Lid Awake is in Claude Code's settings, for the third item's tick. The file may be
+    // up to 4 MB (ClaudeSettingsFile.MaxBytes), so it is never read on the UI thread for this: in
+    // the background when the menu opens, at most every HooksEvery. The fields are the UI thread's;
+    // `hooksVersion` changes when the owner flips it, so a read begun before is dropped.
+    public static readonly TimeSpan HooksEvery = TimeSpan.FromSeconds(10);
+    long hooksReadAt;
+    bool hooksRead;
+    int hooksVersion;
+    Action<Action> onUi = a => a();
 
     public TrayClaude(Settings settings, ClaudeUsage usage, ClaudeSettingsFile claudeSettings, Action<string> log)
     {
@@ -74,28 +84,22 @@ public sealed class TrayClaude
 
     // The menu items, for the tray to put after the safety limits: the greyed line, "Show Claude
     // usage by the clock", and "Claude alerts and usage from Claude Code…". Opening the menu they
-    // are in reads the numbers again (asking Claude Code at most once a minute).
+    // are in reads the numbers again (asking Claude Code at most once a minute; MenuOpened).
     public ToolStripItem[] Items => new ToolStripItem[] { line, barItem, hooksItem };
 
     // The tooltip's last line while "Show Claude usage by the clock" is on ("Claude 59% · 1h40m"),
     // or null. For the tray's tooltip; cheap (the numbers are read every 30 seconds, not here).
     public string? TooltipText() => tipExtra;
 
-    // On the UI thread, once the items are in the menu (it finds the menu through them). `onUi`
-    // posts to it (new numbers arrive on the thread pool).
+    // On the UI thread, once the items are in the menu. `onUi` posts to it (new numbers and the
+    // hooks' state arrive on the thread pool).
     public void Attach(Action<Action> onUi)
     {
-        if (line.Owner is ToolStripDropDown menu)
-            menu.Opening += (_, _) =>
-            {
-                usage.Refresh(ClaudeUsage.AskOnMenu);
-                Show();
-                ShowHooks();
-            };
+        this.onUi = onUi;
         usage.Saved += () => onUi(Show);
         if (InBar) usage.Refresh(TimeSpan.Zero);
         Show();
-        ShowHooks();
+        RefreshHooks();
         tick.Start();
         // Lid Awake moved (an update to another folder): our entries in Claude Code's settings follow.
         var exe = Environment.ProcessPath;
@@ -111,6 +115,15 @@ public sealed class TrayClaude
             });
     }
 
+    // The tray's menu is opening (TrayApp.MenuOpening, on the UI thread).
+    public void MenuOpened()
+    {
+        usage.Refresh(ClaudeUsage.AskOnMenu);
+        Show();
+        RefreshHooks();
+    }
+
+    // The app is ending: the 30-second timer stops.
     public void Stop() => tick.Stop();
 
     void OnTick()
@@ -133,10 +146,34 @@ public sealed class TrayClaude
         tipExtra = InBar && t.Bar != null ? "Claude " + t.Bar : null;
     }
 
-    void ShowHooks()
+    // On the UI thread: reads Claude Code's settings in the background (unless a read began less
+    // than HooksEvery ago), then ticks the item. A file that can't be read leaves the tick as it was.
+    void RefreshHooks()
     {
+        long now = Environment.TickCount64;
+        if (hooksRead && now - hooksReadAt < (long)HooksEvery.TotalMilliseconds) return;
+        hooksRead = true;
+        hooksReadAt = now;
+        int version = hooksVersion;
+        Task.Run(() =>
+        {
+            bool? on = null;
+            try { on = claudeSettings.State() == ClaudeSettingsFile.Setup.On; }
+            catch (Exception) { }
+            if (on is not { } value) return;
+            try { onUi(() => { if (version == hooksVersion) hooksItem.Checked = value; }); }
+            catch (Exception) { }
+        });
+    }
+
+    // Right after the owner flipped it: read now (the file was just written on this thread anyway).
+    void ShowHooksNow()
+    {
+        hooksVersion++;
         try { hooksItem.Checked = claudeSettings.State() == ClaudeSettingsFile.Setup.On; }
         catch (Exception) { }
+        hooksRead = true;
+        hooksReadAt = Environment.TickCount64;
     }
 
     void FlipInBar()
@@ -159,7 +196,7 @@ public sealed class TrayClaude
             try { MessageBox.Show("Claude Code's settings couldn't be changed: " + e.Message, "Lid Awake", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             catch (Exception) { }
         }
-        ShowHooks();
+        ShowHooksNow();
     }
 
     void FlipHooksNow()
