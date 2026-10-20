@@ -42,7 +42,14 @@ static class Program
         // The apps the owner picked for the phone (tray: Apps on phone…), and the Windows pieces behind them.
         var phoneApps = new PhoneApps(settings, new ProcessSource(), new WindowActions(), new WindowsIcons(), log);
         var startMenu = new StartMenuScanner(new ShortcutResolver());
-        var status = new StatusInfo(readings, limits, heat, phoneApps);
+        // The lid, the display and the screen's brightness behind a closed lid. The power
+        // notifications come to a hidden window on this (the UI) thread; the screen work (WMI) is
+        // done on the thread pool. A brightness a crash left lowered is put back right now.
+        var screen = new LidScreen(new WmiBrightness(), new DisplayHold(), machine, log.Write);
+        ScreenWatch.Connect(screen.SetWatching, screen.SetScreenOff);
+        _ = screen.Recover();
+        using var power = new PowerSettingWindow(screen.OnPowerSetting, log.Write);
+        var status = new StatusInfo(readings, limits, heat, phoneApps) { Screen = screen };
         // Phone alerts (Web Push). The key and the phones are this PC's own (machine.json); a new
         // password forgets the phones. Sign-ins are announced to them as `security` alerts.
         using var push = new WebPush(machine);
@@ -74,7 +81,7 @@ static class Program
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, alerts, phoneApps, startMenu);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, alerts, screen, phoneApps, startMenu);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
@@ -108,6 +115,7 @@ sealed class TrayApp : ApplicationContext
     volatile bool stopping;
     // Changed by every SetAwake, so a turn-off that waited for the phones can tell it was overtaken.
     int generation;
+    readonly LidScreen screen;
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
@@ -131,7 +139,7 @@ sealed class TrayApp : ApplicationContext
     public AutoOff Countdown { get; }
 
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
-                   Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts,
+                   Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts, LidScreen screen,
                    PhoneApps? apps = null, IStartMenuSource? startMenu = null)
     {
         phoneApps = apps;
@@ -144,6 +152,7 @@ sealed class TrayApp : ApplicationContext
         this.heat = heat;
         this.safety = safety;
         this.alerts = alerts;
+        this.screen = screen;
         Countdown = new AutoOff(settings);
         checks = new Coalescer(CheckSafety);
         // The phones are told first; StopWithAlert sets `stopping`, so isOn reads false from then on.
@@ -198,7 +207,8 @@ sealed class TrayApp : ApplicationContext
             // Wait (a little) for Serve to be removed, through the same one-at-a-time path as
             // turning off, so a turn-on still being applied cannot add it back after it.
             var unserved = SetAwake(false);
-            try { unserved.Wait(TimeSpan.FromSeconds(5)); }
+            // ... and for the screen's brightness to be put back (done off this thread).
+            try { Task.WaitAll(new[] { unserved, screen.SetOn(false) }, TimeSpan.FromSeconds(5)); }
             catch (Exception) { }
             icon!.Visible = false;
             ExitThread();
@@ -250,7 +260,11 @@ sealed class TrayApp : ApplicationContext
             icon.Text = "Lid Awake: off";
         }
         catch (Exception) { }
+        // The brightness goes back at the same time (off this thread), not after the rest.
+        var screenDone = screen.SetOn(false);
         SessionEnd.TurnOff(machine, () => phone.Set(false), log);
+        try { screenDone.Wait(TimeSpan.FromSeconds(2)); }
+        catch (Exception) { }
     }
 
     // The phone page's port was taken when Lid Awake started (Main).
@@ -417,6 +431,8 @@ sealed class TrayApp : ApplicationContext
     {
         var lid = LidResult.Changed;
         if (on) lid = KeepAwake.On(machine); else KeepAwake.Off(machine);
+        // Brightness behind a closed lid, and the display hold while watched: both only while on.
+        _ = screen.SetOn(on);
         // The countdown starts when it goes from off to on, and ends when it goes off.
         generation++;
         if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; alerts.TurnedOn(); }

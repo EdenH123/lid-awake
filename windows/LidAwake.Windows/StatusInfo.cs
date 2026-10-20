@@ -103,6 +103,9 @@ public sealed class StatusInfo
     readonly CpuMeter cpu = new();
     readonly NetMeter net = new();
 
+    // The lid and the display, from Windows' power notifications (none: open, awake).
+    public LidScreen? Screen { get; init; }
+
     // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
     // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp). `apps` is
     // the owner's list for the phone's Apps page (none: empty lists, and no "apps" in features).
@@ -145,8 +148,8 @@ public sealed class StatusInfo
             ["controlPermission"] = false,
             ["screenWidth"] = Math.Max(0, readings.ScreenWidth()),
             ["screenOff"] = false,
-            ["lidClosed"] = false,
-            ["displayAsleep"] = false,
+            ["lidClosed"] = Screen?.LidClosed ?? false,
+            ["displayAsleep"] = Screen?.DisplayAsleep ?? false,
             // 6.3
             ["apps"] = appLists.Apps,
             ["otherApps"] = appLists.Others,

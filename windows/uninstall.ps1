@@ -1,7 +1,7 @@
 # Removes Lid Awake from this PC. Double-click "Uninstall Lid Awake (Windows).cmd" in the folder above.
 # It stops the app, closes the phone page on Tailscale (if Lid Awake opened it), removes the
-# Start menu entry, puts your lid setting back, and asks before deleting your settings and
-# phone password.
+# Start menu entry, puts your lid setting back (and the screen brightness, if a crash left it
+# lowered), and asks before deleting your settings and phone password.
 #
 # The switches below are FOR AUTOMATED TESTS ONLY. A person never needs them; without them the
 # uninstaller asks the question and waits for Enter at the end.
@@ -39,6 +39,9 @@ $problems = 0
 # they are not deleted with the app (machine.json stays; so does the old settings.json).
 $keepSavedLid = $false
 $lidSource = $null
+# Set when a brightness a crash left lowered (savedBrightness in machine.json) could not be put
+# back: machine.json then stays, as the only copy of it.
+$keepSavedBrightness = $false
 
 function Show-Step([string]$text) { Write-Host ''; Write-Host $text }
 function Show-Ok([string]$text) { Write-Host "  [OK] $text" -ForegroundColor Green }
@@ -78,6 +81,17 @@ function Clear-SavedLidValues([string[]]$files) {
             [IO.File]::WriteAllText($tmp, $cleared)
             Move-Item -LiteralPath $tmp -Destination $file -Force
         }
+    }
+}
+
+# Blank the saved brightness in machine.json, so installing again never "restores" an old one.
+function Clear-SavedBrightness([string]$file) {
+    $raw = [IO.File]::ReadAllText($file)
+    $cleared = [regex]::Replace($raw, '("savedBrightness"\s*:\s*)-?\d+', '${1}null')
+    if ($cleared -ne $raw) {
+        $tmp = $file + '.tmp'
+        [IO.File]::WriteAllText($tmp, $cleared)
+        Move-Item -LiteralPath $tmp -Destination $file -Force
     }
 }
 
@@ -212,15 +226,44 @@ try {
     Show-Problem ('Could not put the lid setting back: ' + $_.Exception.Message + ' Open Control Panel, Power Options, "Choose what closing the lid does" and check it.')
 }
 
+# Lid Awake lowers the built-in screen's brightness while the lid is closed and keeps the old
+# level in machine.json (savedBrightness). It puts it back itself; only a crash leaves it there.
+try {
+    $brightnessState = $null
+    if (Test-Path -LiteralPath $machineFile) {
+        try { $brightnessState = [IO.File]::ReadAllText($machineFile) | ConvertFrom-Json } catch { $brightnessState = $null }
+    }
+    if ($null -ne $brightnessState -and $null -ne $brightnessState.savedBrightness) {
+        $level = $brightnessState.savedBrightness
+        if (-not (($level -is [int] -or $level -is [long]) -and $level -ge 0 -and $level -le 100)) {
+            $keepSavedBrightness = $true
+            Show-Problem 'The saved screen brightness looks wrong; set the brightness by hand (Settings -> System -> Display).'
+        } else {
+            $panels = @(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop)
+            if ($panels.Count -eq 0) { throw 'this PC has no built-in screen whose brightness can be set.' }
+            foreach ($panel in $panels) {
+                [void](Invoke-CimMethod -InputObject $panel -MethodName WmiSetBrightness -Arguments @{ Timeout = [uint32]1; Brightness = [byte]$level } -ErrorAction Stop)
+            }
+            Clear-SavedBrightness $machineFile
+            Show-Ok 'Screen brightness back to what it was before Lid Awake'
+        }
+    }
+} catch {
+    $keepSavedBrightness = $true
+    Show-Problem ('Could not put the screen brightness back: ' + $_.Exception.Message + ' Set the brightness by hand (Settings -> System -> Display).')
+}
+
 # ---- 4/5 Remove the app -----------------------------------------------------------------
 Show-Step '4/5  Removing the app'
+# machine.json is the only copy of a saved lid setting or brightness that could not be put back.
+$keepMachineFile = $keepSavedLid -or $keepSavedBrightness
 try {
     if (Test-Path -LiteralPath $dest) {
         $gone = $false
         for ($try = 1; $try -le 5 -and -not $gone; $try++) {
             try {
-                if ($keepSavedLid) {
-                    # The saved lid setting could not be put back: everything goes except that file.
+                if ($keepMachineFile) {
+                    # A saved setting could not be put back: everything goes except that file.
                     Get-ChildItem -LiteralPath $dest -Force | Where-Object { $_.Name -ne 'machine.json' } | Remove-Item -Recurse -Force
                     if (@(Get-ChildItem -LiteralPath $dest -Force).Count -eq 0) { Remove-Item -LiteralPath $dest -Force }
                 } else {
@@ -233,7 +276,7 @@ try {
             }
         }
     }
-    if ($keepSavedLid) {
+    if ($keepMachineFile) {
         $left = @()
         if (Test-Path -LiteralPath $dest) { $left = @(Get-ChildItem -LiteralPath $dest -Force | Where-Object { $_.Name -ne 'machine.json' }) }
         if ($left.Count -gt 0) { throw 'the folder is still there.' }
@@ -248,6 +291,10 @@ if ($keepSavedLid) {
     $keptIn = $lidSource
     if (-not $keptIn) { $keptIn = $machineFile }
     Show-Problem ("Couldn't put the lid setting back. Lid Awake kept it in $keptIn; run Uninstall again, or set Control Panel -> Power Options -> Choose what closing the lid does.")
+}
+
+if ($keepSavedBrightness) {
+    Show-Problem ("Couldn't put the screen brightness back. Lid Awake kept the saved level in $machineFile; run Uninstall again, or set the brightness by hand (Settings -> System -> Display).")
 }
 
 # ---- 5/5 Settings -----------------------------------------------------------------------

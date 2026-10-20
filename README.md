@@ -162,7 +162,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 
 - **Turn it on:** right-click the tray icon → **Lid Awake on**. You can turn it **off** from your phone too.
 - **Turn it on for a while only:** tray icon → **Turn off after** (for example 2 hours). When the time is up, Lid Awake turns itself off.
-- **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed.
+- **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed. See **The screen with the lid closed** below.
 - **See what happened:** tray icon → **Show activity log**.
 - **Safety limits:** Lid Awake turns itself off when the laptop is on battery below 10%, and won't turn on then (tray icon → **Turn off below 10% battery**). If the laptop reports its temperature, Lid Awake also turns off when the battery gets hotter than 40°C, or the laptop itself (its processor or board) hotter than 90°C (tray icon → **Turn off if battery is hotter than 40°C**). Many laptops don't report either: then that item is greyed out with **(no temperature on this PC)** and nothing watches the heat, so **don't leave the laptop closed in a bag or a tight space**. Both limits are on to start with. You can also change them on your phone (the gear → **Safety limits**).
 - **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
@@ -172,7 +172,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 ### What works on Windows so far
 
 - See how the laptop is doing on your phone: battery, memory, processor, network (with Wi-Fi signal bars and the network name) and uptime.
-- Keep it running with the lid closed.
+- Keep it running with the lid closed, and tell your phone when the lid is closed or the screen is off.
 - Turn it off from your phone.
 - A **Turn off after** timer.
 - Sign in with your phone password, with an alert at the tray for each new sign-in.
@@ -183,6 +183,15 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - Face ID or fingerprint sign-in. On your phone: the gear ⚙︎ → turn on **Face ID** (or fingerprint), then type your password once more. The laptop shows **Face ID or fingerprint added to Lid Awake** at the tray. To remove one, use the tray icon → **Face ID and fingerprint** → click the device. Setting a new phone password removes them all.
 - Open, switch to and quit programs from your phone. Right-click the Lid Awake icon, choose **Apps on phone…**, and tick the programs from the Start menu to show on the phone's Apps page. Programs that are open but not ticked show in the phone's dock.
 - Alerts on your phone: the laptop turned off (timer or safety limit), battery low, getting warm (on laptops that report a battery temperature), and each new sign-in. Turn them on in the app: gear ⚙︎ → **Alerts**. On an iPhone, the app must be on the Home Screen first.
+
+### The screen with the lid closed
+
+Many laptops switch the built-in screen off when you close the lid, and Windows doesn't let an app stop that. Lid Awake keeps the laptop running, but the screen can still go dark. Your phone then shows the PC as dark, and if you are watching the screen, the picture may stop. To keep the picture, either:
+
+- open the lid a little (a small gap is enough on most laptops), or
+- plug in an external monitor, which stays on with the lid closed.
+
+What Lid Awake does for you: while someone watches the screen from the phone, it stops Windows from turning the display off after a while. With the lid closed it also turns the built-in screen's brightness down to the lowest level, and puts it back when you open the lid, turn Lid Awake off, quit it, or sign out. If Lid Awake is stopped by a crash with the lid closed, it puts the brightness back the next time it starts. Some laptops don't let Windows change the brightness; then Lid Awake leaves it alone and says so once in the activity log.
 
 ### Not on Windows yet
 
@@ -195,7 +204,7 @@ Don't rely on these on Windows. They work on the Mac only, for now.
 ### Update or remove it on Windows
 
 - **Update:** download the new LidAwake-Windows ZIP (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are. If Lid Awake is on while you update, the update turns it off and puts the lid setting back. Turn it on again afterwards.
-- **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was.
+- **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was (and the screen brightness, if a crash left it lowered).
 
 ---
 

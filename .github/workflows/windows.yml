@@ -223,6 +223,28 @@ jobs:
           Assert (-not (Test-Path -LiteralPath (Join-Path $dest 'app-file.txt'))) 'the other app files are removed anyway'
           Assert ($r.Text -match 'kept it in') 'uninstall says where it kept the lid setting'
           Remove-Item -LiteralPath $dest -Recurse -Force
+
+          # (c) A brightness a crash left saved cannot be put back when there is no built-in
+          # screen to set (this runner has none): machine.json stays, and the uninstaller says so.
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          [IO.File]::WriteAllText((Join-Path $dest 'app-file.txt'), 'x')
+          [IO.File]::WriteAllText($machineFile, '{"savedBrightness":55}')
+          $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
+          Assert ($r.Code -ne 0) 'uninstall fails when the saved brightness cannot be put back'
+          Assert (Test-Path -LiteralPath $machineFile) 'machine.json is kept when the brightness cannot be put back'
+          Assert ([IO.File]::ReadAllText($machineFile) -match '"savedBrightness":55') 'machine.json still holds the saved brightness'
+          Assert ($r.Text -match 'screen brightness') 'uninstall says the screen brightness was not put back'
+          Assert (-not (Test-Path -LiteralPath (Join-Path $dest 'app-file.txt'))) 'the other app files are removed anyway (brightness)'
+          Remove-Item -LiteralPath $dest -Recurse -Force
+
+          # (d) A saved brightness that is not 0 to 100 is never applied, and is kept.
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          [IO.File]::WriteAllText($machineFile, '{"savedBrightness":150}')
+          $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
+          Assert ($r.Code -ne 0) 'uninstall fails for a saved brightness out of range'
+          Assert ($r.Text -match 'looks wrong') 'uninstall says the saved brightness looks wrong'
+          Assert ([IO.File]::ReadAllText($machineFile) -match '"savedBrightness":150') 'machine.json keeps the bad brightness'
+          Remove-Item -LiteralPath $dest -Recurse -Force
           exit 0
 
   # Builds the ready-made ZIP for people whose PC has no .NET SDK. Run it by hand from the Actions
