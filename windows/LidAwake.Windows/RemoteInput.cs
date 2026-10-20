@@ -529,8 +529,11 @@ public sealed class RemoteControl : IInputSink
     {
         get
         {
-            long now = clock();
-            lock (gate) return lastInput is { } at && now - at >= 0 && now - at < ControllingFor;
+            lock (gate)
+            {
+                long now = clock();
+                return lastInput is { } at && now - at >= 0 && now - at < ControllingFor;
+            }
         }
     }
 

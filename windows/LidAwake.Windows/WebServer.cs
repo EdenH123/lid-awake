@@ -78,6 +78,10 @@ public sealed partial class WebServer : IDisposable
     // doesn't have). Set only once the camera is wired to passkeys and the live socket. Set before Start.
     public CameraAccess? Camera { get; set; }
 
+    // GET /screen.jpg polls (the phone's still pictures when its live socket fails): the tray
+    // counts the screen as viewed while one waits and for a few seconds after.
+    public ScreenPolls ScreenPolls { get; } = new();
+
     // True after Start succeeded, until Stop or Dispose. Tailscale Serve may only point at the
     // port while this is true (PhoneAccess).
     public bool IsRunning => app != null;
@@ -517,6 +521,13 @@ public sealed partial class WebServer : IDisposable
             await SendText(c, 403, "Screen access is off. Turn on “Allow screen from phone” in the Lid Awake menu on your PC.");
             return;
         }
+        ScreenPolls.Started();
+        try { await ServeScreenJpg(c, feed); }
+        finally { ScreenPolls.Ended(); }
+    }
+
+    async Task ServeScreenJpg(HttpContext c, ScreenFeed feed)
+    {
         // Values are not percent-decoded (2.1): digits only.
         var after = int.TryParse(c.Request.Query["after"].ToString(), System.Globalization.NumberStyles.None,
                                  System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : 0;

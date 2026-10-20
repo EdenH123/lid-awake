@@ -33,14 +33,14 @@ public class TrayTextTests
         Assert.Equal("On, no timer", TrayText.StatusLine(true, 0, Idle)); // time up: no countdown
     }
 
-    // The Mac's order: the camera, then the screen (controlled or viewed), then the timer.
+    // The icon's order: the camera, then control, then viewing, then the timer.
     [Fact]
     public void StatusLinePutsWhatThePhoneDoesFirst()
     {
         Assert.Equal("Screen being viewed from your phone", TrayText.StatusLine(true, 5025, Watched));
         Assert.Equal("Being controlled from your phone", TrayText.StatusLine(true, 5025, Touched));
-        // Control with nobody watching (POST /input): the line keeps the timer, as on the Mac.
-        Assert.Equal("Turns off in 1:23:45", TrayText.StatusLine(true, 5025, TouchedUnseen));
+        // Control with nobody watching (POST /input): the words match the hand.
+        Assert.Equal("Being controlled from your phone", TrayText.StatusLine(true, 5025, TouchedUnseen));
         Assert.Equal("Camera being watched from your phone", TrayText.StatusLine(true, 5025, Camera));
         Assert.Equal("Camera being watched from your phone", TrayText.StatusLine(true, null, new TrayActivity(2, true, true)));
     }
@@ -71,11 +71,37 @@ public class TrayTextTests
         Assert.Equal("Lid Awake: your screen is being viewed from your phone", TrayText.Tooltip(true, null, Watched));
         Assert.Equal("Lid Awake: your PC is being controlled from your phone\nTurns off in 0:30", TrayText.Tooltip(true, 30, Touched));
         Assert.Equal("Lid Awake: your camera is being watched from your phone", TrayText.Tooltip(true, null, Camera));
-        Assert.Equal("Lid Awake: on", TrayText.Tooltip(true, null, TouchedUnseen));
+        Assert.Equal("Lid Awake: your PC is being controlled from your phone", TrayText.Tooltip(true, null, TouchedUnseen));
         // Never more than Windows takes.
         var longest = TrayText.Tooltip(true, 5025, Touched, new string('x', 300));
         Assert.Equal(TrayText.MaxTooltip, longest.Length);
         Assert.StartsWith("Lid Awake: your PC is being controlled", longest);
+    }
+
+    // Cut to Windows' limit without leaving half of an emoji at the end.
+    [Fact]
+    public void TooltipCutKeepsCharactersWhole()
+    {
+        var at = TrayText.MaxTooltip - "Lid Awake: on\n".Length - 1;  // the emoji starts on the last place
+        var tip = TrayText.Tooltip(true, null, Idle, new string('a', at) + "😀 more");
+        Assert.Equal(TrayText.MaxTooltip - 1, tip.Length);
+        Assert.False(char.IsHighSurrogate(tip[^1]));
+        Assert.Equal("ab", TrayText.Cut("ab😀", 3));
+        Assert.Equal("ab😀", TrayText.Cut("ab😀", 4));
+        Assert.Equal("abc", TrayText.Cut("abc", 10));
+    }
+
+    // A phone that falls back to still pictures (GET /screen.jpg) is a viewer too.
+    [Fact]
+    public void PollingCountsAsViewing()
+    {
+        var polled = TrayActivity.Of(0, polling: true, controlling: false, cameraWatched: false);
+        Assert.Equal(1, polled.Viewers);
+        Assert.Equal(TrayIconState.Viewed, TrayText.Icon(true, polled));
+        Assert.Equal("Screen being viewed from your phone", TrayText.StatusLine(true, 5025, polled));
+        Assert.Equal("Lid Awake: your screen is being viewed from your phone", TrayText.Tooltip(true, null, polled));
+        Assert.Equal(3, TrayActivity.Of(2, true, false, false).Viewers);
+        Assert.Equal(TrayActivity.None, TrayActivity.Of(0, false, false, false));
     }
 
     static PowerReading Power(byte ac, byte flag, byte percent) => new(ac, flag, percent, -1);
@@ -420,5 +446,44 @@ public class TrayIconsTests
         sheet.Save(png, ImageFormat.Png);
         output.WriteLine("TRAY-ICONS: rows " + string.Join(", ", States) + " (dark, then light); columns " + string.Join(", ", TrayIcons.Sizes) + " px, 4x");
         output.WriteLine("TRAY-ICONS-PNG: " + Convert.ToBase64String(png.ToArray()));
+    }
+}
+
+// GET /screen.jpg polls: viewed while one waits and for 3 seconds after the last one ended.
+public class ScreenPollsTests
+{
+    long now = 50_000;
+
+    [Fact]
+    public void ViewedWhileWaitingAndForThreeSecondsAfter()
+    {
+        var polls = new ScreenPolls(() => now);
+        Assert.False(polls.Viewed);
+        polls.Started();
+        now += 10_000;  // a poll that waits long still counts
+        Assert.True(polls.Viewed);
+        polls.Ended();
+        Assert.True(polls.Viewed);
+        now += ScreenPolls.ViewedFor - 1;
+        Assert.True(polls.Viewed);
+        now += 1;
+        Assert.False(polls.Viewed);
+    }
+
+    [Fact]
+    public void TwoAtOnceCountUntilBothEnd()
+    {
+        var polls = new ScreenPolls(() => now);
+        polls.Started();
+        polls.Started();
+        polls.Ended();
+        now += ScreenPolls.ViewedFor;
+        Assert.True(polls.Viewed);  // the second still waits
+        polls.Ended();
+        Assert.True(polls.Viewed);
+        now += ScreenPolls.ViewedFor;
+        Assert.False(polls.Viewed);
+        polls.Ended();  // an extra end counts as a poll that just ended
+        Assert.True(polls.Viewed);
     }
 }

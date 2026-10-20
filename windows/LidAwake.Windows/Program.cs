@@ -140,11 +140,12 @@ static class Program
         // The page works but the screen's /live isn't published: only the activity log says so.
         tailnet.LiveNotPublished = said => log.Write("Screen viewing not published by Tailscale (the phone page works): " + said);
         tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, alerts, screen,
-            phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet, readings.Power);
+            phoneApps, startMenu, control, live, cameraSwitch, camera, tailnet, readings.Power, server.ScreenPolls);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");
         Application.Run(tray);
+        tray.Dispose();
     }
 }
 
@@ -230,6 +231,14 @@ sealed class TrayApp : ApplicationContext
     readonly Icon appIcon = LoadTrayIcon();
     readonly Dictionary<(TrayIconState State, int Size, bool Light), Icon> drawn = new();
     (TrayIconState State, int Size, bool Light)? shownIcon;
+    // The taskbar's colour, read again only when Windows says a setting changed.
+    bool lightTaskbar = TrayIcons.LightTaskbar();
+    // GET /screen.jpg polls (the phone's still pictures): viewed, like a phone on the live socket.
+    readonly ScreenPolls? screenPolls;
+
+    // Raised on the UI thread each time the menu opens, after Lid Awake's own items are brought up
+    // to date (for the Claude task's items). A handler that throws is ignored.
+    public event Action? MenuOpening;
 
     // More for the tooltip, after Lid Awake's own lines (Claude usage, "59% · 1h40m"), read every
     // second on the UI thread. Null or empty: nothing. A getter that throws is ignored.
@@ -246,10 +255,11 @@ sealed class TrayApp : ApplicationContext
                    Limits limits, HeatSensor heat, SafetyCheck safety, PhoneAlerts alerts, LidScreen screen,
                    PhoneApps? apps = null, IStartMenuSource? startMenu = null, RemoteControl? control = null,
                    LiveServer? live = null, CameraSwitch? cameraSwitch = null, CameraService? camera = null,
-                   Tailnet? tailnet = null, Func<PowerReading?>? power = null)
+                   Tailnet? tailnet = null, Func<PowerReading?>? power = null, ScreenPolls? screenPolls = null)
     {
         this.tailnet = tailnet;
         this.power = power;
+        this.screenPolls = screenPolls;
         notices = new TrayNotices(log.Write, (title, text, warning) =>
             icon!.ShowBalloonTip(warning ? 10000 : 5000, title, text, warning ? ToolTipIcon.Warning : ToolTipIcon.Info));
         setup = new SingleWindow<SetupWindow>(MakeSetupWindow, w => !w.IsDisposed, w =>
@@ -343,7 +353,15 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add("Set up phone…", null, (_, _) => ShowSetup());
         menu.Items.Add(devicesMenu);
         menu.Items.Add(passkeysMenu);
-        menu.Opening += (_, _) => { ShowPasskeys(); ShowDevices(); ShowPassword(); ShowActivity(menuOpening: true); };
+        menu.Opening += (_, _) =>
+        {
+            ShowPasskeys();
+            ShowDevices();
+            ShowPassword();
+            ShowActivity(menuOpening: true);
+            try { MenuOpening?.Invoke(); }
+            catch (Exception) { }
+        };
         ShowPasskeys();
         ShowDevices();
         ShowPassword();
@@ -380,6 +398,9 @@ sealed class TrayApp : ApplicationContext
         // handler runs on this (the UI) thread. SystemEvents' handlers are static: removed again
         // in ExitThreadCore.
         try { Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding; }
+        catch (Exception) { }
+        // Light or dark taskbar chosen in Settings: the icon follows.
+        try { Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnPreferenceChanged; }
         catch (Exception) { }
         // The heat item follows whether a temperature can be read. The first read starts now, in
         // the background, and then every 15 seconds (once a minute while off).
@@ -422,6 +443,8 @@ sealed class TrayApp : ApplicationContext
     protected override void ExitThreadCore()
     {
         try { Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding; }
+        catch (Exception) { }
+        try { Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnPreferenceChanged; }
         catch (Exception) { }
         timerCheck.Stop();
         serveCheck.Stop();
@@ -690,9 +713,9 @@ sealed class TrayApp : ApplicationContext
         {
             using var big = new Bitmap(Path.Combine(AppContext.BaseDirectory, "icon-512.png"));
             using var small = new Bitmap(big, 32, 32);
-            return Icon.FromHandle(small.GetHicon());
+            return TrayIcons.Owned(small);
         }
-        catch (Exception) { return SystemIcons.Application; }
+        catch (Exception) { return (Icon)SystemIcons.Application.Clone(); }
     }
 
     // Returns when Serve is changed, in the background; the tray does not wait for it.
@@ -738,7 +761,8 @@ sealed class TrayApp : ApplicationContext
     // ---- The status line, the icon, the tooltip and the battery line (main.swift refresh) ----
 
     // Claude (its usage line and its "show in tooltip" switch) goes here: right after the safety
-    // limits, followed by its own separator, as on the Mac. Call on the UI thread.
+    // limits, followed by its own separator, as on the Mac. Call once, on the UI thread, before
+    // Application.Run.
     public void InsertAfterLimits(params ToolStripItem[] items)
     {
         if (items.Length == 0) return;
@@ -752,18 +776,29 @@ sealed class TrayApp : ApplicationContext
     {
         int viewers = 0;
         bool controlling = false, cameraOn = false;
+        bool polling = false;
         try { viewers = live?.Viewers ?? 0; }
+        catch (Exception) { }
+        try { polling = screenPolls?.Viewed ?? false; }
         catch (Exception) { }
         try { controlling = control?.Controlling ?? false; }
         catch (Exception) { }
         try { cameraOn = (camera?.Watchers ?? 0) > 0; }
         catch (Exception) { }
-        return new TrayActivity(viewers, controlling, cameraOn);
+        return TrayActivity.Of(viewers, polling, controlling, cameraOn);
     }
 
     // Every second, on every turn on or off, and when the menu opens: the icon and the tooltip,
     // and while the menu is open (or opening) its status and battery lines.
+    // Never throws: it runs every second, and one failure must not bring up WinForms' error window
+    // every second.
     void ShowActivity(bool menuOpening = false)
+    {
+        try { ShowActivityNow(menuOpening); }
+        catch (Exception) { }
+    }
+
+    void ShowActivityNow(bool menuOpening)
     {
         var activity = Activity();
         var remaining = isOn ? Countdown.Remaining() : null;
@@ -791,16 +826,20 @@ sealed class TrayApp : ApplicationContext
     }
 
     // The drawn icon for this state, at the tray's size and for the taskbar's colour. If drawing
-    // fails, the app's icon stays.
+    // fails, the app's own icon is shown instead (never the previous state's picture, which
+    // would tell the owner something that is no longer true).
     void ShowIcon(TrayIconState state)
     {
-        var key = (State: state, Size: TrayIcons.SizeFor(SystemInformation.SmallIconSize.Width), Light: TrayIcons.LightTaskbar());
+        var key = (State: state, Size: TrayIcons.SizeFor(SystemInformation.SmallIconSize.Width), Light: lightTaskbar);
         if (shownIcon == key) return;
         if (!drawn.TryGetValue(key, out var picture))
         {
-            try { picture = TrayIcons.Make(key.State, key.Size, key.Light); }
-            catch (Exception) { return; }
-            drawn[key] = picture;
+            try
+            {
+                picture = TrayIcons.Make(key.State, key.Size, key.Light);
+                drawn[key] = picture;
+            }
+            catch (Exception) { picture = appIcon; }
         }
         icon.Icon = picture;
         shownIcon = key;
@@ -811,7 +850,50 @@ sealed class TrayApp : ApplicationContext
         if (icon.Text == text) return;
         try { icon.Text = text; }
         // An older limit (63 characters): the start of it.
-        catch (ArgumentException) { icon.Text = text[..Math.Min(text.Length, 63)]; }
+        catch (ArgumentException) { icon.Text = TrayText.Cut(text, 63); }
+    }
+
+    // Windows says a setting changed (the light or dark taskbar among them).
+    void OnPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e) => OnUi(() =>
+    {
+        lightTaskbar = TrayIcons.LightTaskbar();
+        ShowActivity();
+    });
+
+    // After Application.Run returns (Main), not in ExitThreadCore: Quit is a click in the menu, which
+    // must not be disposed under its own click.
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) DisposeTray();
+        base.Dispose(disposing);
+    }
+
+    bool trayDisposed;
+
+    // The tray icon, its menu, the timer and every icon drawn go.
+    void DisposeTray()
+    {
+        if (trayDisposed) return;
+        trayDisposed = true;
+        try
+        {
+            activityTick.Dispose();
+            icon.Visible = false;
+            icon.Dispose();
+            menu.Dispose();
+            foreach (var picture in drawn.Values) picture.Dispose();
+            drawn.Clear();
+            appIcon.Dispose();
+        }
+        catch (Exception) { }
+    }
+
+    // A submenu's old items are disposed before it is filled again.
+    static void ClearItems(ToolStripMenuItem submenu)
+    {
+        var old = submenu.DropDownItems.Cast<ToolStripItem>().ToList();
+        submenu.DropDownItems.Clear();
+        foreach (var item in old) item.Dispose();
     }
 
     void ShowPassword()
@@ -845,7 +927,7 @@ sealed class TrayApp : ApplicationContext
 
     void ShowDevices()
     {
-        devicesMenu.DropDownItems.Clear();
+        ClearItems(devicesMenu);
         List<Auth.SessionInfo> sessions;
         bool locked;
         try
@@ -902,7 +984,7 @@ sealed class TrayApp : ApplicationContext
     // One item per key, "iPhone · added 20 Oct 2026": clicking it removes the key.
     void ShowPasskeys()
     {
-        passkeysMenu.DropDownItems.Clear();
+        ClearItems(passkeysMenu);
         IReadOnlyList<Passkeys.Info> keys;
         try { keys = auth.Passkeys.List; }
         catch (Exception) { keys = Array.Empty<Passkeys.Info>(); }

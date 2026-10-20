@@ -170,9 +170,9 @@ public sealed class Tailnet
             var first = exec("serve status --json");
             if (first.Missing) return null;
             var status = first.Ok ? first.Output : "";
-            if (HasFunnel(status))
+            // Told only when Tailscale really turned it off.
+            if (HasFunnel(status) && Run("funnel --https=443 off") != null)
             {
-                Run("funnel --https=443 off");
                 try { FunnelTurnedOff?.Invoke(); }
                 catch (Exception) { }
             }

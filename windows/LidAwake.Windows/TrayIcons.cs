@@ -51,10 +51,16 @@ static class TrayIcons
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool DestroyIcon(IntPtr handle);
 
-    // An Icon that owns its own handle (the one GetHicon made is copied, then destroyed).
     public static Icon Make(TrayIconState state, int size, bool lightTaskbar)
     {
         using var bmp = Draw(state, size, lightTaskbar);
+        return Owned(bmp);
+    }
+
+    // An Icon of the picture that owns its own handle, so Dispose frees it (the one GetHicon made
+    // is copied, then destroyed).
+    public static Icon Owned(Bitmap bmp)
+    {
         var handle = bmp.GetHicon();
         try
         {

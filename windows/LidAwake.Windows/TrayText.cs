@@ -3,11 +3,57 @@ using System.Globalization;
 namespace LidAwake;
 
 // What the phone is doing on this PC right now, for the tray: phones watching the screen
-// (LiveServer.Viewers), a click or key from the phone in the last 5 seconds
-// (RemoteControl.Controlling) and phones with the camera open (CameraService.Watchers).
+// (LiveServer.Viewers, plus one for recent /screen.jpg polls), a click or key from the phone in the
+// last 5 seconds (RemoteControl.Controlling) and phones with the camera open (CameraService.Watchers).
 public readonly record struct TrayActivity(int Viewers, bool Controlling, bool CameraWatched)
 {
     public static readonly TrayActivity None = new(0, false, false);
+
+    // The phone that falls back to still pictures (ScreenPolls) watches the screen too.
+    public static TrayActivity Of(int socketViewers, bool polling, bool controlling, bool cameraWatched) =>
+        new(Math.Max(0, socketViewers) + (polling ? 1 : 0), controlling, cameraWatched);
+}
+
+// GET /screen.jpg, the phone's still pictures when its live socket fails: the screen counts as
+// viewed while a poll waits and for ViewedFor after the last one ended (a phone polls again at
+// once, and each poll waits up to 2 seconds). `clock` is milliseconds that only go forward.
+public sealed class ScreenPolls
+{
+    public const long ViewedFor = 3000;
+
+    readonly Func<long> clock;
+    readonly object gate = new();
+    int waiting;
+    long? lastEnded;
+
+    public ScreenPolls(Func<long>? clock = null) => this.clock = clock ?? (() => Environment.TickCount64);
+
+    public void Started()
+    {
+        lock (gate) waiting++;
+    }
+
+    public void Ended()
+    {
+        lock (gate)
+        {
+            if (waiting > 0) waiting--;
+            lastEnded = clock();
+        }
+    }
+
+    public bool Viewed
+    {
+        get
+        {
+            lock (gate)
+            {
+                if (waiting > 0) return true;
+                long now = clock();
+                return lastEnded is { } at && now - at >= 0 && now - at < ViewedFor;
+            }
+        }
+    }
 }
 
 // The tray icon's five pictures, with the Mac's meaning (main.swift refresh): a moon while off, a
@@ -51,13 +97,15 @@ public static class TrayText
         return h > 0 ? $"{h}:{m:00}:{s:00}" : $"{m}:{s:00}";
     }
 
-    // The greyed-out first line of the menu, in the Mac's order: the camera first, then the screen
-    // (controlled or viewed), then the timer, then on or off. `remaining`: seconds left on the
-    // "Turn off after" timer (AutoOff.Remaining: null with no timer running).
+    // The greyed-out first line of the menu, in the icon's order: the camera first, then control
+    // (also POST /input with no screen watched, so the words match the hand), then viewing, then
+    // the timer, then on or off. `remaining`: seconds left on the "Turn off after" timer
+    // (AutoOff.Remaining: null with no timer running).
     public static string StatusLine(bool on, double? remaining, TrayActivity activity)
     {
         if (activity.CameraWatched) return CameraWatched;
-        if (activity.Viewers > 0) return activity.Controlling ? Controlled : Viewed;
+        if (activity.Controlling) return Controlled;
+        if (activity.Viewers > 0) return Viewed;
         if (on && remaining is { } left && left > 0) return "Turns off in " + Remaining(left);
         return on ? On : Off;
     }
@@ -70,13 +118,13 @@ public static class TrayText
         : activity.Viewers > 0 ? TrayIconState.Viewed
         : on ? TrayIconState.On : TrayIconState.Off;
 
-    // The tooltip's first part (the Mac's baseToolTip and label): what the phone is doing, else on
-    // or off. The camera has its own line here, since a tooltip is all Windows shows by the icon.
+    // The tooltip's first part (the Mac's baseToolTip and label): what the phone is doing, in the
+    // icon's order, else on or off. The camera has its own words here, since a tooltip is all
+    // Windows shows by the icon.
     public static string TooltipStatus(bool on, TrayActivity activity) =>
         activity.CameraWatched ? "Lid Awake: your camera is being watched from your phone"
-        : activity.Viewers > 0 ? activity.Controlling
-            ? "Lid Awake: your PC is being controlled from your phone"
-            : "Lid Awake: your screen is being viewed from your phone"
+        : activity.Controlling ? "Lid Awake: your PC is being controlled from your phone"
+        : activity.Viewers > 0 ? "Lid Awake: your screen is being viewed from your phone"
         : on ? "Lid Awake: on" : "Lid Awake: off";
 
     // The tooltip, one part per line: the status, the countdown while a timer runs (the Mac shows it
@@ -87,8 +135,16 @@ public static class TrayText
         var parts = new List<string> { TooltipStatus(on, activity) };
         if (on && remaining is { } left && left > 0) parts.Add("Turns off in " + Remaining(left));
         if (!string.IsNullOrWhiteSpace(extra)) parts.Add(extra.Trim());
-        var text = string.Join("\n", parts);
-        return text.Length <= MaxTooltip ? text : text[..MaxTooltip];
+        return Cut(string.Join("\n", parts), MaxTooltip);
+    }
+
+    // At most `max` characters, never splitting an emoji or other character made of two halves.
+    public static string Cut(string text, int max)
+    {
+        if (text.Length <= max) return text;
+        int end = Math.Max(0, max);
+        if (end > 0 && char.IsHighSurrogate(text[end - 1])) end--;
+        return text[..end];
     }
 
     // "Battery 80% · full in 1h 5m · 31.2°C" (the Mac's info line), from GetSystemPowerStatus and

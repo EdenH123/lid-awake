@@ -345,6 +345,13 @@ public class TailnetTests : IDisposable
         Assert.Equal(1, told);
         Assert.Contains("funnel --https=443 off", commands);
         Assert.Contains("serve --bg 8787", commands);
+
+        // Tailscale couldn't turn it off: nothing is said.
+        var failed = NewTailnet(args => args.StartsWith("serve status", StringComparison.Ordinal) ? "{\"AllowFunnel\":{\"pc.ts.net:443\":true}}"
+            : args.StartsWith("funnel", StringComparison.Ordinal) ? null : "");
+        failed.FunnelTurnedOff += () => told++;
+        failed.Serve(8787);
+        Assert.Equal(1, told);
     }
 
     [Fact]
