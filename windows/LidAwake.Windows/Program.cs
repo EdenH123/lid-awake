@@ -119,7 +119,8 @@ sealed class TrayApp : ApplicationContext
         {
             SetAwake(false);
             log.Write(why.LogOff);
-            icon.ShowBalloonTip(10000, "Lid Awake turned off", why.OffBody, ToolTipIcon.Warning);
+            // icon is assigned below, before the timer starts or anything can post this.
+            icon!.ShowBalloonTip(10000, "Lid Awake turned off", why.OffBody, ToolTipIcon.Warning);
         });
         safetyTimer = new System.Threading.Timer(_ => checks.Request(read: true), null, Timeout.Infinite, Timeout.Infinite);
         toggle.Click += (_, _) =>
