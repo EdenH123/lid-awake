@@ -81,6 +81,11 @@ public sealed partial class WebServer : IDisposable
     // doesn't have). Set only once the camera is wired to passkeys and the live socket. Set before Start.
     public CameraAccess? Camera { get; set; }
 
+    // The diagnostics log (DiagnosticsLog): the phone's stay-awake state from GET /status?wl=…,
+    // when it changes for that caller (StayAwakeLog). None: not written. Set before Start.
+    public Action<string>? Diag { get; set; }
+    readonly StayAwakeLog stayAwake = new();
+
     // GET /screen.jpg polls (the phone's still pictures when its live socket fails): the tray
     // counts the screen as viewed while one waits and for a few seconds after.
     public ScreenPolls ScreenPolls { get; } = new();
@@ -282,6 +287,8 @@ public sealed partial class WebServer : IDisposable
                 return;
             case ("GET", "/status"):
             {
+                if (Diag is { } diag && stayAwake.Seen(req.Headers["X-Forwarded-For"].ToString(), req.Query["wl"].ToString()) is { } woke)
+                    diag(woke);
                 // Plus how this very phone reaches the PC (6.6), which never waits for Tailscale.
                 var answer = status();
                 if (answer is Dictionary<string, object?> fields && tailnet.Link(req.Headers["X-Forwarded-For"].ToString()) is { } link)

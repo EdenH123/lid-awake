@@ -73,6 +73,8 @@ public sealed class MfCameraEncoder : IH264Encoder
 
     public MfCameraEncoder(MfH264Encoder encoder) => this.encoder = encoder;
 
+    public string Name => encoder.Name;
+
     public IReadOnlyList<H264Unit> Encode(byte[] nv12, long micros, bool keyframe)
     {
         var units = new List<H264Unit>();

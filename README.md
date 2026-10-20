@@ -171,7 +171,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - **Open the phone page on the laptop:** tray icon → **Open live page** (it needs Tailscale's name for the laptop; until Tailscale has one, a message says so).
 - **Signed-in devices:** tray icon → **Signed-in devices** lists each phone or browser signed in, with the day and how (password, or Face ID or fingerprint). Click one to sign it out, or **Sign out all devices**. After too many wrong passwords, sign-in is locked for a while: **Allow password sign-in again** ends that at once. **Show activity log** is there too.
 - **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed. See **The screen with the lid closed** below.
-- **See what happened:** tray icon → **Show activity log**.
+- **See what happened:** tray icon → **Show activity log**. When something doesn't work: tray icon → **Troubleshooting** (see **Find out what's wrong on Windows**).
 - **Change the phone password:** tray icon → **Change phone password…** (it says **Set phone password…** until there is one). A new password signs out every device.
 - **Safety limits:** Lid Awake turns itself off when the laptop is on battery below 10%, and won't turn on then (tray icon → **Turn off below 10% battery**). If the laptop reports its temperature, Lid Awake also turns off when the battery gets hotter than 40°C, or the laptop itself (its processor or board) hotter than 90°C (tray icon → **Turn off if battery is hotter than 40°C**). Many laptops don't report either: then that item is greyed out with **(no temperature on this PC)** and nothing watches the heat, so **don't leave the laptop closed in a bag or a tight space**. Both limits are on to start with. You can also change them on your phone (the gear → **Safety limits**).
 - **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
@@ -189,6 +189,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - A tray icon that shows what is going on: off, on, screen watched, controlled from the phone, camera watched, with the status, the timer's countdown and the battery in the menu and the icon's tooltip.
 - Messages at the tray when the phone turns Lid Awake off, when every device is signed out, and when Tailscale Funnel was on (it would put the phone page on the open internet) and Lid Awake turned it off. Each is in the activity log too, like turning **Allow control from phone** on or off.
 - The activity log.
+- Troubleshooting, as on the Mac: a self-test and a battery check (tray icon → **Troubleshooting**, or `LidAwake.exe --selftest` and `--battery`), and a diagnostics log with the details of each screen or camera session, the phone's "keep the screen on" state, each phone alert's delivery, encoder fallbacks and Tailscale Serve errors.
 - The low-battery safety limit, and the too-hot one on laptops that report a temperature.
 - Battery, temperature and processor history graphs. Windows has no power log to read, so Lid Awake records its own, once a minute, while it runs (the last 48 hours). The processor graph shows which programs used it, as on the Mac (Windows' own processes count as "Windows core", "Screen & windows" and "Windows (other)"). The graphs only cover the time Lid Awake has been running on this PC, with gaps while the PC slept. On a laptop, the battery graph fills those gaps from Windows' own battery report (at start and once a day), which keeps the battery level at each sleep, wake and plug-in; temperature and processor use can't be filled in. (The battery report's format has only been checked against a sample so far; a check on a real laptop is still to come.)
 - The memory window: tap the memory reading to see how much is used, free and in Windows' file cache, how hard Windows works to find room, and the programs using the most.
@@ -231,7 +232,6 @@ These work on the Mac only:
 
 - Claude usage written next to the icon. Windows can't show text beside a tray icon, so it's in the icon's tooltip instead (hover over the icon).
 - History from the time Lid Awake wasn't running. Only the battery graph is filled in from Windows' battery report; temperature and processor use can't be.
-- The Mac's troubleshooting extras: its self-test and battery check from Terminal, and the extra log lines about the phone keeping the screen awake, the live screen's stream and whether each phone alert was delivered.
 
 ### Update or remove it on Windows
 
@@ -283,7 +283,19 @@ If you turned on **Claude alerts on your phone**, the uninstaller also takes Lid
 | **Windows:** a message says **"Phone page not available"** | Another program is using the port Lid Awake needs (8787). Restart the PC, then turn **Lid Awake on** again. |
 | **Windows:** the phone **can't reach the PC** | Make sure Tailscale is on, on both the PC and the phone, with the same account. |
 | **Windows:** a message says **"The phone page isn't published yet"** | Tailscale needs your OK first. Tray icon → **Show activity log**: the line **Phone page not published by Tailscale** has a link from Tailscale. Open it and allow what it asks. Lid Awake tries again within a minute. |
+| **Windows:** something else doesn't work | Run the self-test (see **Find out what's wrong on Windows** below) and look for a line with ✗. |
 | **Windows:** the laptop still **sleeps with the lid closed**, or a message says **"Couldn't change what closing the lid does"** | Keep the lid open until it's fixed. 1) Make sure **Lid Awake on** is ticked in the tray menu. 2) Some laptops have their own power app from the maker that switches power plans or overrides the lid setting: check it there. 3) If you ever change **Choose what closing the lid does** in Control Panel by hand, do it only while Lid Awake is on, so turning it off puts your setting back. |
+
+### Find out what's wrong on Windows
+
+- **Self-test:** right-click the Lid Awake icon → **Troubleshooting** → **Run self-test**. After a few seconds a report opens in Notepad, one line per thing Lid Awake needs: ✓ works, ✗ doesn't work, – not on this PC (a desktop has no battery or lid, for example). It checks Tailscale (installed, signed in, and the laptop's HTTPS name), that the ports 8787 and 8788 are free or used by Lid Awake itself, the settings files, the lid setting, the battery, temperature and memory readings, the screen capture and the video encoder, the camera and microphone, phone alerts, and Claude Code. The last line says whether every required check passed. The self-test only looks: it changes no setting and turns nothing on (the camera is only listed, never opened).
+- **Battery check:** the same menu → **Battery check** shows what Windows says about the battery: the charge, the rate, the capacity, the minutes to full or to empty, whether it's plugged in, and each temperature sensor.
+- **From a terminal:** `"%LOCALAPPDATA%\LidAwake\LidAwake.exe" --selftest` (or `--battery`). It prints the report, and the self-test's exit code is 0 when every required check passed, 1 when one didn't. In PowerShell, add `| Out-Host` so it waits for the report (then `$LASTEXITCODE` is its exit code).
+- **Where the files are,** all in `%LOCALAPPDATA%\LidAwake` (paste it into File Explorer's address bar):
+  - `LidAwake-selftest.txt` and `LidAwake-battery.txt`: the last report of each.
+  - `LidAwake-access.log`: the activity log (tray → **Show activity log**).
+  - `LidAwake-diagnostics.log`: the details for finding a problem (tray → **Troubleshooting** → **Open diagnostics log**): one line for each time the screen or the camera was watched (how long, how many pictures, which encoder), when the phone's "keep the screen on" changes, what each phone alert got back from the phone's push service, when the screen capture or the video encoder had to fall back to another one, and Tailscale Serve errors. It never holds passwords, sign-in cookies, keys or the text of your alerts, and no addresses other than Tailscale names.
+  - Both logs keep about 1 MB; the one before is kept as `.old`.
 
 ---
 

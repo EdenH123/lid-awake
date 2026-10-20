@@ -99,6 +99,19 @@ public sealed class CameraService : IDisposable
         this.run = run ?? (a => Task.Run(a));
     }
 
+    // The diagnostics log (DiagnosticsLog): one line per capture when it ends (StreamStats), and
+    // each encoder fallback. Set before Start.
+    public Action<string>? Diag { get; set; }
+
+    // The capture's numbers (under `gate`), from the device opening until EndCapture.
+    StreamStats? session;
+
+    void DiagNote(string text)
+    {
+        try { Diag?.Invoke(text); }
+        catch (Exception) { }
+    }
+
     // The check every 2 seconds (switch off, 10 minutes, a camera that stopped sending).
     public void Start() => timer ??= new System.Threading.Timer(_ => Tick(), null, CheckEvery, CheckEvery);
 
@@ -184,6 +197,7 @@ public sealed class CameraService : IDisposable
                 {
                     opening = false;
                     capture = started;
+                    if (started != null) session = new StreamStats("camera");
                     lastFrame = now();
                     forceKey = true;
                     if (started == null) Broadcast(v => v.SendCameraError(problem ?? CameraTexts.Busy));
@@ -243,6 +257,8 @@ public sealed class CameraService : IDisposable
         opening = false;
         var ended = capture;
         capture = null;
+        if (session != null) DiagNote(session.Line());
+        session = null;
         try { encoder?.Dispose(); }
         catch (Exception) { }
         encoder = null;
@@ -349,7 +365,7 @@ public sealed class CameraService : IDisposable
             lastEncoded = frame.Micros;
             if (encoders == null || noEncoder)
             {
-                if (!noEncoder) { noEncoder = true; Broadcast(v => v.SendCameraError(CameraTexts.NoEncoder)); }
+                if (!noEncoder) NoEncoder();
                 return;
             }
             if (encoder == null || frame.Width != encodedWidth || frame.Height != encodedHeight)
@@ -359,7 +375,8 @@ public sealed class CameraService : IDisposable
                 encoder = null;
                 try { encoder = encoders.Create(frame.Width, frame.Height, Bitrate); }
                 catch (Exception) { }
-                if (encoder == null) { noEncoder = true; Broadcast(v => v.SendCameraError(CameraTexts.NoEncoder)); return; }
+                if (encoder == null) { NoEncoder(); return; }
+                if (session?.Encoder(SafeName(encoder)) is { } before) DiagNote($"camera encoder fallback: {before} → {SafeName(encoder)}");
                 (encodedWidth, encodedHeight) = (frame.Width, frame.Height);
                 forceKey = true;
             }
@@ -377,6 +394,21 @@ public sealed class CameraService : IDisposable
             }
             foreach (var unit in units) Emit(unit);
         }
+    }
+
+    // Under `gate`: no picture from now on, only sound, until the capture starts again.
+    void NoEncoder()
+    {
+        noEncoder = true;
+        session?.Fallback();
+        DiagNote("camera encoder fallback: no H.264 encoder works, sound only");
+        Broadcast(v => v.SendCameraError(CameraTexts.NoEncoder));
+    }
+
+    static string SafeName(IH264Encoder encoder)
+    {
+        try { return encoder.Name; }
+        catch (Exception) { return "H.264 encoder"; }
     }
 
     // Under `gate`: setup first whenever it changes, then the picture (7.2).
@@ -402,6 +434,7 @@ public sealed class CameraService : IDisposable
         // Nothing can be decoded before a setup: wait for a keyframe that carries SPS and PPS.
         if (setup == null) { forceKey = true; return; }
         if (avcc.Length == 0) return;
+        session?.Frame(avcc.Length, unit.Key);
         Broadcast(v => v.SendVideo(unit.Key, unit.Micros, avcc));
     }
 
