@@ -1,6 +1,6 @@
 # Installs Lid Awake for Windows. Double-click "Install Lid Awake (Windows).cmd" in the folder above.
 # It checks Tailscale, puts the app in %LOCALAPPDATA%\LidAwake, makes it start when you sign in,
-# and starts it now. Safe to run again (to update): your settings and phone password stay.
+# adds "Lid Awake" to the Start menu, and starts it now. Safe to run again (to update): your settings and phone password stay.
 #
 # The switches below are FOR AUTOMATED TESTS ONLY. A person never needs them; without them the
 # installer checks Tailscale, starts the app, and waits for Enter at the end.
@@ -23,6 +23,8 @@ $dest = Join-Path $env:LOCALAPPDATA 'LidAwake'
 $exe = Join-Path $dest 'LidAwake.exe'
 $tsExe = 'C:\Program Files\Tailscale\tailscale.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+$startMenuLink = Join-Path $startMenuDir 'Lid Awake.lnk'
 $tempDir = $null
 
 function Show-Step([string]$text) { Write-Host ''; Write-Host $text }
@@ -157,13 +159,32 @@ try {
 }
 
 # ---- 4/5 Start when you sign in ---------------------------------------------------------
-Show-Step '4/5  Start when you sign in'
+Show-Step '4/5  Start when you sign in, and the Start menu'
 try {
     if (-not (Test-Path -LiteralPath $runKey)) { New-Item -Path $runKey -Force | Out-Null }
     New-ItemProperty -Path $runKey -Name 'LidAwake' -Value ('"' + $exe + '"') -PropertyType String -Force | Out-Null
     Show-Ok 'Lid Awake starts when you sign in'
 } catch {
     Stop-Here ('Could not set up starting at sign-in: ' + $_.Exception.Message + ' Run this installer again.')
+}
+# "Lid Awake" in the Start menu (for this user only), so it can be started again after Quit.
+# Lid Awake works without it, so a failure here is told but does not stop the installation.
+try {
+    New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut($startMenuLink)
+        $link.TargetPath = $exe
+        $link.WorkingDirectory = $dest
+        $link.Description = 'Lid Awake'
+        $link.Save()
+    } finally {
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+    if (-not (Test-Path -LiteralPath $startMenuLink)) { throw 'the shortcut file was not created.' }
+    Show-Ok 'Lid Awake is in the Start menu'
+} catch {
+    Write-Host ('  [X] Could not add Lid Awake to the Start menu: ' + $_.Exception.Message + ' Lid Awake itself is installed. To start it again after Quit, run LidAwake.exe in ' + $dest + ', or run this installer again.') -ForegroundColor Red
 }
 
 # ---- 5/5 Start now ----------------------------------------------------------------------

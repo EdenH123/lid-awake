@@ -166,6 +166,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - **See what happened:** tray icon → **Show activity log**.
 - **Keep it plugged in, and don't leave it closed in a bag or a tight space;** on Windows Lid Awake doesn't watch the temperature yet. It doesn't turn itself off when the battery is low either.
 - **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
+- **After you choose Quit Lid Awake**, start it again from the Start menu (**Lid Awake**).
 
 ### What works on Windows so far
 

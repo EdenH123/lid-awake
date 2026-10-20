@@ -1,6 +1,7 @@
 # Removes Lid Awake from this PC. Double-click "Uninstall Lid Awake (Windows).cmd" in the folder above.
-# It stops the app, closes the phone page on Tailscale (if Lid Awake opened it), puts your lid
-# setting back, and asks before deleting your settings and phone password.
+# It stops the app, closes the phone page on Tailscale (if Lid Awake opened it), removes the
+# Start menu entry, puts your lid setting back, and asks before deleting your settings and
+# phone password.
 #
 # The switches below are FOR AUTOMATED TESTS ONLY. A person never needs them; without them the
 # uninstaller asks the question and waits for Enter at the end.
@@ -21,6 +22,12 @@ $ErrorActionPreference = 'Stop'
 $dest = Join-Path $env:LOCALAPPDATA 'LidAwake'
 $settingsDir = Join-Path $env:APPDATA 'LidAwake'
 $settingsFile = Join-Path $settingsDir 'settings.json'
+# Where Lid Awake keeps what is only true of this PC (the saved lid values and their power plan);
+# older versions kept the values in settings.json instead.
+$machineFile = Join-Path $dest 'machine.json'
+$startMenuLink = Join-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs') 'Lid Awake.lnk'
+# Lid Awake's phone page port (WebServer.DefaultPort in the app); exact, so 8787 never matches 87870.
+$mapsOurPort = '(?<![\d.])127\.0\.0\.1:8787(?!\d)'
 $tsExe = 'C:\Program Files\Tailscale\tailscale.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 # The same power setting KeepAwake.cs changes: SUB_BUTTONS and LIDACTION.
@@ -64,8 +71,8 @@ try {
     Show-Problem ('Could not stop Lid Awake: ' + $_.Exception.Message + ' Right-click its icon by the clock and choose Quit, then run this again.')
 }
 
-# ---- 2/5 Tailscale and start at sign-in -------------------------------------------------
-Show-Step '2/5  Closing the phone page and the start at sign-in'
+# ---- 2/5 Tailscale, Start menu and start at sign-in ------------------------------------
+Show-Step '2/5  Closing the phone page, the Start menu entry and the start at sign-in'
 try {
     # Only what Lid Awake added (servedByLidAwake in its settings): another Serve setup stays.
     $servedByUs = $false
@@ -73,16 +80,33 @@ try {
         try { $servedByUs = (([IO.File]::ReadAllText($settingsFile) | ConvertFrom-Json).servedByLidAwake -eq $true) } catch { $servedByUs = $false }
     }
     if ($servedByUs -and (Test-Path -LiteralPath $tsExe)) {
+        # Forget it only when the page is really gone: the command worked, or (when it failed)
+        # the status no longer maps Lid Awake's port. Otherwise the flag stays, so running this
+        # (or Lid Awake) again tries once more.
+        $gone = $false
         [void](Invoke-Quietly { (& $tsExe serve --https=443 off 2>&1) | Out-String })
-        $raw = [IO.File]::ReadAllText($settingsFile)
-        $cleared = [regex]::Replace($raw, '("servedByLidAwake"\s*:\s*)true', '${1}false')
-        $tmp = $settingsFile + '.tmp'
-        [IO.File]::WriteAllText($tmp, $cleared)
-        Move-Item -LiteralPath $tmp -Destination $settingsFile -Force
+        if ($LASTEXITCODE -eq 0) {
+            $gone = $true
+        } else {
+            $status = Invoke-Quietly { (& $tsExe serve status --json 2>$null) | Out-String }
+            if ($LASTEXITCODE -eq 0 -and $status -notmatch $mapsOurPort) { $gone = $true }
+        }
+        if ($gone) {
+            $raw = [IO.File]::ReadAllText($settingsFile)
+            $cleared = [regex]::Replace($raw, '("servedByLidAwake"\s*:\s*)true', '${1}false')
+            $tmp = $settingsFile + '.tmp'
+            [IO.File]::WriteAllText($tmp, $cleared)
+            Move-Item -LiteralPath $tmp -Destination $settingsFile -Force
+            Show-Ok 'Phone page closed on Tailscale'
+        } else {
+            Show-Problem 'Could not close the phone page on Tailscale. Open Tailscale and turn off Serve, or run: tailscale serve --https=443 off'
+        }
     }
+    if (Test-Path -LiteralPath $startMenuLink) { Remove-Item -LiteralPath $startMenuLink -Force }
+    if (Test-Path -LiteralPath $startMenuLink) { throw 'the Start menu entry is still there.' }
     Remove-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue
     if (Get-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue) { throw 'the start-at-sign-in entry is still there.' }
-    Show-Ok 'Phone page closed, and it will not start when you sign in'
+    Show-Ok 'Start menu entry removed, and it will not start when you sign in'
 } catch {
     Show-Problem ('Could not finish this step: ' + $_.Exception.Message + ' Run this again.')
 }
@@ -92,37 +116,64 @@ Show-Step '3/5  Putting your lid setting back'
 try {
     $restored = $false
     $skipped = $false
-    if (Test-Path -LiteralPath $settingsFile) {
-        $raw = [IO.File]::ReadAllText($settingsFile)
-        $s = $raw | ConvertFrom-Json
-        if ($null -ne $s -and $null -ne $s.savedLidAc -and $null -ne $s.savedLidDc) {
-            $savedAc = $s.savedLidAc
-            $savedDc = $s.savedLidDc
-            # The lid action is 0 (nothing), 1 (sleep), 2 (hibernate) or 3 (shut down). Anything
-            # else was not written by Lid Awake: leave it alone.
-            $valid = $true
-            foreach ($v in @($savedAc, $savedDc)) {
-                if (-not (($v -is [int] -or $v -is [long]) -and $v -ge 0 -and $v -le 3)) { $valid = $false }
+    # This PC's own file first, then the roaming settings an older version kept the values in.
+    $lidFiles = @($machineFile, $settingsFile)
+    $source = $null
+    $s = $null
+    foreach ($file in $lidFiles) {
+        if ($null -ne $source) { break }
+        if (-not (Test-Path -LiteralPath $file)) { continue }
+        $candidate = $null
+        try { $candidate = [IO.File]::ReadAllText($file) | ConvertFrom-Json } catch { $candidate = $null }
+        if ($null -ne $candidate -and $null -ne $candidate.savedLidAc -and $null -ne $candidate.savedLidDc) {
+            $source = $file
+            $s = $candidate
+        }
+    }
+    if ($null -ne $source) {
+        $savedAc = $s.savedLidAc
+        $savedDc = $s.savedLidDc
+        # The lid action is 0 (nothing), 1 (sleep), 2 (hibernate) or 3 (shut down). Anything
+        # else was not written by Lid Awake: leave it alone.
+        $valid = $true
+        foreach ($v in @($savedAc, $savedDc)) {
+            if (-not (($v -is [int] -or $v -is [long]) -and $v -ge 0 -and $v -le 3)) { $valid = $false }
+        }
+        if (-not $valid) {
+            $skipped = $true
+            Show-Problem 'The saved lid setting looks wrong; set the lid action by hand in Control Panel -> Power Options -> Choose what closing the lid does.'
+        } else {
+            $ac = [int]$savedAc
+            $dc = [int]$savedDc
+            # The power plan the values came from; the current plan when none was saved (an older
+            # version) or when that plan is gone since.
+            $scheme = 'SCHEME_CURRENT'
+            $savedScheme = $s.savedLidScheme
+            if ($savedScheme -is [string] -and $savedScheme -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+                $plans = Invoke-Quietly { (& powercfg /list 2>$null) | Out-String }
+                if ($LASTEXITCODE -ne 0 -or $plans -match [regex]::Escape($savedScheme)) { $scheme = $savedScheme }
             }
-            if (-not $valid) {
-                $skipped = $true
-                Show-Problem 'The saved lid setting looks wrong; set the lid action by hand in Control Panel -> Power Options -> Choose what closing the lid does.'
-            } else {
-                $ac = [int]$savedAc
-                $dc = [int]$savedDc
-                [void](Invoke-Quietly { (& powercfg /setacvalueindex SCHEME_CURRENT $subButtons $lidAction $ac 2>&1) | Out-String })
-                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the plugged-in lid action.' }
-                [void](Invoke-Quietly { (& powercfg /setdcvalueindex SCHEME_CURRENT $subButtons $lidAction $dc 2>&1) | Out-String })
-                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the on-battery lid action.' }
-                [void](Invoke-Quietly { (& powercfg /setactive SCHEME_CURRENT 2>&1) | Out-String })
-                if ($LASTEXITCODE -ne 0) { throw 'powercfg could not apply the power plan.' }
-                # Forget the saved values, so installing again later never "restores" an old one.
+            [void](Invoke-Quietly { (& powercfg /setacvalueindex $scheme $subButtons $lidAction $ac 2>&1) | Out-String })
+            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the plugged-in lid action.' }
+            [void](Invoke-Quietly { (& powercfg /setdcvalueindex $scheme $subButtons $lidAction $dc 2>&1) | Out-String })
+            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not set the on-battery lid action.' }
+            # Activating the current plan applies the change; it never switches to another plan.
+            [void](Invoke-Quietly { (& powercfg /setactive SCHEME_CURRENT 2>&1) | Out-String })
+            if ($LASTEXITCODE -ne 0) { throw 'powercfg could not apply the power plan.' }
+            # Forget the saved values (in every file that holds them), so installing again later
+            # never "restores" an old one.
+            foreach ($file in $lidFiles) {
+                if (-not (Test-Path -LiteralPath $file)) { continue }
+                $raw = [IO.File]::ReadAllText($file)
                 $cleared = [regex]::Replace($raw, '("savedLid(?:Ac|Dc)"\s*:\s*)-?\d+', '${1}null')
-                $tmp = $settingsFile + '.tmp'
-                [IO.File]::WriteAllText($tmp, $cleared)
-                Move-Item -LiteralPath $tmp -Destination $settingsFile -Force
-                $restored = $true
+                $cleared = [regex]::Replace($cleared, '("savedLidScheme"\s*:\s*)"[^"]*"', '${1}null')
+                if ($cleared -ne $raw) {
+                    $tmp = $file + '.tmp'
+                    [IO.File]::WriteAllText($tmp, $cleared)
+                    Move-Item -LiteralPath $tmp -Destination $file -Force
+                }
             }
+            $restored = $true
         }
     }
     if ($restored) { Show-Ok 'Lid setting back to what it was before Lid Awake' }

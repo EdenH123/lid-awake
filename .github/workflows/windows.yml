@@ -63,6 +63,9 @@ jobs:
           $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
           $settingsText = '{"tailnetHost":"ci-test.ts.net"}'
           function Get-RunValue { (Get-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue).LidAwake }
+          # The per-user Start menu shortcut; its target is read back the way Windows resolves it.
+          $startLink = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Lid Awake.lnk'
+          function Get-LinkTarget { (New-Object -ComObject WScript.Shell).CreateShortcut($startLink).TargetPath }
 
           # The scripts must be plain ASCII, or Windows PowerShell 5.1 misreads them.
           foreach ($f in (Get-ChildItem -Path 'windows\*.ps1', '*.cmd')) {
@@ -97,6 +100,8 @@ jobs:
           Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is installed in LOCALAPPDATA'
           Assert (Test-Path -LiteralPath (Join-Path $dest 'web')) 'the phone page files are installed'
           Assert ((Get-RunValue) -eq ('"' + $exe + '"')) 'the Run value points to the installed exe'
+          Assert (Test-Path -LiteralPath $startLink) 'the Start menu shortcut "Lid Awake" exists'
+          Assert ((Get-LinkTarget) -eq $exe) 'the Start menu shortcut points to the installed exe'
           Assert (Test-Path -LiteralPath 'windows\app') 'windows\app is still there'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the install'
 
@@ -146,12 +151,14 @@ jobs:
           Assert (-not (Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)) 'the update stopped the running app'
           Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is still installed after the update'
           Assert ((Get-RunValue) -eq ('"' + $exe + '"')) 'the Run value is still right after the update'
+          Assert ((Get-LinkTarget) -eq $exe) 'the Start menu shortcut is still right after the update'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the update'
 
           # Uninstall, keeping settings.
           Invoke-Launcher $uninstallCmd @('-NoPause', '-KeepSettings')
           Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone'
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone'
+          Assert (-not (Test-Path -LiteralPath $startLink)) 'the Start menu shortcut is gone'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings kept by -KeepSettings'
 
           # Uninstalling again when nothing is installed still works.
@@ -163,6 +170,7 @@ jobs:
           Invoke-Script 'windows\uninstall.ps1' @('-NoPause', '-DeleteSettings')
           Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone (second time)'
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone (second time)'
+          Assert (-not (Test-Path -LiteralPath $startLink)) 'the Start menu shortcut is gone (second time)'
           Assert (-not (Test-Path -LiteralPath $settingsDir)) 'settings deleted by -DeleteSettings'
           exit 0
 
