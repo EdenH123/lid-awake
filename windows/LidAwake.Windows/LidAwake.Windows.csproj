@@ -7,6 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>LidAwake</AssemblyName>
     <RootNamespace>LidAwake</RootNamespace>
+    <!-- Screen capture and the H.264 encoder call DXGI, Direct3D 11 and Media Foundation through their COM vtables. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
