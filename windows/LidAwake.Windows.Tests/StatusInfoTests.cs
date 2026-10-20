@@ -119,12 +119,12 @@ public class StatusInfoTests
         Assert.False(s.GetProperty("lidAwake").GetBoolean());
         Assert.Equal(0, s.GetProperty("timerMinutes").GetInt32());
         Assert.False(s.TryGetProperty("timerRemaining", out _));
-        // false: there are no battery or heat guards on Windows yet, so the page must not show them on.
-        Assert.False(s.GetProperty("batteryGuard").GetBoolean());
-        Assert.False(s.GetProperty("heatGuard").GetBoolean());
+        // Task 17 (supersedes ruling P2-12's false): the stored switches, on by default as on the Mac.
+        Assert.True(s.GetProperty("batteryGuard").GetBoolean());
+        Assert.True(s.GetProperty("heatGuard").GetBoolean());
         Assert.Equal(10, s.GetProperty("batteryLimit").GetInt32());
         Assert.Equal(40, s.GetProperty("maxBatteryTemp").GetInt32());
-        // Not measured on Windows: "unknown", which the page shows as a dash (not "Normal").
+        // No system thermal state on Windows: "unknown", which the page shows as a dash (not "Normal").
         Assert.Equal("unknown", s.GetProperty("thermalState").GetString());
         foreach (var key in new[] { "remoteScreen", "remoteControl", "cameraAllowed", "screenPermission", "controlPermission", "screenOff", "lidClosed", "displayAsleep" })
             Assert.False(s.GetProperty(key).GetBoolean(), key);
@@ -212,8 +212,10 @@ public class StatusInfoTests
     {
         var s = Run(new FakeReadings());
         Assert.Equal("windows", s.GetProperty("os").GetString());
-        // There is no /memory route (or any other optional one) yet, so none is listed.
-        Assert.Equal(0, s.GetProperty("features").GetArrayLength());
+        // Only "limits" (always): there is no /memory route (or any other optional one) yet, and
+        // without a temperature source there is no "heat".
+        Assert.Equal(new[] { "limits" }, s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.False(s.TryGetProperty("batteryTemp", out _));
     }
 
     [Fact]

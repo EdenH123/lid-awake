@@ -25,6 +25,7 @@ public sealed class WebServer : IDisposable
     readonly Action<string, string> announce;
     readonly AccessLog? log;
     readonly Action<int>? setTimer;
+    readonly Action<string, bool>? setLimit;
     readonly int port;
     readonly string baseDir;
     readonly string web;
@@ -38,12 +39,14 @@ public sealed class WebServer : IDisposable
     // activity log that GET /activity reads and sign-ins and turn-offs are written to (none: nothing
     // is written and the list is empty). `setTimer(minutes)` applies a length already checked against
     // AutoOff.Choices to the "Turn off after" timer (none: the length is accepted and dropped).
+    // `setLimit(name, on)` turns a safety switch ("battery" or "heat", already checked) on or off
+    // (none: accepted and dropped).
     public WebServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<object> status, Action turnOff,
                      Action<string, string> announce, int port = DefaultPort, string? baseDir = null,
-                     AccessLog? log = null, Action<int>? setTimer = null)
+                     AccessLog? log = null, Action<int>? setTimer = null, Action<string, bool>? setLimit = null)
     {
         (this.auth, this.tailnet, this.isOn, this.status, this.turnOff, this.announce) = (auth, tailnet, isOn, status, turnOff, announce);
-        (this.log, this.setTimer) = (log, setTimer);
+        (this.log, this.setTimer, this.setLimit) = (log, setTimer, setLimit);
         this.port = port;
         this.baseDir = baseDir ?? AppContext.BaseDirectory;
         web = Path.Combine(this.baseDir, "web");
@@ -282,6 +285,18 @@ public sealed class WebServer : IDisposable
                 if (!body.TryGetValue("minutes", out var m) || !TryWhole(m, out var minutes) || !AutoOff.IsChoice(minutes))
                 { await SendText(c, 400, "Unknown timer length."); return; }
                 setTimer?.Invoke(minutes);
+                Empty(c);
+                return;
+            }
+            case ("POST", "/limits"):
+            {
+                // `heat` is accepted even on a PC with no temperature: the switch is stored.
+                var body = await ReadJson(c.Request);
+                if (!body.TryGetValue("name", out var n) || n.ValueKind != JsonValueKind.String || n.GetString() is not { } name
+                    || !Limits.IsName(name)
+                    || !body.TryGetValue("on", out var o) || o.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                { await SendText(c, 400, "Unknown limit."); return; }
+                setLimit?.Invoke(name, o.ValueKind == JsonValueKind.True);
                 Empty(c);
                 return;
             }

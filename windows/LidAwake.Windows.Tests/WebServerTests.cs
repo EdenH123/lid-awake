@@ -37,6 +37,8 @@ public class WebServerTests : IDisposable
     readonly AccessLog accessLog;
     readonly List<int> timerSets = new();
     AutoOff? realTimer;  // set by a test that wants /timer to change a real timer
+    readonly List<(string Name, bool On)> limitSets = new();
+    Limits? realLimits;  // set by a test that wants /limits to change the real switches
 
     public WebServerTests()
     {
@@ -50,7 +52,8 @@ public class WebServerTests : IDisposable
         accessLog = new AccessLog(Path.Combine(folder, "logs"));
         server = new WebServer(auth, new Tailnet(settings, _ => null), () => on, () => statusAnswer(),
             () => turnOffCalls++, (title, body) => announced.Add((title, body)), port, site,
-            accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); });
+            accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); },
+            setLimit: (name, value) => { lock (limitSets) limitSets.Add((name, value)); realLimits?.Set(name, value); });
         server.Start();
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
         {
@@ -1184,5 +1187,133 @@ public class WebServerTests : IDisposable
         var cookie = await SignIn();
         Assert.Equal(400, (await Post("/timer", cookie, "{\"minutes\":61}")).Code);
         Assert.Equal(60, timer.Minutes);
+    }
+
+    // ---- Task 17: POST /limits (docs/API.md 5.2) and the switches in /status ----
+
+    [Theory]
+    [InlineData("battery", true)]
+    [InlineData("battery", false)]
+    [InlineData("heat", true)]
+    [InlineData("heat", false)]
+    public async Task EachLimitIsSetWith204(string name, bool value)
+    {
+        var cookie = await SignIn();
+        var r = await Post("/limits", cookie, $"{{\"name\":\"{name}\",\"on\":{(value ? "true" : "false")}}}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal("", r.Body);
+        Assert.Equal(new[] { (name, value) }, limitSets);
+    }
+
+    [Theory]
+    [InlineData("{\"name\":\"battery\"}")]
+    [InlineData("{\"on\":true}")]
+    [InlineData("{\"name\":\"Battery\",\"on\":true}")]
+    [InlineData("{\"name\":\"heat \",\"on\":false}")]
+    [InlineData("{\"name\":\"cpu\",\"on\":true}")]
+    [InlineData("{\"name\":\"\",\"on\":true}")]
+    [InlineData("{\"name\":null,\"on\":true}")]
+    [InlineData("{\"name\":[\"battery\"],\"on\":true}")]
+    [InlineData("{\"name\":1,\"on\":true}")]
+    [InlineData("{\"name\":\"battery\",\"on\":1}")]
+    [InlineData("{\"name\":\"battery\",\"on\":0}")]
+    [InlineData("{\"name\":\"battery\",\"on\":\"true\"}")]
+    [InlineData("{\"name\":\"battery\",\"on\":null}")]
+    [InlineData("{\"name\":\"heat\",\"on\":[true]}")]
+    [InlineData("{\"name\":\"heat\",\"value\":true}")]
+    [InlineData("{}")]
+    [InlineData("not json")]
+    [InlineData("[\"battery\",true]")]
+    [InlineData("true")]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task AnyOtherLimitBodyIs400UnknownLimit(string? json)
+    {
+        var cookie = await SignIn();
+        var r = await Post("/limits", cookie, json);
+        Assert.Equal(400, r.Code);
+        Assert.Equal("Unknown limit.", r.Body);
+        Assert.Equal("text/plain; charset=utf-8", r.Header("Content-Type"));
+        Assert.Empty(limitSets);
+    }
+
+    [Fact]
+    public async Task LimitsNeedsASessionTheHeaderAndIsClosedWhileOff()
+    {
+        var cookie = await SignIn();
+        var anonymous = await Post("/limits", "", "{\"name\":\"battery\",\"on\":false}");
+        Assert.Equal(401, anonymous.Code);
+        Assert.Equal("Locked", anonymous.Body);
+        var noHeader = await Send("POST", "/limits", cookie: cookie, json: "{\"name\":\"battery\",\"on\":false}");
+        Assert.Equal(403, noHeader.Code);
+        Assert.Equal("Forbidden", noHeader.Body);
+        // The header check comes before the body is looked at.
+        Assert.Equal(403, (await Send("POST", "/limits", cookie: cookie, json: "{}")).Code);
+        Assert.Equal(403, (await Send("POST", "/limits", cookie: cookie, lid: true, fetchSite: "cross-site", json: "{\"name\":\"heat\",\"on\":false}")).Code);
+        // Only POST.
+        Assert.Equal(404, (await Send("GET", "/limits", cookie: cookie)).Code);
+        on = false;
+        var off = await Post("/limits", cookie, "{\"name\":\"battery\",\"on\":false}");
+        Assert.Equal(423, off.Code);
+        Assert.Equal(OffText, off.Body);
+        Assert.Empty(limitSets);
+    }
+
+    // The page posts a switch, then asks /status: the answer must already show it. `heat` is
+    // accepted on a PC with no temperature, because the setting is stored.
+    [Fact]
+    public async Task ALimitChangedOverHttpShowsInTheNextStatusAndIsStored()
+    {
+        realLimits = new Limits(settings);
+        var info = new StatusInfo(new FakeReadings(), realLimits, new HeatSensor(() => null));
+        statusAnswer = () => info.Build(true);
+        var cookie = await SignIn();
+
+        var before = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.True(before.GetProperty("batteryGuard").GetBoolean());
+        Assert.True(before.GetProperty("heatGuard").GetBoolean());
+
+        Assert.Equal(204, (await Post("/limits", cookie, "{\"name\":\"battery\",\"on\":false}")).Code);
+        var after = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.False(after.GetProperty("batteryGuard").GetBoolean());
+        Assert.True(after.GetProperty("heatGuard").GetBoolean());
+        StatusInfoTests.AssertEveryKeyWithItsKind(after);
+
+        Assert.Equal(204, (await Post("/limits", cookie, "{\"name\":\"heat\",\"on\":false}")).Code);
+        var noHeat = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.False(noHeat.GetProperty("heatGuard").GetBoolean());
+        Assert.DoesNotContain("heat", noHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+
+        // Stored, so a restart keeps them.
+        Assert.False(settings.Get<bool?>("batteryGuard"));
+        Assert.False(settings.Get<bool?>("heatGuard"));
+        var again = new Limits(settings);
+        Assert.False(again.BatteryGuard);
+        Assert.False(again.HeatGuard);
+
+        Assert.Equal(204, (await Post("/limits", cookie, "{\"name\":\"battery\",\"on\":true}")).Code);
+        Assert.True(Json(await Send("GET", "/status", cookie: cookie)).GetProperty("batteryGuard").GetBoolean());
+    }
+
+    [Fact]
+    public async Task StatusOverHttpListsHeatAndBatteryTempOnlyWithATemperature()
+    {
+        double? source = null;
+        var heat = new HeatSensor(() => source);
+        var info = new StatusInfo(new FakeReadings { PowerNow = new PowerReading(0, 1, 80, 7200) }, new Limits(settings), heat);
+        statusAnswer = () => info.Build(true);
+        var cookie = await SignIn();
+
+        heat.Refresh(TimeSpan.Zero);
+        var noTemperature = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(new[] { "limits" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.False(noTemperature.TryGetProperty("batteryTemp", out _));
+
+        source = 36.66;
+        heat.Refresh(TimeSpan.Zero);
+        var withHeat = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(new[] { "limits", "heat" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(36.7, withHeat.GetProperty("batteryTemp").GetDouble());
+        StatusInfoTests.AssertEveryKeyWithItsKind(withHeat);
     }
 }

@@ -32,16 +32,29 @@ static class Program
         // One StatusInfo for all requests: processor load and network speed are measured between
         // two requests. It is built on the web server's threads and touches no WinForms controls
         // (IsOn is a volatile field, and the timer is under its own lock).
-        var status = new StatusInfo(new SystemReadings());
+        var readings = new SystemReadings();
+        // The safety switches and the last temperature read, shared by /status, POST /limits and
+        // the tray's 15-second check. The temperature is read only on that check's background timer.
+        var limits = new Limits(settings);
+        var heat = new HeatSensor(TemperatureSources.Read);
+        var safety = new SafetyCheck(limits, heat, readings.Power);
+        var status = new StatusInfo(readings, limits, heat);
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body),
-            log: log, setTimer: minutes => tray?.SetTimer(minutes));
+            log: log, setTimer: minutes => tray?.SetTimer(minutes),
+            setLimit: (name, on) =>
+            {
+                // Stored here, on the web server's thread (a failed write answers 500), so the
+                // next /status already shows it; then applied at the tray.
+                limits.Set(name, on);
+                tray?.LimitsChanged();
+            });
         string? startError = null;
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
@@ -58,6 +71,20 @@ sealed class TrayApp : ApplicationContext
     readonly SynchronizationContext ui;
     readonly ToolStripMenuItem toggle = new("Lid Awake on");
     readonly ToolStripMenuItem timerMenu = new("Turn off after");
+    // The safety switches, with the Mac's wording.
+    static readonly string BatteryTitle = $"Turn off below {Limits.BatteryLimit}% battery";
+    static readonly string HeatTitle = $"Turn off if battery is hotter than {Limits.MaxBatteryTemp}°C";
+    const string NoTemperature = " (no temperature on this PC)";
+    readonly ToolStripMenuItem batteryItem = new(BatteryTitle);
+    readonly ToolStripMenuItem heatItem = new(HeatTitle + NoTemperature) { Enabled = false };
+    readonly Limits limits;
+    readonly HeatSensor heat;
+    readonly SafetyCheck safety;
+    // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
+    // temperature can take a few seconds to read. What it finds is applied on the UI thread.
+    readonly System.Threading.Timer safetyTimer;
+    int safetyChecking;  // 1 while a check runs: a slow one is never doubled
+    int safetyAgain;     // 1 when a check was asked for while one ran: it runs once more
     // Checked every couple of seconds on the UI thread: when the time is up, Lid Awake turns off.
     readonly System.Windows.Forms.Timer timerCheck = new() { Interval = 2000 };
     // Tailscale Serve is checked again every minute, as on the Mac (docs/API.md 9): added back
@@ -73,19 +100,28 @@ sealed class TrayApp : ApplicationContext
     // "Turn off after": its own lock makes it safe to read and change from the web server's threads.
     public AutoOff Countdown { get; }
 
-    public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log)
+    public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
+                   Limits limits, HeatSensor heat, SafetyCheck safety)
     {
         this.machine = machine;
         this.auth = auth;
         this.phone = phone;
         this.log = log;
+        this.limits = limits;
+        this.heat = heat;
+        this.safety = safety;
         Countdown = new AutoOff(settings);
+        safetyTimer = new System.Threading.Timer(_ => CheckSafety(read: true), null, Timeout.Infinite, Timeout.Infinite);
         toggle.Click += (_, _) =>
         {
-            var turningOn = !isOn;
-            SetAwake(turningOn);
-            if (turningOn) AskForLocation();
+            if (isOn) { SetAwake(false); return; }
+            if (!TurnOnAllowed()) return;
+            SetAwake(true);
+            AskForLocation();
         };
+        batteryItem.Click += (_, _) => FlipLimit(Limits.Battery, !limits.BatteryGuard);
+        heatItem.Click += (_, _) => FlipLimit(Limits.Heat, !limits.HeatGuard);
+        ShowLimits();
         foreach (var (minutes, title) in AutoOff.Choices)
         {
             var choice = minutes;  // the menu item keeps its own copy
@@ -102,6 +138,9 @@ sealed class TrayApp : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add(toggle);
         menu.Items.Add(timerMenu);
+        menu.Items.Add(batteryItem);
+        menu.Items.Add(heatItem);
+        menu.Opening += (_, _) => ShowLimits();
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
@@ -129,6 +168,10 @@ sealed class TrayApp : ApplicationContext
         // in ExitThreadCore.
         try { Microsoft.Win32.SystemEvents.SessionEnding += OnSessionEnding; }
         catch (Exception) { }
+        // The heat item follows whether a temperature can be read. The first read starts now, in
+        // the background, and then every 15 seconds (once a minute while off).
+        heat.Changed += () => OnUi(ShowLimits);
+        safetyTimer.Change(TimeSpan.Zero, HeatSensor.CheckEvery);
         // A new PC: say how to set the phone password (the page refuses every sign-in without one).
         if (!auth.HasPassword)
             OnUi(() => icon.ShowBalloonTip(10000, "Welcome to Lid Awake",
@@ -141,6 +184,8 @@ sealed class TrayApp : ApplicationContext
         catch (Exception) { }
         timerCheck.Stop();
         serveCheck.Stop();
+        try { safetyTimer.Dispose(); }
+        catch (Exception) { }
         base.ExitThreadCore();
     }
 
@@ -208,6 +253,81 @@ sealed class TrayApp : ApplicationContext
         if (!isOn || !Countdown.Expired()) return;
         SetAwake(false);  // also ends the countdown, so this happens once
         icon.ShowBalloonTip(5000, "Lid Awake turned off", "Timer finished. Your PC will sleep normally again.", ToolTipIcon.Info);
+    }
+
+    // ---- Safety limits (main.swift safetyStop, the 15-second check, the two menu items) ----
+
+    // A turn-on from the tray: refused, with a balloon saying why, when a limit is already
+    // reached. Quick (the cached temperature and GetSystemPowerStatus), so fine on the UI thread.
+    bool TurnOnAllowed()
+    {
+        if (safety.Now() is not { } why) return true;
+        log.Write(why.LogRefused);
+        icon.ShowBalloonTip(10000, "Lid Awake not turned on", why.RefusedBody, ToolTipIcon.Warning);
+        return false;
+    }
+
+    // Off the UI thread. From the timer (`read`): read the temperature (every 15 s while on, every
+    // minute while off). Then, while on, turn off on the UI thread if a limit is reached. Only the
+    // timer reads the hardware; a check after a switch change uses the last reading. Nothing here
+    // may throw into the timer, and a failed temperature read is only "no reading".
+    void CheckSafety(bool read)
+    {
+        if (Interlocked.Exchange(ref safetyChecking, 1) == 1)
+        {
+            Interlocked.Exchange(ref safetyAgain, 1);  // a switch changed during a slow read
+            return;
+        }
+        try
+        {
+            do
+            {
+                Interlocked.Exchange(ref safetyAgain, 0);
+                bool on = isOn;
+                if (read) heat.Refresh(on ? HeatSensor.Fresh : HeatSensor.WhileOff);
+                read = false;
+                if (on && safety.Now() != null) OnUi(StopForSafety);
+            } while (Volatile.Read(ref safetyAgain) == 1);
+        }
+        catch (Exception) { }
+        finally { Interlocked.Exchange(ref safetyChecking, 0); }
+    }
+
+    // On the UI thread: decided again here, so a switch turned off (or Lid Awake turned off) in
+    // the meantime is respected.
+    void StopForSafety()
+    {
+        if (!isOn || safety.Now() is not { } why) return;
+        SetAwake(false);
+        log.Write(why.LogOff);
+        icon.ShowBalloonTip(10000, "Lid Awake turned off", why.OffBody, ToolTipIcon.Warning);
+    }
+
+    // A switch ticked in the tray menu.
+    void FlipLimit(string name, bool on)
+    {
+        try { limits.Set(name, on); }
+        catch (Exception) { }  // the settings file couldn't be written: the switch stays as it was
+        LimitsChanged();
+    }
+
+    // A switch was changed (in the menu, or from the phone by POST /limits on the web server's
+    // threads): the menu shows it, and it applies right away, as on the Mac.
+    public void LimitsChanged()
+    {
+        OnUi(ShowLimits);
+        Task.Run(() => CheckSafety(read: false));
+    }
+
+    void ShowLimits()
+    {
+        batteryItem.Checked = limits.BatteryGuard;
+        heatItem.Checked = limits.HeatGuard;
+        // No temperature on this PC: the switch can't protect anything, so it is greyed out
+        // (it keeps its stored setting, which the phone can still change).
+        bool available = heat.Available;
+        heatItem.Enabled = available;
+        heatItem.Text = available ? HeatTitle : HeatTitle + NoTemperature;
     }
 
     // Open the activity log in whatever the PC opens .log files with, or Notepad.

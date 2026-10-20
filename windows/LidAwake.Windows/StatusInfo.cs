@@ -87,34 +87,48 @@ public sealed class NetMeter
 // all requests, because processor load and network speed are measured between two requests.
 public sealed class StatusInfo
 {
-    // No /memory route yet, so "memory" is not listed (section 4). Grows as features land.
-    public static readonly string[] Features = Array.Empty<string>();
+    // Section 4. "limits" (POST /limits and the low-battery switch) always; "heat" (the too-hot
+    // switch) only while a temperature source works, re-checked with each status. No /memory
+    // route yet, so "memory" is not listed. Grows as features land.
+    public static readonly string[] Features = { "limits" };
+    public static readonly string[] FeaturesWithHeat = { "limits", "heat" };
 
     readonly ISystemReadings readings;
+    readonly Limits? limits;
+    readonly HeatSensor? heat;
     readonly object gate = new();
     readonly CpuMeter cpu = new();
     readonly NetMeter net = new();
 
-    public StatusInfo(ISystemReadings readings) => this.readings = readings;
+    // `limits` are the two safety switches (none: both on, the documented default). `heat` is the
+    // last temperature read (none: no temperature, so no "heat" and no batteryTemp).
+    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null)
+    {
+        this.readings = readings;
+        this.limits = limits;
+        this.heat = heat;
+    }
 
     // `timer` is the "Turn off after" setting: timerMinutes is its length and timerRemaining the
     // time left (6.1). Without one (tests, before the tray exists) the length is 0, never.
     public Dictionary<string, object?> Build(bool lidAwake, AutoOff? timer = null)
     {
+        // The cached reading only: /status never waits for the hardware.
+        var temperature = heat?.Latest;
         var s = new Dictionary<string, object?>
         {
-            // 6.1: the switches and limits Windows does not have get the documented safe defaults.
+            // 6.1
             ["host"] = readings.HostName(),
             ["lidAwake"] = lidAwake,
             ["timerMinutes"] = timer?.Minutes ?? 0,
-            // false, not the documented default true: there are no battery or heat guards on
-            // Windows yet (no /limits route), and the page shows a true switch as protection.
-            ["batteryGuard"] = false,
-            ["heatGuard"] = false,
-            ["batteryLimit"] = 10,
-            ["maxBatteryTemp"] = 40,
-            // "unknown", not the documented "nominal": Windows measures no heat yet, and the page
-            // shows a dash for a value it doesn't know, instead of "Normal".
+            // The stored switches. Without a temperature heatGuard is still the stored setting
+            // (the page hides its row: no "heat" in features).
+            ["batteryGuard"] = limits?.BatteryGuard ?? true,
+            ["heatGuard"] = limits?.HeatGuard ?? true,
+            ["batteryLimit"] = Limits.BatteryLimit,
+            ["maxBatteryTemp"] = Limits.MaxBatteryTemp,
+            // "unknown", not the documented "nominal": Windows has no system thermal state like
+            // the Mac's, and the page shows a dash for a value it doesn't know, instead of "Normal".
             ["thermalState"] = "unknown",
             // 6.2
             ["remoteScreen"] = false,
@@ -132,7 +146,7 @@ public sealed class StatusInfo
             ["claude"] = null,
             // 6.6
             ["os"] = "windows",
-            ["features"] = Features,
+            ["features"] = temperature != null ? FeaturesWithHeat : Features,
         };
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
@@ -154,6 +168,8 @@ public sealed class StatusInfo
             s["minutesToEmpty"] = onBattery && p.LifeSeconds > 0 ? (int)(p.LifeSeconds / 60) : -1;
             s["minutesToFull"] = -1;
         }
+        // 6.4: on its own, like the Mac (the battery's sensor, or else the ACPI thermal zones).
+        if (temperature is { } celsius) s["batteryTemp"] = TemperatureMath.OneDecimal(celsius);
 
         long now = readings.Milliseconds();
         var memory = readings.Memory();
@@ -203,6 +219,6 @@ public sealed class StatusInfo
     }
 
     // Flag 128 means no battery; 255 means Windows can't tell; a percent over 100 is unknown.
-    static bool HasBattery(PowerReading p) =>
+    internal static bool HasBattery(PowerReading p) =>
         (p.BatteryFlag & 128) == 0 && p.BatteryFlag != 255 && p.BatteryLifePercent <= 100;
 }
