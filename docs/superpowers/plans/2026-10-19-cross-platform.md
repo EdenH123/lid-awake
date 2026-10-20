@@ -1852,6 +1852,24 @@ Each task gets its own worktree and branch off `claude/windows-phase-3`: `claude
 - capture starting and stopping with viewers;
 - when the runner has an encoder: the encoded stream starts with a keyframe carrying SPS/PPS, and a forced keyframe arrives on request.
 
+### Task 23: Trackpad and keyboard control on Windows (parallel with 22)
+
+**Contract:** docs/API.md `POST /input`, `POST /power`, §8 (all input commands, clamps, key names, `char` US-layout map, `mods`, the modifier table per computer: `cmd` → Ctrl on Windows), and §7.6 (input over the socket, 240/s cap). Mac reference: ScreenControl.swift `RemoteInput` (keyCodes, charKeyCodes, maxText, perform), and the Server.swift `/input` and `/power` cases.
+
+**Windows:**
+- An `InputInjector` uses `SendInput`:
+  - mouse: relative move with MOUSEEVENTF_MOVE, kept on the primary screen; down, up, click at fractions of the primary screen (MOUSEEVENTF_ABSOLUTE with 0..65535); right click; count 1..3;
+  - scroll: `MOUSEEVENTF_WHEEL`/`HWHEEL` with the pixel → wheel-delta conversion stated;
+  - text: KEYEVENTF_UNICODE per UTF-16 unit, with surrogate pairs;
+  - key: virtual-key codes for the named keys; `char` → US-layout scan codes or VKs so shortcuts work in any layout; mods held around the key or click.
+- **Lock:** `LockWorkStation`. **displayoff:** `SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)`. **wake:** a tiny mouse nudge or `SetThreadExecutionState(ES_DISPLAY_REQUIRED)`.
+- **Owner switches:** "Allow control from phone" in the tray, off by default, stored as `remoteControl`. It requires the screen switch `remoteScreen`, which Task 22 adds; coordinate by reading the same roaming setting key `remoteScreen`, and the controller reconciles at merge. Answers use the API.md texts with "PC" wording (`localize` handles Mac → PC on the page).
+- **Wiring:** `POST /input` and `POST /power` go in WebServer now. Socket input is connected when this merges with Task 22, behind a small `IInputSink` the socket can call.
+- Every accepted input wakes the screen.
+- **Feature:** `"control"`.
+
+**Tests:** every command's mapping to SendInput structs, through a fake sender (clamps, non-finite → 0, key and char tables, mods order, text with emoji); `/input` and `/power` end to end (204, 400, 403 rules, 413 at 2001 graphemes, with 2000 graphemes of emoji accepted); the rate cap.
+
 Remaining Phase 3 features, one task each, in this order:
 
 | Feature | Mac source to port | Windows technology |
