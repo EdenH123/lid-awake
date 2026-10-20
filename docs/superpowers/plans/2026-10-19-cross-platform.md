@@ -1811,24 +1811,46 @@ Each task gets its own worktree and branch off `claude/windows-phase-3`: `claude
 
 **Tests:** the id hashing; the lists with fake process and shortcut sources; the routes end to end (404 for an unknown id, the 409 path); and a guarantee that a path is never accepted from the phone.
 
-### Task 22: Screen viewing on Windows (JPEG first)
+### Task 22: Screen viewing on Windows (H.264 video, with JPEG fallback)
 
-**Ruling P3-5:** screen viewing ships with JPEG frames. Hardware H.264 is a later task.
+**Owner's choice:** both in one task, like the Mac. That means H.264 video through the hardware encoder when one is available, and JPEG frames otherwise. This supersedes ruling P3-5.
 
-**Contract:** docs/API.md `/screen.jpg` and §7, the live socket on port 8788: handshake checks, the JPEG frame message, setup and quality messages, flow control (`acks`, at most 2 unconfirmed JPEG frames), keepalive `ping`/`pong`, and the 8-socket cap. `/live` also has to be mapped by Tailscale Serve, which is in §9. Mac reference: LiveServer.swift, FrameStream.swift and ScreenControl.swift (capture only).
+**Contract:** docs/API.md `/screen.jpg` and §7, the live socket on port 8788:
+- the handshake checks;
+- the setup message `{"video": {"codec","description","width","height"}}`;
+- the video frame `[1|2][Int64 µs big-endian][AVCC]`, where 1 is a keyframe;
+- the JPEG frame;
+- the quality messages and presets;
+- keyframe requests;
+- flow control: video at most 6 unconfirmed with backlog < 4, JPEG at most 2 unconfirmed;
+- `ping`/`pong`;
+- the 8-socket cap.
+
+`/live` is mapped by Tailscale Serve (§9). Mac reference: LiveServer.swift, FrameStream.swift, VideoEncoder.swift, and ScreenControl.swift for capture only.
 
 **Windows:**
-- **Capture.** Capture the primary screen with GDI (`Graphics.CopyFromScreen` or BitBlt) on a background thread, only while someone is watching. Stop a few seconds after the last viewer leaves.
-- **Changes only.** Send a frame only when the picture changed, using a cheap hash or a sampled diff.
-- **Encoding.** JPEG through `System.Drawing` / WIC, at the Mac's quality presets (max/sharp/balanced/fast: size and quality per FrameStream.swift). The page's quality messages pick the preset.
-- **Socket.** Kestrel WebSockets on 127.0.0.1:8788 with the same handshake rules as the Mac: Host, Origin, session cookie, on, and screen allowed.
-- **Tailscale.** Serve maps `/live` → 8788.
-- **`/screen.jpg`.** A long poll with `after`, per API.md.
-- **Owner switch.** The tray gets "Allow screen from phone", off by default, stored in settings. `/status` reports `remoteScreen` true and `screenPermission` true; Windows needs no OS permission.
-- **Ignoring the rest.** Input and camera messages on the socket are ignored for now. Control and camera are later tasks.
-- **Feature `"screen"`.**
+- **Capture.** DXGI Desktop Duplication (IDXGIOutputDuplication) of the primary output. It only delivers frames when the screen changes. Fall back to GDI BitBlt when duplication isn't available. Capture only while someone watches, and stop a few seconds after the last viewer leaves.
+- **H.264.**
+  - Use the Media Foundation H.264 encoder MFT, preferring hardware (`MFTEnumEx` with `MFT_ENUM_FLAG_HARDWARE`) and falling back to Microsoft's software encoder.
+  - Input is NV12, converted from BGRA.
+  - Tune for latency, as on the Mac: low-latency mode (`CODECAPI_AVLowLatencyMode`), no B-frames, CBR at the preset's bit rate, and keyframes only on request (`CODECAPI_AVEncVideoForceKeyFrame`).
+  - Convert Annex B output to AVCC (4-byte lengths). Build the avcC `description` from SPS/PPS, and the codec string `avc1.PPCCLL`, as VideoEncoder.swift emits.
+  - Wrapper library: allowed. Vortice.Windows (Vortice.MediaFoundation, Vortice.Direct3D11, Vortice.DXGI) or raw COM interop. Pin an exact published version at least two weeks old.
+- **JPEG fallback.** When no H.264 encoder can be created (Windows Server CI machines may lack Media Foundation), the same socket sends JPEG frames with the Mac's JPEG presets. `/screen.jpg` always works.
+- **Quality presets.** max, sharp, balanced and fast, with the size, bit rate and JPEG quality from FrameStream.swift / VideoEncoder.swift.
+- **Socket.** Kestrel WebSockets on 127.0.0.1:8788, with the Mac's handshake rules (Host, Origin, session cookie, on, screen allowed). Serve maps `/live`.
+- **Owner switch.** "Allow screen from phone" in the tray, off by default. `/status` reports `remoteScreen`, `screenPermission: true` and `screenWidth`.
+- **Not yet.** Input and camera messages are ignored; those come in later tasks.
+- **Feature.** `"screen"`.
 
-**Tests:** the handshake refusals (no cookie, bad host or origin, off, screen not allowed); a connected test client receives a JPEG frame message (CI runners have a desktop session) and acks it; the flow-control cap; the socket cap; `/screen.jpg` long-poll behaviour; and capture starting and stopping with viewers.
+**Tests:**
+- handshake refusals;
+- a test client gets a setup message and frames (video if the runner has an encoder, otherwise JPEG; report which), acks them, and is held to the flow-control limits;
+- Annex B → AVCC, avcC and codec-string building, with fixed SPS/PPS bytes;
+- the socket cap;
+- `/screen.jpg` long poll;
+- capture starting and stopping with viewers;
+- when the runner has an encoder: the encoded stream starts with a keyframe carrying SPS/PPS, and a forced keyframe arrives on request.
 
 Remaining Phase 3 features, one task each, in this order:
 
