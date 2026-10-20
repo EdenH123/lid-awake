@@ -148,7 +148,9 @@ public sealed class TemperatureChain
         if (batteryFrom != null) parts.Add(batteryFrom);
         if (zoneFrom != null && zoneFrom != batteryFrom) parts.Add(zoneFrom);
         source = parts.Count == 0 ? null : string.Join(" and ", parts);
-        return new TemperatureReading(b, z, limit, ZoneConfirmed: hotStreak >= HotReads, Throttled: throttledStreak >= HotReads);
+        bool throttled = throttledStreak >= HotReads;
+        return z == null ? new TemperatureReading(b, null, Throttled: throttled)
+            : new TemperatureReading(b, z, limit, ZoneConfirmed: hotStreak >= HotReads, Throttled: throttled);
 
         // The zones that are alive this round, each tracked by its source and name.
         List<Live> Alive(string from, IEnumerable<NamedZone> named)

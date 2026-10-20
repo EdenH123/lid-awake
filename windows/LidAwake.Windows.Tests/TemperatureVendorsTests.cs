@@ -776,10 +776,13 @@ public class TemperatureVendorsTests : IDisposable
         int Gated() { Interlocked.Increment(ref runs); go.Wait(TimeSpan.FromSeconds(30)); return 7; }
         var first = Task.Run(() => shared.Run(Gated, TimeSpan.FromSeconds(20), -1));
         Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref runs) == 1, TimeSpan.FromSeconds(10)));
-        var second = Task.Run(() => shared.Run(Gated, TimeSpan.FromSeconds(20), -1));
-        go.Set();
+        // A caller with a shorter wait gives up without a call of its own.
+        Assert.Equal(-1, shared.Run(Gated, TimeSpan.FromMilliseconds(100), -1));
+        // One that waits gets the running call's answer once it ends.
+        var finish = Task.Delay(300).ContinueWith(_ => go.Set(), TaskScheduler.Default);
+        Assert.Equal(7, shared.Run(Gated, TimeSpan.FromSeconds(20), -1));
         Assert.Equal(7, await first.WaitAsync(TimeSpan.FromSeconds(20)));
-        Assert.Equal(7, await second.WaitAsync(TimeSpan.FromSeconds(20)));
+        await finish;
         Assert.Equal(1, Volatile.Read(ref runs));
     }
 
