@@ -210,6 +210,8 @@ The Mac sends: `["screen","control","camera","apps","history","memory","push","p
 
 Windows sends `"limits"` and `"history"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
+Windows sends `"camera"` only in a build where the camera is connected to its passkeys, its H.264 encoder and the live socket; without them the camera routes answer `404` `Not found`.
+
 Dependencies on the Mac side:
 
 - `camera` needs `passkeys` (the camera asks for a passkey every time) and `screen` (the live socket and the owner's screen switch).
@@ -968,6 +970,8 @@ For video the Mac also holds back new frames while the oldest unconfirmed one is
 7. The camera closes on `{"camera": false}`, when the socket closes, when the owner's switch goes off (`cameraStopped`: `The camera was turned off on the Mac.`), or after **10 minutes** (`cameraStopped`: `The camera closed by itself after 10 minutes. Open it again to keep watching.`).
 
 Mac camera details: 1280x720 when available, a plugged-in camera is preferred over the built-in one, the phone itself is never used as the camera. Problems are sent as `cameraError`.
+
+Windows camera details: the same messages and limits, with "PC" in the sentences. The camera is read through Media Foundation, 1280x720 when the camera offers it, and sent as NV12 to the H.264 encoder at about 1.2 Mbit/s and at most about 24 pictures a second, as on the Mac. A camera is "built in" when Windows gives it an enclosure location (front or back panel, or in the lid); a USB camera without one is plugged in and is tried first, then the built-in one, then any other (a virtual camera). The default microphone is read through WASAPI at its own rate; the first channel is brought down to 16 kHz (each output sample is the average of the input samples it covers) before mu-law, in messages of at least `rate / 10` samples. A microphone at 16 kHz or less is sent at its own rate. Talk back plays on the default speakers through WASAPI.
 
 **Talk back.** While the camera is open, the phone may send `{"talk": "<base64>"}`: audio for the computer's speakers. Format: **16 kHz, mono, mu-law, one byte per sample**, base64 of at most **4000 bytes** (the page sends about 40 ms at a time). It is ignored (silently) if the camera is not open or the owner's camera switch is off. The Mac plays chunks back to back and drops them if it is already about a second behind.
 

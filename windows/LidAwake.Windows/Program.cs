@@ -40,6 +40,20 @@ static class Program
         var heat = new HeatSensor(TemperatureSources.Read);
         var safety = new SafetyCheck(limits, heat, readings.Power);
         var status = new StatusInfo(readings, limits, heat);
+        // The camera and microphone (docs/API.md 5.4, 7.5). Wired at merge (ruling P3-8): Task 18's
+        // passkeys (ICameraPasskeys), Task 22's H.264 encoder (IVideoEncoderFactory), and the live
+        // socket, which hands every phone message to camera.Receive first and calls camera.Closed
+        // (WireCameraSocket); then set cameraSocketWired. Until all three are there, "camera" is not
+        // offered and its routes answer 404. Nothing here opens the camera: only a phone on the
+        // live socket with a ticket, while the owner's switch is on.
+        ICameraPasskeys? cameraPasskeys = null;
+        IVideoEncoderFactory? cameraEncoders = null;
+        bool cameraSocketWired = false;
+        var cameraSwitch = new CameraSwitch(settings);
+        status.CameraAllowed = () => cameraSwitch.Allowed;
+        var cameraTickets = new CameraTickets();
+        using var camera = new CameraService(cameraTickets, () => tray?.IsOn == true && cameraSwitch.Allowed,
+            new CameraHardware(), cameraEncoders, new TalkPlayer(WasapiTalkOutput.Open), log);
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body),
@@ -51,6 +65,12 @@ static class Program
                 limits.Set(name, on);
                 tray?.LimitsChanged();
             });
+        if (cameraPasskeys != null && CameraFeature.Ready(cameraPasskeys, cameraEncoders, cameraSocketWired))
+        {
+            status.CameraFeature = true;
+            server.Camera = new CameraAccess(cameraPasskeys, cameraTickets, () => cameraSwitch.Allowed);
+        }
+        camera.Start();
         // The graphs: a sample every minute while the app runs, off the UI thread.
         var history = new HistoryStore();
         server.History = history;
@@ -60,7 +80,7 @@ static class Program
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, cameraSwitch, camera);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
@@ -86,6 +106,10 @@ sealed class TrayApp : ApplicationContext
     readonly Limits limits;
     readonly HeatSensor heat;
     readonly SafetyCheck safety;
+    // "Allow camera & microphone from phone", off by default; it needs the screen switch (Mac menu).
+    readonly ToolStripMenuItem cameraItem = new("Allow camera & microphone from phone");
+    readonly CameraSwitch? cameraSwitch;
+    readonly CameraService? camera;
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
@@ -109,8 +133,11 @@ sealed class TrayApp : ApplicationContext
     public AutoOff Countdown { get; }
 
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
-                   Limits limits, HeatSensor heat, SafetyCheck safety)
+                   Limits limits, HeatSensor heat, SafetyCheck safety,
+                   CameraSwitch? cameraSwitch = null, CameraService? camera = null)
     {
+        this.cameraSwitch = cameraSwitch;
+        this.camera = camera;
         this.machine = machine;
         this.auth = auth;
         this.phone = phone;
@@ -156,8 +183,11 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(timerMenu);
         menu.Items.Add(batteryItem);
         menu.Items.Add(heatItem);
+        cameraItem.Click += (_, _) => FlipCamera();
+        if (cameraSwitch != null) menu.Items.Add(cameraItem);
+        ShowCamera();
         // Shown as they are now, and read again in the background (the item follows by Changed).
-        menu.Opening += (_, _) => { ShowLimits(); RefreshTemperature(); };
+        menu.Opening += (_, _) => { ShowLimits(); ShowCamera(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
@@ -219,7 +249,31 @@ sealed class TrayApp : ApplicationContext
             icon.Text = "Lid Awake: off";
         }
         catch (Exception) { }
+        camera?.StopAll();
         SessionEnd.TurnOff(machine, () => phone.Set(false), log);
+    }
+
+    // ---- Camera & microphone from the phone (the Mac's toggleCamera) ----
+
+    void FlipCamera()
+    {
+        if (cameraSwitch == null) return;
+        bool on = !cameraSwitch.Allowed;
+        try { cameraSwitch.Set(on); }
+        catch (Exception) { }  // the settings file couldn't be written: the switch stays as it was
+        if (cameraSwitch.FromPhone == on)
+            log.Write(on ? "Camera & microphone from phone allowed on the PC" : "Camera & microphone from phone turned off");
+        ShowCamera();
+        // Turned off: a phone watching now is closed at once, with the switch-off sentence.
+        if (camera != null) Task.Run(camera.Tick);
+    }
+
+    // Ticked only with the screen switch on too, and greyed out without it, as on the Mac.
+    void ShowCamera()
+    {
+        if (cameraSwitch == null) return;
+        cameraItem.Checked = cameraSwitch.Allowed;
+        cameraItem.Enabled = cameraSwitch.RemoteScreen;
     }
 
     // The phone page's port was taken when Lid Awake started (Main).
@@ -368,6 +422,8 @@ sealed class TrayApp : ApplicationContext
         // The countdown starts when it goes from off to on, and ends when it goes off.
         if (on && !isOn) { Countdown.Start(); warnedNotPublished = false; }
         else if (!on) Countdown.Stop();
+        // Off (from the tray, the phone, the timer, a safety limit, or Quit): the camera closes now.
+        if (!on) camera?.StopAll();
         isOn = on;
         toggle.Checked = on;
         icon.Text = on ? "Lid Awake: on" : "Lid Awake: off";
