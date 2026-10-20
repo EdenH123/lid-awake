@@ -12,6 +12,9 @@ public class PhoneAccessTests : IDisposable
     readonly List<string> commands = new();
     readonly Settings settings;
     readonly Tailnet tailnet;
+    // Whether this fake Tailscale accepts `serve --https=443 off`. When it does not, the app
+    // checks `serve status` afterwards, to see whether the mapping is gone anyway.
+    volatile bool offWorks = true;
 
     public PhoneAccessTests()
     {
@@ -21,6 +24,7 @@ public class PhoneAccessTests : IDisposable
         tailnet = new Tailnet(settings, args =>
         {
             lock (commands) commands.Add(args);
+            if (args == "serve --https=443 off") return offWorks ? "" : null;
             return args == "serve status --json" ? "{}" : null;
         });
     }
@@ -69,7 +73,22 @@ public class PhoneAccessTests : IDisposable
         var phone = new PhoneAccess(tailnet, server);
         await phone.Set(true);
         Assert.Empty(ServeCommands());
+        // The removal worked, so nothing else is asked.
         lock (commands) Assert.Equal(new[] { "serve --https=443 off" }, commands);
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+    }
+
+    [Fact]
+    public async Task AFailedRemovalIsFollowedByAStatusCheck()
+    {
+        offWorks = false;
+        settings.Set(Tailnet.ServedKey, true);
+        using var server = NewServer(FreePort());
+        var phone = new PhoneAccess(tailnet, server);
+        await phone.Set(true);
+        lock (commands) Assert.Equal(new[] { "serve --https=443 off", "serve status --json" }, commands);
+        // The status shows no mapping of ours, so it is gone anyway.
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
     }
 
     [Fact]
@@ -119,7 +138,22 @@ public class PhoneAccessTests : IDisposable
         await phone.Set(true);
         lock (commands) commands.Clear();
         await phone.Set(false);
+        // The removal worked, so no status check follows.
         lock (commands) Assert.Equal(new[] { "serve --https=443 off" }, commands);
+    }
+
+    [Fact]
+    public async Task TurningOffChecksTheStatusWhenTheRemovalFails()
+    {
+        var port = FreePort();
+        using var server = NewServer(port);
+        server.Start();
+        var phone = new PhoneAccess(tailnet, server);
+        await phone.Set(true);
+        offWorks = false;
+        lock (commands) commands.Clear();
+        await phone.Set(false);
+        lock (commands) Assert.Equal(new[] { "serve --https=443 off", "serve status --json" }, commands);
     }
 
     [Fact]
