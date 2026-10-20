@@ -291,7 +291,8 @@ public static class SelfTest
     {
         const string Name = "Battery";
         if (power is not { } p) return new(Name, CheckOutcome.Fail, "Windows didn't say", false);
-        if ((p.BatteryFlag & 128) != 0) return new(Name, CheckOutcome.NotHere, "not on this PC (no battery)", false);
+        // 255 is "unknown", which also has the "no battery" bit (128) set: told first.
+        if (p.BatteryFlag != 255 && (p.BatteryFlag & 128) != 0) return new(Name, CheckOutcome.NotHere, "not on this PC (no battery)", false);
         if (!StatusInfo.HasBattery(p)) return new(Name, CheckOutcome.Fail, "state unknown (Windows can't tell the battery's state)", false);
         int toFull = TrayText.MinutesToFull(charge);
         return new(Name, CheckOutcome.Pass, TrayText.InfoLine(p, null, toFull), false);
