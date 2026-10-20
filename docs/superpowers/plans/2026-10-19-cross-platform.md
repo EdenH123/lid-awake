@@ -1655,6 +1655,33 @@ git commit -m "README: install on Windows"
 
 ---
 
+### Task 16: Phase 2 follow-ups (from the reviews)
+
+Each part is its own dispatch and review. Build and tests run on GitHub Actions only.
+
+**16a. Safer state on Windows**
+- **Phone link.** Clear `servedByLidAwake` only after `tailscale serve --https=443 off` succeeded or `serve status` shows no mapping for our port. A failed removal is retried at the next start, turn-off and minute check. Do the same in `windows/uninstall.ps1`.
+- **Saved lid values are machine state.** Move `savedLidAc`/`savedLidDc` out of the roaming `%APPDATA%\LidAwake\settings.json` into `%LOCALAPPDATA%\LidAwake\machine.json`. Move old values on first start. Also save the power plan they came from (`powercfg /getactivescheme`) and restore into that plan, not `SCHEME_CURRENT`. `uninstall.ps1` reads the new file and, for older installs, the old one.
+- **Activity log.** If rolling to `.old` fails, still append the line. `Write` never throws, and tray calls can't crash the UI thread.
+- **Start menu shortcut.** `install.ps1` adds "Lid Awake" to the Start menu (per user), and `uninstall.ps1` removes it. CI asserts both.
+
+**16b. Wi-Fi signal on Windows.** Read the connected Wi-Fi's signal through the Native Wifi API: `WlanOpenHandle`, `WlanEnumInterfaces`, `WlanQueryInterface(wlan_intf_opcode_current_connection)` → `wlanSignalQuality` 0–100. Convert it to an approximate dBm for `/status` `net.rssi` (`dBm = quality/2 - 100`). Send `net.wifi` (the SSID) where the API gives it. If anything fails, leave both out, as today. Remove the page's Windows-only "Connected without bars" rule only if `rssi` is now always present when on Wi-Fi; otherwise keep it as the fallback.
+
+**16c. API doc precision.**
+- docs/API.md: the 5th wrong password already answers 429.
+- The §6.4 safe-default column, and `batteryTemp` comes from `batteryTemperature()`.
+- The `/memory` `top[].id` rule.
+- Method-agnostic static/loopback/off paths.
+- `/push/settings` without `off` clears the list.
+- `/input` text length counts grapheme clusters.
+- The video timestamp epoch is arbitrary.
+- Video allows up to 6 unconfirmed frames (JPEG 2).
+- `/focus-app` matches any running app with a bundle URL.
+- The Windows log path.
+
+
+---
+
 # Phase 3 — Windows feature parity (separate plans)
 
 Write one plan per row, in this order (each adds its name to `StatusInfo.Features`, so the page shows that part automatically):
