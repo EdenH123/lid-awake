@@ -584,7 +584,7 @@ public class SafetyTests : IDisposable
     {
         var limits = new Limits(settings);
         var s = Run(new StatusInfo(new FakeReadings { PowerNow = OnBattery(50) }, limits, ReadOnce(NoTemperature)).Build(true));
-        Assert.Equal(new[] { "limits" }, Features(s));
+        Assert.Equal(new[] { "limits", "passkeys" }, Features(s));
         Assert.False(s.TryGetProperty("batteryTemp", out _));
         // The stored switch is still sent; the page hides the heat row without "heat".
         Assert.True(s.GetProperty("heatGuard").GetBoolean());
@@ -599,7 +599,7 @@ public class SafetyTests : IDisposable
     public void StatusWithABatteryTemperatureListsHeatAndSendsBatteryTempWithOneDecimal()
     {
         var s = Run(new StatusInfo(new FakeReadings { PowerNow = OnBattery(50) }, new Limits(settings), ReadOnce(new TemperatureReading(36.66, 71.0))).Build(true));
-        Assert.Equal(new[] { "limits", "heat" }, Features(s));
+        Assert.Equal(new[] { "limits", "heat", "passkeys" }, Features(s));
         Assert.Equal(36.7, s.GetProperty("batteryTemp").GetDouble());
         Assert.Equal(JsonValueKind.Number, s.GetProperty("batteryTemp").ValueKind);
         StatusInfoTests.AssertEveryKeyWithItsKind(s);
@@ -609,7 +609,7 @@ public class SafetyTests : IDisposable
     public void AThermalZoneAloneListsHeatButIsNeverSentAsBatteryTemp()
     {
         var s = Run(new StatusInfo(new FakeReadings { PowerNow = OnBattery(50) }, new Limits(settings), ReadOnce(Zone(55.0))).Build(true));
-        Assert.Equal(new[] { "limits", "heat" }, Features(s));
+        Assert.Equal(new[] { "limits", "heat", "passkeys" }, Features(s));
         Assert.False(s.TryGetProperty("batteryTemp", out _));
         StatusInfoTests.AssertEveryKeyWithItsKind(s);
     }
@@ -647,17 +647,17 @@ public class SafetyTests : IDisposable
         var heat = new HeatSensor(() => value);
         var info = new StatusInfo(new FakeReadings(), new Limits(settings), heat);
         // Before the first read: no temperature yet.
-        Assert.Equal(new[] { "limits" }, Features(Run(info.Build(true))));
+        Assert.Equal(new[] { "limits", "passkeys" }, Features(Run(info.Build(true))));
         heat.Refresh(TimeSpan.Zero);
-        Assert.Equal(new[] { "limits", "heat" }, Features(Run(info.Build(true))));
+        Assert.Equal(new[] { "limits", "heat", "passkeys" }, Features(Run(info.Build(true))));
         value = NoTemperature;
         heat.Refresh(TimeSpan.Zero);
         heat.Refresh(TimeSpan.Zero);
         // Two misses: still kept.
-        Assert.Equal(new[] { "limits", "heat" }, Features(Run(info.Build(true))));
+        Assert.Equal(new[] { "limits", "heat", "passkeys" }, Features(Run(info.Build(true))));
         heat.Refresh(TimeSpan.Zero);
         var s = Run(info.Build(true));
-        Assert.Equal(new[] { "limits" }, Features(s));
+        Assert.Equal(new[] { "limits", "passkeys" }, Features(s));
         Assert.False(s.TryGetProperty("batteryTemp", out _));
     }
 

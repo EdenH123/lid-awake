@@ -90,8 +90,9 @@ public sealed class StatusInfo
     // Section 4. "limits" (POST /limits and the low-battery switch) always; "heat" (the too-hot
     // switch) only while a temperature source works, re-checked with each status. No /memory
     // route yet, so "memory" is not listed. Grows as features land.
-    public static readonly string[] Features = { "limits" };
-    public static readonly string[] FeaturesWithHeat = { "limits", "heat" };
+    // "passkeys": Face ID / fingerprint sign-in (/passkey/*).
+    public static readonly string[] Features = { "limits", "passkeys" };
+    public static readonly string[] FeaturesWithHeat = { "limits", "heat", "passkeys" };
 
     readonly ISystemReadings readings;
     readonly Limits? limits;

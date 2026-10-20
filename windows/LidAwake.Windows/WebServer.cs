@@ -11,7 +11,7 @@ namespace LidAwake;
 
 // The phone page and its requests on 127.0.0.1:8787, with the same rules as the Mac
 // (docs/API.md). Every request goes through the checks of section 2.2 in that order.
-public sealed class WebServer : IDisposable
+public sealed partial class WebServer : IDisposable
 {
     public const int DefaultPort = 8787;
     const int MaxBody = 64 * 1024;
@@ -230,11 +230,10 @@ public sealed class WebServer : IDisposable
             return;
         }
 
-        // 7: everything except the public routes needs a session. (Passkey routes do not exist yet,
-        // so they are not public here: they get 404 after this check, as in step 9.)
+        // 7: everything except the public routes needs a session.
         var tokens = CookieTokens(req).ToList();
         bool signedIn = tokens.Any(auth.IsValid);
-        bool isPublic = path is "/" or "/auth" or "/login" or "/logout";
+        bool isPublic = path is "/" or "/auth" or "/login" or "/logout" or "/passkey/login-options" or "/passkey/login";
         if (!isPublic && !signedIn) { await SendText(c, 401, "Locked"); return; }
 
         // 8: a POST must carry the header a plain web form cannot add.
@@ -244,7 +243,7 @@ public sealed class WebServer : IDisposable
         switch (method, path)
         {
             case ("GET", "/auth"):
-                await SendJson(c, new { hasPassword = auth.HasPassword, loggedIn = signedIn, faceID = false, os = "windows" });
+                await SendJson(c, new { hasPassword = auth.HasPassword, loggedIn = signedIn, faceID = auth.Passkeys.Count > 0, os = "windows" });
                 return;
             case ("POST", "/login"):
                 await Login(c);
@@ -269,7 +268,7 @@ public sealed class WebServer : IDisposable
             }
             case ("GET", "/sessions"):
             {
-                var list = auth.Sessions(tokens).Select(x => new { id = x.Id, device = x.Device, created = x.Created, faceID = false, current = x.Current }).ToList();
+                var list = auth.Sessions(tokens).Select(x => new { id = x.Id, device = x.Device, created = x.Created, faceID = x.FaceID, current = x.Current }).ToList();
                 await SendJson(c, new { sessions = list });
                 return;
             }
@@ -300,6 +299,19 @@ public sealed class WebServer : IDisposable
                 Empty(c);
                 return;
             }
+            // Face ID / fingerprint (passkeys): WebServer.Passkeys.cs.
+            case ("GET", "/passkey/login-options"):
+                await SendJson(c, new { challenge = auth.Passkeys.Challenge("get"), rpId = host });
+                return;
+            case ("POST", "/passkey/login"):
+                await PasskeyLogin(c, host);
+                return;
+            case ("POST", "/passkey/register-options"):
+                await PasskeyRegisterOptions(c, host);
+                return;
+            case ("POST", "/passkey/register"):
+                await PasskeyRegister(c, host);
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
