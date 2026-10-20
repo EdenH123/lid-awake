@@ -11,7 +11,7 @@ using Xunit;
 // cookie headers are set by hand, the way Tailscale Serve and the phone would send them.
 // The tests are in one class: each one starts its own server, with its own settings folder.
 [Collection("WebServer")]
-public class WebServerTests : IDisposable
+public partial class WebServerTests : IDisposable
 {
     const string TailHost = "pc.example.ts.net";
     const string Owner = "owner@example.com";
@@ -54,6 +54,7 @@ public class WebServerTests : IDisposable
             () => turnOffCalls++, (title, body) => announced.Add((title, body)), port, site,
             accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); },
             setLimit: (name, value) => { lock (limitSets) limitSets.Add((name, value)); realLimits?.Set(name, value); });
+        WireApps();
         server.Start();
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
         {

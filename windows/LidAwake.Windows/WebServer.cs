@@ -11,7 +11,7 @@ namespace LidAwake;
 
 // The phone page and its requests on 127.0.0.1:8787, with the same rules as the Mac
 // (docs/API.md). Every request goes through the checks of section 2.2 in that order.
-public sealed class WebServer : IDisposable
+public sealed partial class WebServer : IDisposable
 {
     public const int DefaultPort = 8787;
     const int MaxBody = 64 * 1024;
@@ -300,6 +300,11 @@ public sealed class WebServer : IDisposable
                 Empty(c);
                 return;
             }
+            case ("GET", "/app-icon.png"): await AppIcon(c); return;
+            case ("POST", "/open-app"): await OpenApp(c); return;
+            case ("POST", "/focus-app"): await FocusApp(c); return;
+            case ("POST", "/quit-app"): await QuitApp(c); return;
+            case ("POST", "/apps-order"): await AppsOrder(c); return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
