@@ -348,7 +348,7 @@ public class TemperatureVendorsTests : IDisposable
         Assert.Equal(4, wmi.Asked.Count);
         Later(TimeSpan.FromSeconds(1));
         Assert.Equal(new TemperatureReading(null, 45.2), chain.Read());
-        Assert.Empty(logged.Where(l => !l.Contains("Dell")));
+        Assert.Equal(new[] { "Temperature from Dell Command | Monitor sensors" }, logged);
     }
 
     [Fact]
