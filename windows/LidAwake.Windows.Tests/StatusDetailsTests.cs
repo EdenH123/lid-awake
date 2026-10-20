@@ -376,7 +376,7 @@ public class StatusDetailsTests
         var readings = new SystemReadings();
         var host = readings.HostName();
         Assert.False(string.IsNullOrWhiteSpace(host));
-        Assert.DoesNotContain("\0", host);
+        Assert.False(host.Contains('\0'), "a NUL in the name");  // ordinal: the string overload ignores NULs
         Assert.True(readings.ScreenWidth() >= 0);
         Assert.True(DisplayScale.PrimaryDpi() > 0);
         Assert.True(DisplayScale.PixelsPerPoint() > 0);
@@ -422,7 +422,7 @@ public class StatusDetailsTests
         Assert.Equal(4, (int)Marshal.OffsetOf<BatteryTemperature.BatteryStatus>(nameof(BatteryTemperature.BatteryStatus.Capacity)));
         Assert.Equal(12, (int)Marshal.OffsetOf<BatteryTemperature.BatteryStatus>(nameof(BatteryTemperature.BatteryStatus.Rate)));
         static uint CtlCode(uint function) => (0x29u << 16) | (1u << 14) | (function << 2) | 0u;
-        Assert.Equal(CtlCode(0x13), BatteryTemperature.IoctlBatteryQueryStatus);
+        Assert.Equal(BatteryTemperature.IoctlBatteryQueryStatus, CtlCode(0x13));
         Assert.Equal(0x29404Cu, BatteryTemperature.IoctlBatteryQueryStatus);
         Assert.Equal(0, BatteryTemperature.LevelBatteryInformation);
         Assert.Equal(0x40000000u, BatteryTemperature.CapacityRelative);
