@@ -109,6 +109,10 @@ public sealed class StatusInfo
         this.heat = heat;
     }
 
+    // The phone's control of this PC (feature "control"). None (the tests): no "control", and
+    // the control fields keep their defaults.
+    public RemoteControl? Control { get; init; }
+
     // `timer` is the "Turn off after" setting: timerMinutes is its length and timerRemaining the
     // time left (6.1). Without one (tests, before the tray exists) the length is 0, never.
     public Dictionary<string, object?> Build(bool lidAwake, AutoOff? timer = null)
@@ -132,12 +136,14 @@ public sealed class StatusInfo
             ["thermalState"] = "unknown",
             // 6.2
             ["remoteScreen"] = false,
-            ["remoteControl"] = false,
+            // The control switch, which needs the screen switch. SendInput needs no permission
+            // (only windows of an elevated program are out of reach, by Windows' UIPI).
+            ["remoteControl"] = Control?.ControlAllowed ?? false,
             ["cameraAllowed"] = false,
             ["screenPermission"] = false,
-            ["controlPermission"] = false,
+            ["controlPermission"] = Control != null,
             ["screenWidth"] = Math.Max(0, readings.ScreenWidth()),
-            ["screenOff"] = false,
+            ["screenOff"] = Control?.ScreenOff ?? false,
             ["lidClosed"] = false,
             ["displayAsleep"] = false,
             // 6.3
@@ -147,7 +153,7 @@ public sealed class StatusInfo
             // 6.6
             ["os"] = "windows",
             // "heat" while either source works: the battery's sensor or the thermal zones.
-            ["features"] = temperature.Any ? FeaturesWithHeat : Features,
+            ["features"] = WithControl(temperature.Any ? FeaturesWithHeat : Features),
         };
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
@@ -207,6 +213,8 @@ public sealed class StatusInfo
         s["net"] = netInfo;
         return s;
     }
+
+    string[] WithControl(string[] features) => Control == null ? features : features.Append("control").ToArray();
 
     // Windows gives Wi-Fi signal as a quality from 0 to 100, not dBm. The usual approximation:
     // quality = 2 × (dBm + 100), so dBm = quality / 2 − 100, from −100 (0) to −50 (100). A whole
