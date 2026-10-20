@@ -14,6 +14,7 @@ public class LidScreenTests : IDisposable
         public bool ReadThrows;
         public bool SetFails;
         public bool SetThrows;
+        public bool SetTimesOut;  // the change is applied, but Set gives up waiting: a late finish
         public int Reads;
         public readonly List<int> SetCalls = new();
 
@@ -28,6 +29,11 @@ public class LidScreenTests : IDisposable
         {
             SetCalls.Add(level);
             if (SetThrows) throw new InvalidOperationException("WMI is unavailable (fake)");
+            if (SetTimesOut)
+            {
+                Level = level;
+                throw new TimeoutException("Windows did not answer in time (fake)");
+            }
             if (SetFails) return false;
             Level = level;
             return true;
@@ -67,7 +73,17 @@ public class LidScreenTests : IDisposable
     }
 
     // Passes run on the spot, so every check sees the finished work.
-    LidScreen Make(IBrightness b) => new(b, hold, machine, notes.Add, a => { a(); return Task.CompletedTask; });
+    LidScreen Make(IBrightness b) => new(b, hold, machine, notes.Add, a => { a(); return Task.CompletedTask; }, FakeDelay);
+
+    // Retries wait on these: a test finishes one when it wants that wait to be over.
+    readonly List<(TimeSpan Wait, TaskCompletionSource Done)> delays = new();
+
+    Task FakeDelay(TimeSpan wait)
+    {
+        var done = new TaskCompletionSource();
+        delays.Add((wait, done));
+        return done.Task;
+    }
 
     // What machine.json holds on disk, not what the object remembers.
     int? SavedOnDisk() => new Settings(folder, Settings.MachineFileName).Get<int?>(LidScreen.SavedKey);
@@ -427,5 +443,175 @@ public class LidScreenTests : IDisposable
     sealed class ThrowingHold : IDisplayHold
     {
         public void Hold(bool on) => throw new InvalidOperationException("no hold (fake)");
+    }
+
+    // ---- a change that timed out ----
+
+    [Fact]
+    public void ALowerThatTimesOutKeepsTheSavedLevelSoItCanBePutBack()
+    {
+        panel.SetTimesOut = true;  // Windows applied it anyway, but too late for the wait
+        screen.SetOn(true);
+        screen.SetLid(true);
+        Assert.Equal(1, panel.Level);
+        Assert.Equal(70, SavedOnDisk());  // not forgotten
+        Assert.Single(notes);
+        panel.SetTimesOut = false;
+        screen.SetLid(false);
+        Assert.Equal(70, panel.Level);
+        Assert.Null(SavedOnDisk());
+    }
+
+    [Fact]
+    public void ALowerThatTimedOutIsPutBackAtTheNextStart()
+    {
+        panel.SetTimesOut = true;
+        screen.SetOn(true);
+        screen.SetLid(true);
+        var after = new FakeBrightness { Level = 1 };
+        var restarted = new LidScreen(after, hold, new Settings(folder, Settings.MachineFileName), notes.Add,
+            a => { a(); return Task.CompletedTask; }, FakeDelay);
+        Assert.True(restarted.Recover().IsCompletedSuccessfully);
+        Assert.Equal(70, after.Level);
+        Assert.Null(SavedOnDisk());
+    }
+
+    [Fact]
+    public void ACallThatFinishesLateStillFinishesBeforeTheNextOneStarts()
+    {
+        var calls = new OrderedCalls();
+        var order = new List<string>();
+        using var release = new ManualResetEventSlim(false);
+        using var secondRan = new ManualResetEventSlim(false);
+        Assert.Throws<TimeoutException>(() => calls.Run(() =>
+        {
+            release.Wait();
+            lock (order) order.Add("late");
+            return 1;
+        }, TimeSpan.FromMilliseconds(100)));
+        _ = Task.Run(() => calls.Run(() =>
+        {
+            lock (order) order.Add("second");
+            secondRan.Set();
+            return 2;
+        }, TimeSpan.FromSeconds(30)));
+        Assert.False(secondRan.Wait(300));  // still waiting behind the late one
+        release.Set();
+        Assert.True(secondRan.Wait(30_000));
+        lock (order) Assert.Equal(new[] { "late", "second" }, order);
+    }
+
+    [Fact]
+    public void AnOrderedCallGivesBackItsAnswerAndItsException()
+    {
+        var calls = new OrderedCalls();
+        Assert.Equal(7, calls.Run(() => 7, TimeSpan.FromSeconds(30)));
+        Assert.Throws<InvalidOperationException>(() => calls.Run<int>(() => throw new InvalidOperationException("no"), TimeSpan.FromSeconds(30)));
+        Assert.Equal(8, calls.Run(() => 8, TimeSpan.FromSeconds(30)));  // a failure does not block the next
+    }
+
+    // ---- a put-back that fails is tried again ----
+
+    void LowerThenFailToRestore()
+    {
+        screen.SetOn(true);
+        screen.SetLid(true);
+        panel.SetFails = true;
+        screen.SetLid(false);
+        Assert.Equal(70, SavedOnDisk());
+    }
+
+    [Fact]
+    public void AFailedPutBackIsTriedAgainAfterAShortWait()
+    {
+        LowerThenFailToRestore();
+        Assert.Equal(new[] { TimeSpan.FromSeconds(3) }, delays.Select(d => d.Wait));
+        panel.SetFails = false;
+        delays[0].Done.SetResult();
+        Assert.Equal(70, panel.Level);
+        Assert.Null(SavedOnDisk());
+        Assert.Single(delays);  // it worked: no more retries
+    }
+
+    [Fact]
+    public void ARetryThatFailsTriesOnceMoreThenStops()
+    {
+        LowerThenFailToRestore();
+        delays[0].Done.SetResult();                    // fails again
+        Assert.Equal(new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(10) }, delays.Select(d => d.Wait));
+        panel.SetFails = false;
+        delays[1].Done.SetResult();                    // works
+        Assert.Equal(70, panel.Level);
+        Assert.Null(SavedOnDisk());
+        Assert.Equal(2, delays.Count);
+    }
+
+    [Fact]
+    public void RetriesAreNotEndless()
+    {
+        LowerThenFailToRestore();
+        delays[0].Done.SetResult();
+        delays[1].Done.SetResult();
+        Assert.Equal(2, delays.Count);
+        Assert.Equal(70, SavedOnDisk());  // still saved: the next event or start tries again
+        Assert.Single(notes);             // and it was said once
+    }
+
+    [Fact]
+    public void ARetryMadeStaleByANewerEventDoesNothing()
+    {
+        LowerThenFailToRestore();
+        panel.SetFails = false;
+        screen.SetWatching(true);          // a newer pass puts it back
+        Assert.Equal(70, panel.Level);
+        int calls = panel.SetCalls.Count;
+        delays[0].Done.SetResult();        // the old wait ends: nothing to do
+        Assert.Equal(calls, panel.SetCalls.Count);
+    }
+
+    [Fact]
+    public void TheDisplayComingBackOnPutsBackALevelThatCouldNotBePutBack()
+    {
+        screen.SetOn(true);
+        screen.SetLid(true);
+        screen.OnPowerSetting(LidScreen.ConsoleDisplay, Dword(0));   // the panel goes off with the lid
+        panel.SetFails = true;
+        screen.SetLid(false);                                        // WMI is not ready yet
+        Assert.Equal(70, SavedOnDisk());
+        panel.SetFails = false;
+        screen.OnPowerSetting(LidScreen.ConsoleDisplay, Dword(1));   // the panel is back on
+        Assert.Equal(70, panel.Level);
+        Assert.Null(SavedOnDisk());
+    }
+
+    [Fact]
+    public void TheDisplayStateOtherThanOnDoesNotStartAPass()
+    {
+        screen.SetOn(true);
+        screen.SetLid(true);
+        panel.SetCalls.Clear();
+        screen.OnPowerSetting(LidScreen.ConsoleDisplay, Dword(0));
+        screen.OnPowerSetting(LidScreen.ConsoleDisplay, Dword(2));
+        Assert.Empty(panel.SetCalls);
+        Assert.Equal(1, panel.Level);
+    }
+
+    // ---- the phone turned the display off ----
+
+    [Fact]
+    public void TheDisplayIsNotHeldWhileTheScreenIsOff()
+    {
+        screen.SetOn(true);
+        screen.SetWatching(true);
+        Assert.True(hold.Holding);
+        ScreenWatch.Connect(screen.SetWatching, screen.SetScreenOff);
+        ScreenWatch.SetScreenOff(true);
+        Assert.True(screen.ScreenOff);
+        Assert.False(hold.Holding);
+        screen.SetWatching(false);
+        screen.SetWatching(true);
+        Assert.False(hold.Holding);        // watched, but the phone turned it off
+        ScreenWatch.SetScreenOff(false);
+        Assert.True(hold.Holding);         // woken, and still watched
     }
 }

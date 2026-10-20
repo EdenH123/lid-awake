@@ -52,31 +52,42 @@ public sealed class LidScreen
     readonly Settings machine;
     readonly Action<string>? log;
     readonly Func<Action, Task> run;
+    readonly Func<TimeSpan, Task> delay;
 
     readonly object gate = new();   // the state below
     bool lidClosed;
     int displayState = 1;           // 1: on, until Windows says otherwise
     bool on;
     bool watching;
+    bool screenOff;
+    int retryGen;                   // changes with every outside event: a waiting retry is then stale
+    int retries;                    // retries of a failed put-back since the last outside event
+
+    // A put-back that failed (Windows may not be ready just after the lid opens) is tried again
+    // after these delays, off the UI thread, and then left to the next event.
+    public static readonly TimeSpan[] RetryDelays = { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(10) };
 
     readonly object pass = new();   // one pass at a time; guards what follows
     bool holding;
     bool lowered;
     bool failureLogged;
 
-    // `run` starts a pass off the calling thread (the default: the thread pool); tests run it
-    // on the spot.
-    public LidScreen(IBrightness brightness, IDisplayHold hold, Settings machine, Action<string>? log = null, Func<Action, Task>? run = null)
+    // `run` starts a pass off the calling thread (the default: the thread pool); `delay` waits
+    // before a retry (Task.Delay). Tests run the first on the spot and control the second.
+    public LidScreen(IBrightness brightness, IDisplayHold hold, Settings machine, Action<string>? log = null,
+                     Func<Action, Task>? run = null, Func<TimeSpan, Task>? delay = null)
     {
         this.brightness = brightness;
         this.hold = hold;
         this.machine = machine;
         this.log = log;
         this.run = run ?? (a => Task.Run(a));
+        this.delay = delay ?? (d => Task.Delay(d));
     }
 
     public bool LidClosed { get { lock (gate) return lidClosed; } }
     public bool DisplayAsleep { get { lock (gate) return displayState == 0; } }
+    public bool ScreenOff { get { lock (gate) return screenOff; } }
 
     // A power-setting notification (PowerSettingWindow, on the UI thread). Anything that is not
     // one of the two settings, or has no data, is ignored.
@@ -105,7 +116,21 @@ public sealed class LidScreen
             if (displayState == state) return;
             displayState = state;
         }
-        // Only /status shows it; nothing has to be applied.
+        // The display coming back on (the lid opened, WMI is ready again) is a good moment to put
+        // back a brightness that could not be put back before. Otherwise /status is all it changes.
+        if (state == 1) Schedule();
+    }
+
+    // The phone turned the display off (POST /power displayoff, the control task): the display
+    // must not be held awake then. ScreenWatch.SetScreenOff is the hook.
+    public void SetScreenOff(bool value)
+    {
+        lock (gate)
+        {
+            if (screenOff == value) return;
+            screenOff = value;
+        }
+        Schedule();
     }
 
     // Lid Awake turned on or off (the tray). The task is done when everything that had to be put
@@ -130,10 +155,46 @@ public sealed class LidScreen
     // At start: puts back a brightness that a crash or a forced stop left lowered.
     public Task Recover() => Schedule();
 
+    // An event from outside: a pass now. It also makes any waiting retry stale (this pass is
+    // the newer look at the state) and gives the next failure its retries again.
     Task Schedule()
+    {
+        lock (gate)
+        {
+            retryGen++;
+            retries = 0;
+        }
+        return Start();
+    }
+
+    Task Start()
     {
         try { return run(Pass); }
         catch (Exception) { return Task.CompletedTask; }
+    }
+
+    // After a failed put-back: one more pass in a few seconds, at most RetryDelays.Length times
+    // for one outside event. Nothing waits on this thread.
+    void RetryRestoreSoon()
+    {
+        TimeSpan wait;
+        int generation;
+        lock (gate)
+        {
+            if (retries >= RetryDelays.Length) return;
+            wait = RetryDelays[retries++];
+            generation = retryGen;
+        }
+        try
+        {
+            _ = delay(wait).ContinueWith(_ =>
+            {
+                bool current;
+                lock (gate) current = generation == retryGen;
+                if (current) Start();
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+        catch (Exception) { }
     }
 
     void Note(string text)
@@ -160,7 +221,7 @@ public sealed class LidScreen
                 bool wantHold, wantLow;
                 lock (gate)
                 {
-                    wantHold = on && watching;
+                    wantHold = on && watching && !screenOff;
                     wantLow = on && lidClosed;
                 }
                 ApplyHold(wantHold);
@@ -204,9 +265,15 @@ public sealed class LidScreen
             lowered = true;
             failureLogged = false;
         }
+        catch (TimeoutException e)
+        {
+            // Windows may still apply the change later, so it is not known that nothing was
+            // lowered: the saved level stays, and the next put-back (or start) uses it.
+            Fail("Screen brightness not changed: " + e.Message);
+        }
         catch (Exception e)
         {
-            // Nothing was lowered, so nothing is waiting to be put back.
+            // Windows said no: nothing was lowered, so nothing is waiting to be put back.
             if (savedNow) Forget();
             Fail("Screen brightness not changed: " + e.Message);
         }
@@ -233,6 +300,7 @@ public sealed class LidScreen
         catch (Exception e)
         {
             Fail("Screen brightness not put back: " + e.Message);
+            RetryRestoreSoon();
         }
     }
 
@@ -249,8 +317,22 @@ public sealed class LidScreen
 public static class ScreenWatch
 {
     static volatile Action<bool>? listener;
+    static volatile Action<bool>? offListener;
 
-    public static void Connect(Action<bool>? listener) => ScreenWatch.listener = listener;
+    // `watching` hears SetWatching; `screenOff` (optional) hears SetScreenOff.
+    public static void Connect(Action<bool>? watching, Action<bool>? screenOff = null)
+    {
+        listener = watching;
+        offListener = screenOff;
+    }
+
+    // The phone turned the display off (true) or woke it (false): while it is off, the display is
+    // not held awake. The control task calls this where it sets its own screenOff.
+    public static void SetScreenOff(bool off)
+    {
+        try { offListener?.Invoke(off); }
+        catch (Exception) { }
+    }
 
     public static void SetWatching(bool watching)
     {
@@ -280,19 +362,18 @@ public sealed class WmiBrightness : IBrightness
     static ManagementObjectSearcher Search(ManagementScope scope, string query) =>
         new(scope, new ObjectQuery(query), new System.Management.EnumerationOptions { Timeout = WmiTimeout, ReturnImmediately = false });
 
-    static T Bounded<T>(Func<T> work)
+    // One call at a time, in the order asked: a call that timed out may still finish later, and
+    // then it finishes before the next one starts, never after it.
+    readonly OrderedCalls calls = new();
+
+    T Bounded<T>(Func<T> work) => calls.Run(() =>
     {
-        var task = Task.Run(work);
-        try
+        try { return work(); }
+        catch (ManagementException e) when (e.ErrorCode == ManagementStatus.Timedout)
         {
-            if (!task.Wait(CallLimit)) throw new TimeoutException("Windows did not answer in time");
+            throw new TimeoutException("Windows did not answer in time");
         }
-        catch (AggregateException e)
-        {
-            throw e.InnerException ?? e;
-        }
-        return task.Result;
-    }
+    }, CallLimit);
 
     public BrightnessReading? Read() => Bounded(ReadNow);
 
@@ -331,6 +412,36 @@ public sealed class WmiBrightness : IBrightness
             }
         }
         return any;
+    }
+}
+
+// Runs calls one after another, in the order asked, each waited for at most `limit` (the time
+// queued behind an earlier call counts). A call that is given up on still runs, and still in its
+// place, so a late finish can never land after a call asked for later.
+public sealed class OrderedCalls
+{
+    readonly object gate = new();
+    Task last = Task.CompletedTask;
+
+    // Throws TimeoutException when the call has not finished in time, and the call's own
+    // exception when it fails.
+    public T Run<T>(Func<T> work, TimeSpan limit)
+    {
+        Task<T> mine;
+        lock (gate)
+        {
+            mine = last.ContinueWith(_ => work(), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+            last = mine;
+        }
+        try
+        {
+            if (!mine.Wait(limit)) throw new TimeoutException("Windows did not answer in time");
+        }
+        catch (AggregateException e)
+        {
+            throw e.InnerException ?? e;
+        }
+        return mine.Result;
     }
 }
 

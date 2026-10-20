@@ -43,7 +43,7 @@ static class Program
         // notifications come to a hidden window on this (the UI) thread; the screen work (WMI) is
         // done on the thread pool. A brightness a crash left lowered is put back right now.
         var screen = new LidScreen(new WmiBrightness(), new DisplayHold(), machine, log.Write);
-        ScreenWatch.Connect(screen.SetWatching);
+        ScreenWatch.Connect(screen.SetWatching, screen.SetScreenOff);
         _ = screen.Recover();
         using var power = new PowerSettingWindow(screen.OnPowerSetting, log.Write);
         var status = new StatusInfo(readings, limits, heat) { Screen = screen };
