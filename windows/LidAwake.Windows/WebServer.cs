@@ -379,9 +379,6 @@ public sealed partial class WebServer : IDisposable
         Empty(c);
     }
 
-    static string? Text(Dictionary<string, JsonElement> body, string name) =>
-        body.TryGetValue(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
     // `off`: a list of strings, or nothing (as on the Mac, a list with anything else in it counts as none).
     static List<string> Names(Dictionary<string, JsonElement> body)
     {
