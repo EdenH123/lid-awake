@@ -120,14 +120,16 @@ public sealed class ClaudeUsage
         });
     }
 
-    // {"rate_limits": {...}, "updated": <Unix seconds>}, to a temp file first (HistoryStore.WriteAtomic).
+    // {"rate_limits": {...}, "updated": <Unix seconds>}, to a temp file of its own first
+    // (HistoryStore.WriteAtomic), so several status lines at once can't mix. Only into a folder
+    // that is there (%LOCALAPPDATA%\LidAwake: no folder, no file, as on the Mac).
     public static bool Save(string path, JsonObject rateLimits, DateTimeOffset at)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            if (!Directory.Exists(Path.GetDirectoryName(Path.GetFullPath(path)))) return false;
             var saved = new JsonObject { ["rate_limits"] = rateLimits.DeepClone(), ["updated"] = at.ToUnixTimeSeconds() };
-            return HistoryStore.WriteAtomic(path, saved.ToJsonString());
+            return HistoryStore.WriteAtomic(path, saved.ToJsonString(), uniqueTemp: true);
         }
         catch (Exception) { return false; }
     }
@@ -262,11 +264,15 @@ public sealed class ClaudeUsage
 
     // Finds Claude Code (ClaudeFinder), runs "/usage" in a fresh empty temp folder that is deleted
     // afterwards, hidden, with nothing to read, inheriting no open files, for at most 45 seconds.
+    public const string TempPrefix = "lidawake-usage-";
+
     public static string? AskClaudeCode()
     {
         var claude = ClaudeFinder.Find();
         if (claude == null || ClaudeFinder.CommandFor(claude, UsageArguments) is not { } command) return null;
-        var root = Path.Combine(Path.GetTempPath(), "lidawake-usage-" + Guid.NewGuid().ToString("N")[..12]);
+        var temp = Path.GetTempPath();
+        CleanUp(temp, DateTime.UtcNow);
+        var root = Path.Combine(temp, TempPrefix + Guid.NewGuid().ToString("N")[..12]);
         var dir = Path.Combine(root, "run");
         try
         {
@@ -276,9 +282,30 @@ public sealed class ClaudeUsage
         catch (Exception) { return null; }
         finally
         {
-            try { Directory.Delete(root, true); }
-            catch (Exception) { }
+            // Something it left running may hold the folder a moment longer (when no job could be used).
+            for (int i = 0; i < 3 && Directory.Exists(root); i++)
+            {
+                try { Directory.Delete(root, true); }
+                catch (Exception) { Thread.Sleep(500); }
+            }
         }
+    }
+
+    // Folders an earlier question couldn't delete, once they are 10 minutes old.
+    internal static void CleanUp(string temp, DateTime utcNow)
+    {
+        try
+        {
+            foreach (var old in Directory.GetDirectories(temp, TempPrefix + "*"))
+            {
+                try
+                {
+                    if (utcNow - Directory.GetCreationTimeUtc(old) > TimeSpan.FromMinutes(10)) Directory.Delete(old, true);
+                }
+                catch (Exception) { }
+            }
+        }
+        catch (Exception) { }
     }
 
     // ---- Words for the tray and the alert (main.swift) ----
@@ -330,6 +357,9 @@ public sealed class ClaudeUsageAlert
         this.culture = culture;
     }
 
+    // A reset time to the nearest minute.
+    public static long WindowKey(long resetsAt) => (long)Math.Round(resetsAt / 60.0, MidpointRounding.AwayFromZero) * 60;
+
     public void Check(Func<string, string, string, Task> send)
     {
         if (ask) usage.Refresh(ClaudeUsage.AskForAlerts);
@@ -340,11 +370,13 @@ public sealed class ClaudeUsageAlert
             foreach (var (key, label, window) in new[] { ("fiveHour", "5-hour", u.FiveHour), ("sevenDay", "weekly", u.SevenDay) })
             {
                 if (window is not { } w || w.Pct < At || w.ResetsAt <= t.ToUnixTimeSeconds()) continue;
+                // To the minute: the status line and "/usage" give the same window a few seconds apart.
+                long resets = WindowKey(w.ResetsAt);
                 long? alerted;
                 try { alerted = settings.Get<long?>(KeyPrefix + key); }
                 catch (Exception) { alerted = null; }
-                if (alerted == w.ResetsAt || !sent.Add((key, w.ResetsAt))) continue;
-                try { settings.Set(KeyPrefix + key, w.ResetsAt); }
+                if ((alerted is { } a && WindowKey(a) == resets) || !sent.Add((key, resets))) continue;
+                try { settings.Set(KeyPrefix + key, resets); }
                 catch (Exception) { }
                 var reset = DateTimeOffset.FromUnixTimeSeconds(w.ResetsAt);
                 var when = ClaudeUsage.When(reset, t, zone, culture ?? CultureInfo.CurrentCulture, " at ");
@@ -388,24 +420,28 @@ public static class ClaudeFinder
             var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             foreach (var path in Candidates(profile, appData))
-                if (File.Exists(path) && Safe(path, reader, userSid)) return path;
+                if (File.Exists(path) && SafePath(path, reader, userSid) is { } real) return real;
         }
         catch (Exception) { }
         return null;
     }
 
     // The file, with links followed, and the folder it is really in.
-    public static bool Safe(string path, IOwnershipReader reader, string userSid)
+    public static bool Safe(string path, IOwnershipReader reader, string userSid) => SafePath(path, reader, userSid) != null;
+
+    // The real path (links followed) when it and its folder are safe, else null. That real path is
+    // what is run, so a link can't be pointed elsewhere between the check and the start.
+    public static string? SafePath(string path, IOwnershipReader reader, string userSid)
     {
         try
         {
             var real = Resolve(path);
             var folder = Path.GetDirectoryName(real);
-            if (folder == null) return false;
+            if (folder == null) return null;
             return reader.Read(real, directory: false) is { } file && Trusted(file, userSid)
-                && reader.Read(folder, directory: true) is { } dir && Trusted(dir, userSid);
+                && reader.Read(folder, directory: true) is { } dir && Trusted(dir, userSid) ? real : null;
         }
-        catch (Exception) { return false; }
+        catch (Exception) { return null; }
     }
 
     static string Resolve(string path)
@@ -431,11 +467,15 @@ public static class ClaudeFinder
     // claude.exe directly; claude.cmd through cmd.exe ("/d" skips AutoRun, "/v:off" keeps "!"
     // plain, "/s" keeps everything inside the outer quotes as it is). A path with a quote, or a
     // "%" that cmd would expand, is never run.
+    // A program (the real file a link points to may have no ".exe") runs directly; a ".bat" or
+    // ".com" never does (Windows would run a batch file through cmd.exe without our quoting).
     public static (string App, string CommandLine)? CommandFor(string claude, string arguments)
     {
         if (claude.Contains('"')) return null;
-        if (claude.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return (claude, $"\"{claude}\" {arguments}");
-        if (!claude.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || claude.Contains('%')) return null;
+        var ext = Path.GetExtension(claude);
+        if (ext.Equals(".bat", StringComparison.OrdinalIgnoreCase) || ext.Equals(".com", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase)) return (claude, $"\"{claude}\" {arguments}");
+        if (claude.Contains('%')) return null;
         var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
         return (cmd, $"\"{cmd}\" /d /v:off /s /c \"\"{claude}\" {arguments}\"");
     }
@@ -526,7 +566,12 @@ public static class HiddenRun
             {
                 var limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
                 limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref limits, Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>());
+                // A job that can't be set up is no job: the tree is stopped by walking it instead.
+                if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref limits, Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()))
+                {
+                    CloseHandle(job);
+                    job = IntPtr.Zero;
+                }
             }
 
             var line = new StringBuilder(commandLine);
@@ -550,8 +595,10 @@ public static class HiddenRun
             uint ms = (uint)Math.Clamp(timeout.TotalMilliseconds, 0, uint.MaxValue - 1);
             bool timedOut = WaitForSingleObject(pi.hProcess, ms) != WAIT_OBJECT_0;
             // Whatever is left: on a timeout the program itself, otherwise anything it left running.
-            if (job != IntPtr.Zero) TerminateJobObject(job, 1);
-            else if (timedOut) KillTree(pi.dwProcessId);
+            if (job == IntPtr.Zero || !TerminateJobObject(job, 1))
+            {
+                if (timedOut) KillTree(pi.dwProcessId);
+            }
             if (timedOut) WaitForSingleObject(pi.hProcess, 5000);
             return new RunResult(true, timedOut, ReadOutput(outputFile));
         }

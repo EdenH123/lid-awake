@@ -283,6 +283,51 @@ public class ClaudeUsageTests : IDisposable
         Assert.Equal(3, sent.All.Count);
     }
 
+    // The status line and "/usage" give the same window's reset a few seconds apart: one alert.
+    [Fact]
+    public void TheSameWindowToTheMinuteAlertsOnce()
+    {
+        var folder = NewFolder();
+        var settings = new Settings(NewFolder());
+        var usage = new ClaudeUsage(folder, () => null, () => Noon, Utc);
+        var alert = new ClaudeUsageAlert(usage, settings, () => Noon, Utc, CultureInfo.InvariantCulture, ask: false);
+        var sent = new Sent();
+        long resets = Unix(10, 20, 13, 40), week = Unix(10, 23, 22, 59);
+        SaveWindows(folder, 95, resets + 20, 1, week);
+        alert.Check(sent.Send);
+        Assert.Single(sent.All);
+        Assert.Equal(resets, settings.Get<long?>("claudeAlerted.fiveHour"));
+        SaveWindows(folder, 96, resets - 25, 1, week);
+        new ClaudeUsageAlert(usage, settings, () => Noon, Utc, CultureInfo.InvariantCulture, ask: false).Check(sent.Send);
+        alert.Check(sent.Send);
+        Assert.Single(sent.All);
+        Assert.Equal(resets, ClaudeUsageAlert.WindowKey(resets + 29));
+        Assert.Equal(resets + 60, ClaudeUsageAlert.WindowKey(resets + 30));
+    }
+
+    [Fact]
+    public void NothingIsSavedIntoAFolderThatIsntThere()
+    {
+        var missing = Path.Combine(NewFolder(), "gone", ClaudeUsage.FileName);
+        Assert.False(ClaudeUsage.Save(missing, new JsonObject { ["five_hour"] = new JsonObject { ["used_percentage"] = 5 } }, Noon));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(missing)));
+    }
+
+    [Fact]
+    public void AnEarlierQuestionsLeftOverFolderIsCleanedUp()
+    {
+        var temp = NewFolder();
+        var old = Directory.CreateDirectory(Path.Combine(temp, ClaudeUsage.TempPrefix + "old"));
+        Directory.SetCreationTimeUtc(old.FullName, DateTime.UtcNow.AddMinutes(-11));
+        var fresh = Directory.CreateDirectory(Path.Combine(temp, ClaudeUsage.TempPrefix + "fresh"));
+        var other = Directory.CreateDirectory(Path.Combine(temp, "someone-else"));
+        Directory.SetCreationTimeUtc(other.FullName, DateTime.UtcNow.AddDays(-1));
+        ClaudeUsage.CleanUp(temp, DateTime.UtcNow);
+        Assert.False(Directory.Exists(old.FullName));
+        Assert.True(Directory.Exists(fresh.FullName));
+        Assert.True(Directory.Exists(other.FullName));
+    }
+
     [Fact]
     public void UsageAlertGoesWithTheOtherEarlyWarnings()
     {
@@ -385,6 +430,10 @@ public class ClaudeUsageTests : IDisposable
         Assert.Null(ClaudeFinder.CommandFor(@"C:\Users\100%\npm\claude.cmd", ClaudeUsage.UsageArguments));
         Assert.Null(ClaudeFinder.CommandFor("C:\\a\"b\\claude.exe", ClaudeUsage.UsageArguments));
         Assert.Null(ClaudeFinder.CommandFor(@"C:\a\claude.bat", ClaudeUsage.UsageArguments));
+        Assert.Null(ClaudeFinder.CommandFor(@"C:\a\claude.com", ClaudeUsage.UsageArguments));
+        // The real file behind a link may have no ".exe": run directly, never through cmd.
+        Assert.Equal((@"C:\U\.local\share\claude\versions\2.1.0", "\"C:\\U\\.local\\share\\claude\\versions\\2.1.0\" -p"),
+            ClaudeFinder.CommandFor(@"C:\U\.local\share\claude\versions\2.1.0", "-p")!.Value);
         Assert.Equal(new[] { @"C:\U\.local\bin\claude.exe", @"C:\A\npm\claude.cmd" }, ClaudeFinder.Candidates(@"C:\U", @"C:\A"));
     }
 

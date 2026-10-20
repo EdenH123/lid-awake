@@ -128,9 +128,11 @@ public sealed class HistoryStore
 
     // To a temp file first, then moved over the old one, so a crash mid-write can't leave a
     // truncated history. Never throws; false when it failed (the old file is left as it was).
-    internal static bool WriteAtomic(string path, string text)
+    // `uniqueTemp`: a temp name of its own each time, for files several writers may write at once
+    // (Claude's usage file and Claude Code's settings: status lines, hooks, the tray).
+    internal static bool WriteAtomic(string path, string text, bool uniqueTemp = false)
     {
-        var tmp = path + ".tmp";
+        var tmp = uniqueTemp ? path + "." + Guid.NewGuid().ToString("N") + ".tmp" : path + ".tmp";
         try
         {
             File.WriteAllText(tmp, text);

@@ -210,7 +210,7 @@ For the usage after every reply and the "Claude finished" and "Claude needs you"
 - the installer's last step asks **Turn it on? [Y/n]** when Claude Code is on the laptop, or
 - right-click the Lid Awake icon → **Claude alerts and usage from Claude Code…**.
 
-Lid Awake first saves a copy of the file as `settings.json.lidawake-backup`, then adds two hooks (Stop and Notification) and a status line, and changes nothing else. If you already have your own status line, it stays; the usage numbers then come from the "/usage" check instead. New Claude Code sessions pick it up.
+Lid Awake first saves a copy of the file as `settings.json.lidawake-backup` (later copies get the date and time added; none is ever overwritten), then adds two hooks (Stop and Notification) and a status line, and changes nothing else. If you already have your own status line, it stays; the usage numbers then come from the "/usage" check instead. New Claude Code sessions pick it up. The hooks assume Claude Code runs them through cmd or Git Bash; with PowerShell they may not work (not checked yet).
 
 **To undo it:** click **Claude alerts and usage from Claude Code…** again (the tick goes), or uninstall Lid Awake: either takes out exactly what Lid Awake added. You can also put the backup copy back yourself.
 

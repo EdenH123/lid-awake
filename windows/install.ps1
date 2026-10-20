@@ -241,7 +241,7 @@ if ($claudeState.Code -eq 0) {
     Show-Ok 'Already set up'
 } elseif ($claudeState.Code -eq 3) {
     Show-Step 'Claude alerts on your phone (optional)'
-    Show-Note "Skipped: Claude Code's settings file (.claude\settings.json in your user folder) isn't valid JSON, so Lid Awake left it alone."
+    Show-Note "Skipped: Claude Code's settings file (.claude\settings.json in your user folder) can't be read (invalid JSON, too big, or an unexpected shape), so Lid Awake left it alone."
 } elseif ($claudeState.Code -eq 1) {
     Show-Step 'Claude alerts on your phone (optional)'
     Show-Note 'Shows your Claude usage after each reply, and alerts your phone when Claude finishes or needs you.'

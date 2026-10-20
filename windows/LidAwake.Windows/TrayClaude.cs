@@ -199,6 +199,18 @@ public sealed class TrayClaude
     // owner asks. Turning it on says what will change first.
     void FlipHooks()
     {
+        try { FlipHooksNow(); }
+        catch (Exception e)
+        {
+            // Never WinForms' own error window: a plain message, and nothing else happens.
+            try { MessageBox.Show("Claude Code's settings couldn't be changed: " + e.Message, "Lid Awake", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            catch (Exception) { }
+        }
+        ShowHooks();
+    }
+
+    void FlipHooksNow()
+    {
         bool on = claudeSettings.State() == ClaudeSettingsFile.Setup.On;
         ClaudeSettingsFile.Result r;
         if (!on)
@@ -221,6 +233,5 @@ public sealed class TrayClaude
             if (r.Ok && r.Changed) log("Took Lid Awake out of Claude Code's settings");
         }
         MessageBox.Show(r.Message, "Lid Awake", MessageBoxButtons.OK, r.Ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-        ShowHooks();
     }
 }

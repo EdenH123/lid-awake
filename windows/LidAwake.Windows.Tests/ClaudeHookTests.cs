@@ -42,6 +42,10 @@ public class ClaudeHookTests : IDisposable
     {
         var events = Path.Combine(NewFolder(), "claude-events");
         var json = "{\"hook_event_name\":\"Stop\",\"session_id\":\"abc\"}";
+        // No folder yet (the tray makes it at start): nothing is written, and still 0.
+        Assert.Equal(0, ClaudeHook.Run(new[] { ClaudeHook.EventFlag }, () => Input(json), () => new MemoryStream(), events, "unused", new ClaudeSettingsFile(), Exe));
+        Assert.False(Directory.Exists(events));
+        ClaudeHook.EnsurePrivateFolder(events);
         var code = ClaudeHook.Run(new[] { ClaudeHook.EventFlag }, () => Input(json), () => new MemoryStream(), events, "unused", new ClaudeSettingsFile(Path.Combine(NewFolder(), "s.json")), Exe);
         Assert.Equal(0, code);
         var file = Assert.Single(Directory.GetFiles(events));
@@ -109,6 +113,12 @@ public class ClaudeHookTests : IDisposable
             return;
         }
         var marker = "test-" + Guid.NewGuid().ToString("N");
+        // The folder the tray makes at start; taken away again if this test made it.
+        var parent = Path.GetDirectoryName(ClaudeAlerts.DefaultFolder)!;
+        bool hadParent = Directory.Exists(parent), hadFolder = Directory.Exists(ClaudeAlerts.DefaultFolder);
+        ClaudeHook.EnsurePrivateFolder(ClaudeAlerts.DefaultFolder);
+        try
+        {
         var info = new ProcessStartInfo(exe, ClaudeHook.EventFlag) { RedirectStandardInput = true, UseShellExecute = false, CreateNoWindow = true };
         using var p = Process.Start(info)!;
         p.StandardInput.Write("{\"hook_event_name\":\"Test\",\"session_id\":\"" + marker + "\"}");
@@ -118,6 +128,16 @@ public class ClaudeHookTests : IDisposable
         var written = Directory.GetFiles(ClaudeAlerts.DefaultFolder, "*.json").Where(f => File.ReadAllText(f).Contains(marker)).ToList();
         Assert.Single(written);
         foreach (var f in written) File.Delete(f);
+        }
+        finally
+        {
+            try
+            {
+                if (!hadFolder) Directory.Delete(ClaudeAlerts.DefaultFolder, true);
+                if (!hadParent) Directory.Delete(parent, false);
+            }
+            catch (Exception) { }
+        }
     }
 
     // ---- --claude-statusline ----
@@ -232,12 +252,12 @@ public class ClaudeHookTests : IDisposable
         File.WriteAllText(path, Theirs);
         var file = new ClaudeSettingsFile(path);
         file.Install(Exe);
-        var moved = file.Update(Moved);
+        var moved = file.Update(Moved, installed: Moved);
         Assert.True(moved.Changed);
         var root = Load(path);
         Assert.Equal(new[] { "say done", "\"D:/Apps/LidAwake/LidAwake.exe\" --claude-event" }, Commands(root, "Stop"));
         Assert.Equal("my-line.sh", (string)root["statusLine"]!["command"]!);
-        Assert.False(file.Update(Moved).Changed);
+        Assert.False(file.Update(Moved, installed: Moved).Changed);
 
         // Turned on again from the new place: still one of ours per event.
         file.Install(Exe);
@@ -246,7 +266,7 @@ public class ClaudeHookTests : IDisposable
         // Update never adds what the owner took out.
         var bare = Path.Combine(NewFolder(), "settings.json");
         File.WriteAllText(bare, Theirs);
-        Assert.False(new ClaudeSettingsFile(bare).Update(Moved).Changed);
+        Assert.False(new ClaudeSettingsFile(bare).Update(Moved, installed: Moved).Changed);
         Assert.Equal(Theirs, File.ReadAllText(bare));
     }
 
@@ -256,6 +276,8 @@ public class ClaudeHookTests : IDisposable
     [InlineData("[1, 2]")]
     [InlineData("{\"hooks\": []}")]
     [InlineData("{\"hooks\": {\"Stop\": {}}}")]
+    [InlineData("{\"model\": \"opus\", \"model\": \"sonnet\"}")]
+    [InlineData("{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"type\": \"x\"}]}]}}")]
     public void AFileThatIsntPlainJsonIsLeftAlone(string text)
     {
         var path = Path.Combine(NewFolder(), "settings.json");
@@ -265,7 +287,7 @@ public class ClaudeHookTests : IDisposable
         Assert.False(on.Ok);
         Assert.Contains("left", on.Message);
         Assert.False(file.Remove().Ok);
-        Assert.False(file.Update(Moved).Ok);
+        Assert.False(file.Update(Moved, installed: Moved).Ok);
         Assert.Equal(ClaudeSettingsFile.Setup.Unreadable, file.State());
         Assert.Equal(text, File.ReadAllText(path));
         Assert.False(File.Exists(path + ClaudeSettingsFile.BackupSuffix));
@@ -308,5 +330,119 @@ public class ClaudeHookTests : IDisposable
         var output = new MemoryStream();
         Assert.Equal(ClaudeHook.Refused, ClaudeHook.Run(new[] { ClaudeHook.SetupFlag, "off" }, () => new MemoryStream(), () => output, "unused", "unused", file, Exe));
         Assert.Contains("isn't valid JSON", Encoding.UTF8.GetString(output.ToArray()));
+    }
+    [Fact]
+    public void AFileThatIsntUtf8IsLeftAlone()
+    {
+        var path = Path.Combine(NewFolder(), "settings.json");
+        var bytes = new byte[] { (byte)'{', (byte)'"', (byte)'m', (byte)'"', (byte)':', (byte)'"', 0xC3, 0x28, (byte)'"', (byte)'}' };
+        File.WriteAllBytes(path, bytes);
+        var file = new ClaudeSettingsFile(path);
+        var r = file.Install(Exe);
+        Assert.False(r.Ok);
+        Assert.Contains("UTF-8", r.Message);
+        Assert.Equal(ClaudeSettingsFile.Setup.Unreadable, file.State());
+        Assert.Equal(bytes, File.ReadAllBytes(path));
+        // A byte-order mark is fine.
+        File.WriteAllBytes(path, new byte[] { 0xEF, 0xBB, 0xBF }.Concat(Encoding.UTF8.GetBytes("{\"model\":\"opus\"}")).ToArray());
+        Assert.True(file.Install(Exe).Ok);
+    }
+
+    // Only the exact form "<...\LidAwake.exe>" --flag is ours: an owner's wrapper or another
+    // tool's hook that mentions the flag stays, whatever Lid Awake does.
+    const string Wrapper = """
+        {
+          "hooks": {
+            "Stop": [ { "hooks": [
+              { "type": "command", "command": "C:/tools/notify.cmd --claude-event" },
+              { "type": "command", "command": "\"C:/Users/me/AppData/Local/LidAwake/LidAwake.exe\" --claude-event --verbose" },
+              { "type": "command", "command": "\"C:/Users/me/OtherAwake.exe\" --claude-event" }
+            ] } ]
+          },
+          "statusLine": { "type": "command", "command": "my-line.cmd --claude-statusline" }
+        }
+        """;
+
+    [Fact]
+    public void AWrapperThatMentionsTheFlagIsNeverOurs()
+    {
+        var path = Path.Combine(NewFolder(), "settings.json");
+        File.WriteAllText(path, Wrapper);
+        var file = new ClaudeSettingsFile(path);
+        Assert.Equal(ClaudeSettingsFile.Setup.Off, file.State());
+        Assert.False(file.Update(Moved, installed: Moved).Changed);
+        Assert.False(file.Remove().Changed);
+        Assert.Equal(Wrapper, File.ReadAllText(path));
+
+        var on = file.Install(Exe);
+        Assert.True(on.Changed);
+        Assert.True(on.TheirStatusLine);
+        var root = Load(path);
+        Assert.Equal(new[] { "C:/tools/notify.cmd --claude-event", "\"C:/Users/me/AppData/Local/LidAwake/LidAwake.exe\" --claude-event --verbose",
+                             "\"C:/Users/me/OtherAwake.exe\" --claude-event", OurEvent }, Commands(root, "Stop"));
+        Assert.Equal("my-line.cmd --claude-statusline", (string)root["statusLine"]!["command"]!);
+        file.Update(Moved, installed: Moved);
+        Assert.Equal(3, Commands(Load(path), "Stop").Count(c => !c.StartsWith("\"D:/", StringComparison.Ordinal)));
+        file.Remove();
+        Assert.Equal(Same(Wrapper), Load(path).ToJsonString());
+    }
+
+    [Fact]
+    public void ABackupIsNeverOverwritten()
+    {
+        var path = Path.Combine(NewFolder(), "settings.json");
+        File.WriteAllText(path, Theirs);
+        var clock = new DateTime(2026, 10, 20, 14, 5, 9);
+        var file = new ClaudeSettingsFile(path, () => clock);
+        var first = file.Install(Exe);
+        Assert.Contains(path + ClaudeSettingsFile.BackupSuffix + ")", first.Message);
+        file.Remove();
+        var again = file.Install(Exe);
+        // The very first copy is still the owner's original file.
+        Assert.Equal(Theirs, File.ReadAllText(path + ClaudeSettingsFile.BackupSuffix));
+        var stamped = path + ClaudeSettingsFile.BackupSuffix + "-20261020-140509";
+        Assert.True(File.Exists(stamped));          // before "off"
+        Assert.True(File.Exists(stamped + "-2"));   // before "on" again, the same second
+        Assert.Contains(stamped + "-2", again.Message);
+        Assert.DoesNotContain(OurEvent, File.ReadAllText(stamped + "-2"));
+    }
+
+    [Fact]
+    public void NoBackupIsNamedWhenThereWasNoFile()
+    {
+        var path = Path.Combine(NewFolder(), "settings.json");
+        var r = new ClaudeSettingsFile(path).Install(Exe);
+        Assert.True(r.Changed);
+        Assert.DoesNotContain("copy", r.Message);
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*" + ClaudeSettingsFile.BackupSuffix + "*"));
+    }
+
+    [Fact]
+    public void OnlyTheInstalledLidAwakeTakesOurEntriesAtStart()
+    {
+        var path = Path.Combine(NewFolder(), "settings.json");
+        File.WriteAllText(path, Theirs);
+        var file = new ClaudeSettingsFile(path);
+        file.Install(Exe);
+        var before = File.ReadAllText(path);
+        // A build or a ZIP copy somewhere else.
+        var r = file.Update(@"C:\Users\me\Downloads\LidAwake-Windows\windows\app\LidAwake.exe", installed: Exe);
+        Assert.True(r.Ok);
+        Assert.False(r.Changed);
+        Assert.Equal(before, File.ReadAllText(path));
+        // The installed copy, moved: ours follow, after a backup of the file as it was.
+        var backups = Directory.GetFiles(Path.GetDirectoryName(path)!, "*" + ClaudeSettingsFile.BackupSuffix + "*").Length;
+        Assert.True(file.Update(Moved, installed: Moved).Changed);
+        Assert.Equal(backups + 1, Directory.GetFiles(Path.GetDirectoryName(path)!, "*" + ClaudeSettingsFile.BackupSuffix + "*").Length);
+        Assert.Equal(new[] { "say done", "\"D:/Apps/LidAwake/LidAwake.exe\" --claude-event" }, Commands(Load(path), "Stop"));
+    }
+
+    [Fact]
+    public void TheStatusLineSavesNothingWithoutLidAwakesFolder()
+    {
+        var usageFile = Path.Combine(NewFolder(), "not-there", ClaudeUsage.FileName);
+        var line = ClaudeHook.StatusLine(Encoding.UTF8.GetBytes("{\"rate_limits\":{\"five_hour\":{\"used_percentage\":12}}}"), usageFile, DateTimeOffset.UtcNow);
+        Assert.Equal("Claude · session 12%", line);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(usageFile)));
     }
 }

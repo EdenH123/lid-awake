@@ -58,10 +58,14 @@ public sealed class ClaudeAlerts : IDisposable
         this.log = log;
     }
 
+    // A hook stopped half-way leaves its .tmp file: gone after a minute.
+    public static readonly TimeSpan StaleTemp = TimeSpan.FromMinutes(1);
+
     public void Start()
     {
         try { ClaudeHook.EnsurePrivateFolder(folder); }
         catch (Exception) { }
+        DeleteStaleTemp();
         timer = new System.Threading.Timer(_ => Scan(), null, ScanEvery, ScanEvery);
     }
 
@@ -74,6 +78,7 @@ public sealed class ClaudeAlerts : IDisposable
         if (Interlocked.Exchange(ref scanning, 1) == 1) return;
         try
         {
+            DeleteStaleTemp();
             string[] files;
             try
             {
@@ -100,6 +105,22 @@ public sealed class ClaudeAlerts : IDisposable
             }
         }
         finally { Volatile.Write(ref scanning, 0); }
+    }
+
+    void DeleteStaleTemp()
+    {
+        try
+        {
+            foreach (var tmp in Directory.GetFiles(folder, "*.tmp"))
+            {
+                try
+                {
+                    if (now() - new DateTimeOffset(File.GetLastWriteTimeUtc(tmp), TimeSpan.Zero) > StaleTemp) File.Delete(tmp);
+                }
+                catch (Exception) { }
+            }
+        }
+        catch (Exception) { }
     }
 
     // One event, as on the Mac. Returns what was decided (for the tests).
@@ -176,8 +197,15 @@ public sealed class ClaudeAlerts : IDisposable
         if (string.IsNullOrEmpty(path)) return null;
         try
         {
+            // First the path as written: a full local path under .claude\projects, never a network
+            // path or a device one (\\server, \\.\, \\?\), before anything is opened.
+            if (!Path.IsPathFullyQualified(path) || path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal)) return null;
+            var written = Path.GetFullPath(path);
+            var projectsFull = Path.GetFullPath(projects).TrimEnd('\\') + "\\";
+            if (!written.StartsWith(projectsFull, StringComparison.OrdinalIgnoreCase)) return null;
+            // Then where it really is, from the open handle (links followed).
             if (FinalPath.Of(projects, directory: true) is not { } root) return null;
-            using var handle = FinalPath.Open(path, out var real);
+            using var handle = FinalPath.Open(written, out var real);
             if (handle == null || real == null) return null;
             if (!real.StartsWith(root.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)
                 || !real.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)) return null;

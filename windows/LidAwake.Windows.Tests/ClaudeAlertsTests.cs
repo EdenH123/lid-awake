@@ -151,7 +151,13 @@ public class ClaudeAlertsTests : IDisposable
         var sneaky = Path.Combine(projects, "..", Path.GetFileName(Path.GetDirectoryName(outside)!));
         var notJsonl = Path.ChangeExtension(Transcript(Path.Combine(projects, "x"), "Hidden."), ".txt");
         File.Move(Path.ChangeExtension(notJsonl, ".jsonl"), notJsonl);
-        foreach (var path in new[] { outside, Path.Combine(sneaky, Path.GetFileName(outside)), notJsonl, Path.Combine(projects, "missing.jsonl") })
+        // A network or device path is refused as written, before anything is opened, even one that
+        // names the right file.
+        var unc = @"\\localhost\" + inside[0] + "$" + inside[2..];
+        var device = @"\\?\" + inside;
+        var dotDevice = @"\\.\" + inside;
+        foreach (var path in new[] { outside, Path.Combine(sneaky, Path.GetFileName(outside)), notJsonl, Path.Combine(projects, "missing.jsonl"),
+                                     unc, device, dotDevice, "relative\\x.jsonl" })
         {
             now = now.AddMinutes(1);
             alerts.Handle(Event(Stop("a", path)));
@@ -189,6 +195,10 @@ public class ClaudeAlertsTests : IDisposable
         File.WriteAllText(Path.Combine(events, "5.json"), "broken");
         var unfinished = Path.Combine(events, "6.tmp");
         File.WriteAllText(unfinished, JsonSerializer.Serialize(Stop("tmp")));
+        // A hook stopped half-way a while ago: its .tmp goes.
+        var leftOver = Path.Combine(events, "7.tmp");
+        File.WriteAllText(leftOver, "{");
+        File.SetLastWriteTimeUtc(leftOver, DateTime.UtcNow.AddMinutes(-2));
 
         Alerts().Scan();
         Assert.Equal(("Claude finished", "lid-awake is done."), Assert.Single(sent));
