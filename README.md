@@ -67,6 +67,7 @@ Tailscale is a free app that creates a private, encrypted connection between you
 4. A Terminal window opens and the installer starts. It checks your Mac step by step and shows a green ✓ for each step.
 5. When you see **Password:**, type your Mac login password and press **Return**.
    *Nothing appears while you type. That's normal.*
+6. If you use **Claude Code**, the last step asks about **Claude alerts on your phone (optional)**. Press **Return** to turn it on: your phone then shows your Claude usage after each reply and alerts you when Claude finishes or needs you. It adds Lid Awake to Claude Code's settings and backs them up first (to `~/.claude/settings.json.lidawake-backup`). Type **n** to skip it. To undo it later, run `python3 tools/claude/setup.py off` in the Lid Awake folder, or use the uninstaller.
 
 **If a step shows a red ✗**, it tells you exactly what to do (for example "Sign in to Tailscale"). Do it, then open **Install Lid Awake** again. It continues where it stopped.
 
@@ -243,6 +244,8 @@ Download the new version (Step 2) and open **Install Lid Awake** again. Your pas
 ## Remove Lid Awake
 
 Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks whether to also delete your settings.
+
+If you turned on **Claude alerts on your phone**, the uninstaller also takes Lid Awake out of Claude Code's settings and removes its two scripts, leaving the rest of your Claude Code settings as they are. To undo only that part and keep Lid Awake, open Terminal in the Lid Awake folder and run `python3 tools/claude/setup.py off` (`on` turns it back on, `status` shows whether it's on).
 
 ---
 

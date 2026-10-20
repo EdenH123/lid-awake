@@ -22,6 +22,17 @@ ok "Sleep back to normal, phone page closed"
 rm -rf "$APP"
 ok "App removed"
 
+# Lid Awake's part of Claude Code, if the installer added it: out of its settings, scripts removed.
+if grep -qs -e "Lid Awake" -e "Application Support/LidAwake" \
+     "$HOME/.claude/hooks/lidawake-claude-event.sh" "$HOME/.claude/statusline-lidawake.py" &&
+   xcode-select -p >/dev/null 2>&1; then
+  if out=$(/usr/bin/python3 tools/claude/setup.py off --quiet 2>&1); then
+    ok "Taken out of Claude Code's settings"
+  else
+    printf '  \033[31m✗\033[0m %s\n' "$out"
+  fi
+fi
+
 if [ -f /etc/sudoers.d/lidawake ]; then
   printf '    Removing the keep-awake permission needs your Mac password:\n'
   sudo rm -f /etc/sudoers.d/lidawake && ok "Keep-awake permission removed"
