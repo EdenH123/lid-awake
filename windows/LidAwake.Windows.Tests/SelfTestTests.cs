@@ -51,7 +51,7 @@ public class SelfTestTests : IDisposable
     public void WhenEverythingWorksEveryLineIsTickedAndTheExitCodeIsZero()
     {
         var results = SelfTest.Run(Good());
-        Assert.All(results, r => Assert.Equal(CheckState.Pass, r.State));
+        Assert.All(results, r => Assert.Equal(CheckOutcome.Pass, r.State));
         Assert.Equal(0, SelfTest.ExitCode(results));
         Assert.Equal("✓ Tailscale HTTPS name: pc.tail1234.ts.net", Line(results, "Tailscale HTTPS name").Line);
         Assert.Equal("✓ Phone page port 8787: free for Lid Awake (it isn't running)", Line(results, "Phone page port 8787").Line);
@@ -113,7 +113,7 @@ public class SelfTestTests : IDisposable
                                      "Temperature", "Camera", "Microphone", "Claude Code" })
         {
             var r = Line(results, name);
-            Assert.Equal(CheckState.NotHere, r.State);
+            Assert.Equal(CheckOutcome.NotHere, r.State);
             Assert.StartsWith("– " + name + ": not on this PC", r.Line);
         }
         Assert.Equal("– Battery: not on this PC (no battery)", Line(results, "Battery").Line);
@@ -136,8 +136,8 @@ public class SelfTestTests : IDisposable
         Assert.Equal(0, SelfTest.ExitCode(results));
         Assert.Equal("✗ H.264 encoder: none works, so the phone gets still pictures instead of video: No H.264 encoder on this PC. (optional)",
             Line(results, "H.264 encoder").Line);
-        Assert.Equal(CheckState.Fail, Line(results, "Camera").State);
-        Assert.Equal(CheckState.Fail, Line(results, "Microphone").State);
+        Assert.Equal(CheckOutcome.Fail, Line(results, "Camera").State);
+        Assert.Equal(CheckOutcome.Fail, Line(results, "Microphone").State);
         Assert.Contains("All required checks passed. 3 optional checks didn't pass.", SelfTest.Report(results, DateTimeOffset.Now));
     }
 
@@ -158,7 +158,7 @@ public class SelfTestTests : IDisposable
         Assert.Equal("✗ Tailscale signed in: it didn't answer in time", Line(results, "Tailscale signed in").Line);
         Assert.StartsWith("✗ Phone page port 8787: can't be used: An attempt was made", Line(results, "Phone page port 8787").Line);
         Assert.Equal("✗ Lid setting (powercfg): powercfg couldn't read what closing the lid does", Line(results, "Lid setting (powercfg)").Line);
-        Assert.Equal(CheckState.Fail, Line(results, "Memory").State);
+        Assert.Equal(CheckOutcome.Fail, Line(results, "Memory").State);
         Assert.Equal("✗ Screen capture: none works: Desktop Duplication unavailable: E_ACCESSDENIED", Line(results, "Screen capture").Line);
     }
 
@@ -222,7 +222,7 @@ public class SelfTestTests : IDisposable
         File.WriteAllText(g.MachineFile, """{"pushKey":"bm90IGEga2V5"}""");
         var results = SelfTest.Run(g);
         Assert.Equal(0, SelfTest.ExitCode(results));
-        Assert.Equal(CheckState.Fail, Line(results, "Phone alerts (Web Push)").State);
+        Assert.Equal(CheckOutcome.Fail, Line(results, "Phone alerts (Web Push)").State);
         Assert.False(Line(results, "Phone alerts (Web Push)").Required);
     }
 

@@ -13,18 +13,18 @@ namespace LidAwake;
 
 // One line of `LidAwake.exe --selftest`. NotHere: this PC doesn't have the thing (no battery, no
 // lid, no Tailscale), which is never a failure. Required: a failure makes the exit code 1.
-public enum CheckState { Pass, Fail, NotHere }
+public enum CheckOutcome { Pass, Fail, NotHere }
 
-public sealed record CheckResult(string Name, CheckState State, string Detail, bool Required)
+public sealed record CheckResult(string Name, CheckOutcome State, string Detail, bool Required)
 {
     public const string PassMark = "✓", FailMark = "✗", NotHereMark = "–";
 
     public string Line => State switch
     {
-        CheckState.Pass => PassMark,
-        CheckState.Fail => FailMark,
+        CheckOutcome.Pass => PassMark,
+        CheckOutcome.Fail => FailMark,
         _ => NotHereMark,
-    } + " " + Name + ": " + Detail + (State == CheckState.Fail && !Required ? " (optional)" : "");
+    } + " " + Name + ": " + Detail + (State == CheckOutcome.Fail && !Required ? " (optional)" : "");
 }
 
 // Who holds one of Lid Awake's ports on 127.0.0.1: nobody (Free), a program (its process name and
@@ -154,7 +154,7 @@ public static class SelfTest
 
     // 0 when no required check failed, else 1.
     public static int ExitCode(IEnumerable<CheckResult> results) =>
-        results.Any(r => r.Required && r.State == CheckState.Fail) ? 1 : 0;
+        results.Any(r => r.Required && r.State == CheckOutcome.Fail) ? 1 : 0;
 
     public static string Report(IReadOnlyList<CheckResult> results, DateTimeOffset now)
     {
@@ -165,8 +165,8 @@ public static class SelfTest
         sb.Append('\n');
         foreach (var r in results) sb.Append(r.Line).Append('\n');
         sb.Append('\n');
-        var failed = results.Where(r => r.Required && r.State == CheckState.Fail).Select(r => r.Name).ToList();
-        int optional = results.Count(r => !r.Required && r.State == CheckState.Fail);
+        var failed = results.Where(r => r.Required && r.State == CheckOutcome.Fail).Select(r => r.Name).ToList();
+        int optional = results.Count(r => !r.Required && r.State == CheckOutcome.Fail);
         sb.Append(failed.Count == 0
             ? "All required checks passed."
             : $"{failed.Count} required {(failed.Count == 1 ? "check" : "checks")} failed: {string.Join(", ", failed)}.");
@@ -191,26 +191,26 @@ public static class SelfTest
     {
         if (!File.Exists(path))
         {
-            results.Add(new(name, CheckState.Pass, "not made yet (Lid Awake makes it when it needs it)", true));
+            results.Add(new(name, CheckOutcome.Pass, "not made yet (Lid Awake makes it when it needs it)", true));
             return null;
         }
         try
         {
             if (JsonNode.Parse(File.ReadAllText(path)) is not JsonObject o)
             {
-                results.Add(new(name, CheckState.Fail, "damaged: not a JSON object; Lid Awake sets it aside and starts afresh", true));
+                results.Add(new(name, CheckOutcome.Fail, "damaged: not a JSON object; Lid Awake sets it aside and starts afresh", true));
                 return null;
             }
-            results.Add(new(name, CheckState.Pass, $"readable, {o.Count} {(o.Count == 1 ? "value" : "values")}", true));
+            results.Add(new(name, CheckOutcome.Pass, $"readable, {o.Count} {(o.Count == 1 ? "value" : "values")}", true));
             return o;
         }
         catch (JsonException)
         {
-            results.Add(new(name, CheckState.Fail, "damaged: not valid JSON; Lid Awake sets it aside and starts afresh", true));
+            results.Add(new(name, CheckOutcome.Fail, "damaged: not valid JSON; Lid Awake sets it aside and starts afresh", true));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            results.Add(new(name, CheckState.Fail, "can't be read: " + e.Message, true));
+            results.Add(new(name, CheckOutcome.Fail, "can't be read: " + e.Message, true));
         }
         return null;
     }
@@ -221,26 +221,26 @@ public static class SelfTest
         var (state, name, backend) = Tailnet.ReadSetup(status);
         if (!state.Installed)
         {
-            results.Add(new(Installed, CheckState.NotHere, "not on this PC (install it from tailscale.com: the phone reaches the PC through it)", true));
-            results.Add(new(SignedIn, CheckState.NotHere, "not on this PC (needs Tailscale)", true));
-            results.Add(new(Https, CheckState.NotHere, "not on this PC (needs Tailscale)", true));
+            results.Add(new(Installed, CheckOutcome.NotHere, "not on this PC (install it from tailscale.com: the phone reaches the PC through it)", true));
+            results.Add(new(SignedIn, CheckOutcome.NotHere, "not on this PC (needs Tailscale)", true));
+            results.Add(new(Https, CheckOutcome.NotHere, "not on this PC (needs Tailscale)", true));
             return;
         }
-        results.Add(new(Installed, CheckState.Pass, "yes", true));
+        results.Add(new(Installed, CheckOutcome.Pass, "yes", true));
         if (!status.Ok)
         {
             var why = status.TimedOut ? "it didn't answer in time" : "it didn't answer; is it running?";
-            results.Add(new(SignedIn, CheckState.Fail, why, true));
-            results.Add(new(Https, CheckState.Fail, "unknown (" + why + ")", true));
+            results.Add(new(SignedIn, CheckOutcome.Fail, why, true));
+            results.Add(new(Https, CheckOutcome.Fail, "unknown (" + why + ")", true));
             return;
         }
         var said = StayAwakeLog.Clean(backend) ?? "nothing";
         results.Add(state.SignedIn
-            ? new CheckResult(SignedIn, CheckState.Pass, "yes", true)
-            : new CheckResult(SignedIn, CheckState.Fail, $"no (Tailscale says {said}): open Tailscale and sign in", true));
-        if (state.HttpsOn && name != null) results.Add(new(Https, CheckState.Pass, name, true));
-        else if (!state.SignedIn) results.Add(new(Https, CheckState.Fail, "unknown until Tailscale is signed in", true));
-        else results.Add(new(Https, CheckState.Fail,
+            ? new CheckResult(SignedIn, CheckOutcome.Pass, "yes", true)
+            : new CheckResult(SignedIn, CheckOutcome.Fail, $"no (Tailscale says {said}): open Tailscale and sign in", true));
+        if (state.HttpsOn && name != null) results.Add(new(Https, CheckOutcome.Pass, name, true));
+        else if (!state.SignedIn) results.Add(new(Https, CheckOutcome.Fail, "unknown until Tailscale is signed in", true));
+        else results.Add(new(Https, CheckOutcome.Fail,
             "HTTPS certificates are off for your tailnet: turn on MagicDNS and HTTPS Certificates in Tailscale's admin console (DNS)", true));
     }
 
@@ -250,15 +250,15 @@ public static class SelfTest
         PortUse use;
         try { use = probe(port); }
         catch (Exception e) { use = new PortUse(false, Problem: e.Message); }
-        if (use.Free) return new(name, CheckState.Pass, "free for Lid Awake (it isn't running)", true);
+        if (use.Free) return new(name, CheckOutcome.Pass, "free for Lid Awake (it isn't running)", true);
         if (use.Owner is { } owner)
         {
             bool ours = string.Equals(owner, "LidAwake", StringComparison.OrdinalIgnoreCase);
             return ours
-                ? new CheckResult(name, CheckState.Pass, "in use by Lid Awake (it's running)", true)
-                : new CheckResult(name, CheckState.Fail, $"in use by another program ({owner}); Lid Awake needs it", true);
+                ? new CheckResult(name, CheckOutcome.Pass, "in use by Lid Awake (it's running)", true)
+                : new CheckResult(name, CheckOutcome.Fail, $"in use by another program ({owner}); Lid Awake needs it", true);
         }
-        return new(name, CheckState.Fail, "can't be used: " + (use.Problem ?? "Windows refused it"), true);
+        return new(name, CheckOutcome.Fail, "can't be used: " + (use.Problem ?? "Windows refused it"), true);
     }
 
     public static string LidActionName(int value) => value switch
@@ -278,20 +278,20 @@ public static class SelfTest
             var detail = $"closing the lid: {LidActionName(a.ac)} when plugged in, {LidActionName(a.dc)} on battery";
             if (machine?["savedLidAc"] is JsonValue) detail += "; Lid Awake has changed it (it's on, or it stopped without putting it back: starting it puts it back)";
             if (hasLid == false) detail += "; this PC has no lid";
-            return new(Name, CheckState.Pass, detail, true);
+            return new(Name, CheckOutcome.Pass, detail, true);
         }
-        if (hasLid == false) return new(Name, CheckState.NotHere, "not on this PC (no lid)", true);
-        return new(Name, CheckState.Fail, "powercfg couldn't read what closing the lid does", true);
+        if (hasLid == false) return new(Name, CheckOutcome.NotHere, "not on this PC (no lid)", true);
+        return new(Name, CheckOutcome.Fail, "powercfg couldn't read what closing the lid does", true);
     }
 
     static CheckResult Battery(PowerReading? power, BatteryCharge? charge)
     {
         const string Name = "Battery";
-        if (power is not { } p) return new(Name, CheckState.Fail, "Windows didn't say", false);
-        if ((p.BatteryFlag & 128) != 0) return new(Name, CheckState.NotHere, "not on this PC (no battery)", false);
-        if (!StatusInfo.HasBattery(p)) return new(Name, CheckState.NotHere, "not on this PC (Windows can't tell the battery's state)", false);
+        if (power is not { } p) return new(Name, CheckOutcome.Fail, "Windows didn't say", false);
+        if ((p.BatteryFlag & 128) != 0) return new(Name, CheckOutcome.NotHere, "not on this PC (no battery)", false);
+        if (!StatusInfo.HasBattery(p)) return new(Name, CheckOutcome.NotHere, "not on this PC (Windows can't tell the battery's state)", false);
         int toFull = TrayText.MinutesToFull(charge);
-        return new(Name, CheckState.Pass, TrayText.InfoLine(p, null, toFull), false);
+        return new(Name, CheckOutcome.Pass, TrayText.InfoLine(p, null, toFull), false);
     }
 
     static string Celsius(double c) => TemperatureMath.OneDecimal(c).ToString("0.0", CultureInfo.InvariantCulture) + " °C";
@@ -304,42 +304,42 @@ public static class SelfTest
         if (t.Zone is { } z) parts.Add("PC " + Celsius(z));
         if (zones?.Hottest is { } h) parts.Add("thermal zones " + Celsius(h));
         if (parts.Count == 0)
-            return new(Name, CheckState.NotHere, "not on this PC (no sensor Windows lets Lid Awake read; the heat limit is greyed out)", false);
+            return new(Name, CheckOutcome.NotHere, "not on this PC (no sensor Windows lets Lid Awake read; the heat limit is greyed out)", false);
         parts.Add("state " + ThermalState.Name(t.Zone, zones));
-        return new(Name, CheckState.Pass, string.Join(", ", parts), false);
+        return new(Name, CheckOutcome.Pass, string.Join(", ", parts), false);
     }
 
     static CheckResult Memory(MemoryReading? m)
     {
         const string Name = "Memory";
-        if (m is not { } r || r.Total == 0) return new(Name, CheckState.Fail, "Windows didn't say how much memory there is", true);
+        if (m is not { } r || r.Total == 0) return new(Name, CheckOutcome.Fail, "Windows didn't say how much memory there is", true);
         double gb = 1 << 30;
         var used = (r.Total - Math.Min(r.Available, r.Total)) / gb;
-        return new(Name, CheckState.Pass,
+        return new(Name, CheckOutcome.Pass,
             $"{used.ToString("0.0", CultureInfo.InvariantCulture)} of {(r.Total / gb).ToString("0.0", CultureInfo.InvariantCulture)} GB used", true);
     }
 
     static CheckResult Screen((string? Kind, int Width, int Height, string? Problem) s)
     {
         const string Name = "Screen capture";
-        if (s.Kind == null) return new(Name, CheckState.Fail, "none works: " + (s.Problem ?? "unknown"), true);
-        return new(Name, CheckState.Pass, $"{s.Kind}, {s.Width}x{s.Height}", true);
+        if (s.Kind == null) return new(Name, CheckOutcome.Fail, "none works: " + (s.Problem ?? "unknown"), true);
+        return new(Name, CheckOutcome.Pass, $"{s.Kind}, {s.Width}x{s.Height}", true);
     }
 
     static CheckResult Encoder((string? Name, bool Hardware, string? Problem) e, bool hardwareAllowed)
     {
         const string Name = "H.264 encoder";
         if (e.Name == null)
-            return new(Name, CheckState.Fail, "none works, so the phone gets still pictures instead of video: " + (e.Problem ?? "unknown"), false);
+            return new(Name, CheckOutcome.Fail, "none works, so the phone gets still pictures instead of video: " + (e.Problem ?? "unknown"), false);
         var kind = e.Hardware ? "the graphics card's" : hardwareAllowed ? "Windows' own (software)" : "Windows' own (software, as settings.json asks)";
-        return new(Name, CheckState.Pass, $"{e.Name}, {kind}", false);
+        return new(Name, CheckOutcome.Pass, $"{e.Name}, {kind}", false);
     }
 
     static CheckResult Devices(string name, IReadOnlyList<string>? found, string none, string unknown)
     {
-        if (found == null) return new(name, CheckState.Fail, unknown, false);
-        if (found.Count == 0) return new(name, CheckState.NotHere, $"not on this PC ({none})", false);
-        return new(name, CheckState.Pass, string.Join(", ", found.Select(n => AccessLog.Clean(n)).Take(4))
+        if (found == null) return new(name, CheckOutcome.Fail, unknown, false);
+        if (found.Count == 0) return new(name, CheckOutcome.NotHere, $"not on this PC ({none})", false);
+        return new(name, CheckOutcome.Pass, string.Join(", ", found.Select(n => AccessLog.Clean(n)).Take(4))
             + (found.Count > 4 ? $" and {found.Count - 4} more" : ""), false);
     }
 
@@ -347,11 +347,11 @@ public static class SelfTest
     {
         const string Name = "Phone alerts (Web Push)";
         var stored = Text(machine?[WebPush.KeyName]);
-        if (string.IsNullOrEmpty(stored)) return new(Name, CheckState.Pass, "no key yet (made when a phone first turns alerts on)", false);
+        if (string.IsNullOrEmpty(stored)) return new(Name, CheckOutcome.Pass, "no key yet (made when a phone first turns alerts on)", false);
         if (!WebPush.KeyWorks(stored))
-            return new(Name, CheckState.Fail, "the stored key is damaged: Lid Awake makes a new one, and each phone must turn alerts on again", false);
+            return new(Name, CheckOutcome.Fail, "the stored key is damaged: Lid Awake makes a new one, and each phone must turn alerts on again", false);
         int phones = machine?[WebPush.ListName] is JsonArray list ? list.Count : 0;
-        return new(Name, CheckState.Pass, $"key present, {phones} {(phones == 1 ? "phone gets" : "phones get")} alerts", false);
+        return new(Name, CheckOutcome.Pass, $"key present, {phones} {(phones == 1 ? "phone gets" : "phones get")} alerts", false);
     }
 
     static CheckResult Claude(int code)
@@ -359,10 +359,10 @@ public static class SelfTest
         const string Name = "Claude Code";
         return code switch
         {
-            ClaudeHook.SetUp => new(Name, CheckState.Pass, "found, alerts and usage set up", false),
-            ClaudeHook.NotSetUp => new(Name, CheckState.Pass, "found, alerts and usage not set up (tray: Claude alerts and usage from Claude Code…)", false),
-            ClaudeHook.NoClaudeCode => new(Name, CheckState.NotHere, "not on this PC", false),
-            _ => new(Name, CheckState.Fail, "its settings file (.claude\\settings.json) can't be read", false),
+            ClaudeHook.SetUp => new(Name, CheckOutcome.Pass, "found, alerts and usage set up", false),
+            ClaudeHook.NotSetUp => new(Name, CheckOutcome.Pass, "found, alerts and usage not set up (tray: Claude alerts and usage from Claude Code…)", false),
+            ClaudeHook.NoClaudeCode => new(Name, CheckOutcome.NotHere, "not on this PC", false),
+            _ => new(Name, CheckOutcome.Fail, "its settings file (.claude\\settings.json) can't be read", false),
         };
     }
 }
