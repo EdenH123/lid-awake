@@ -77,7 +77,9 @@ Public routes (no session needed): `/`, `/auth`, `/login`, `/logout`, `/passkey/
 
 Step 7 runs before step 8, so an unauthenticated POST without the header gets `401`.
 
-Method and path must both match. For example `GET /login` is `404`.
+Method and path must both match for the routes in step 9. For example `GET /login` is `404`.
+
+The exceptions are the paths answered before step 9. The Mac ignores the HTTP method for them: static files (section 3), `/` and `/auth` on the loopback host (2.3), and `/` and `/auth` while off (2.4), so `POST /auth` while off still answers the `off` JSON. The Windows agent answers `/` and static files only to `GET` and `HEAD`, and `/auth` (loopback and off) only to `GET`. Either is acceptable, because the page only sends `GET` there; an agent must answer at least `GET`.
 
 ### 2.3 Host `127.0.0.1` (the Mac's own address)
 
@@ -168,7 +170,7 @@ Content-Security-Policy: default-src 'none'; script-src <hashes>; style-src 'uns
 
 ## 3. Static files
 
-Answered before the "off" check and before sign-in, to any caller that passes steps 1 to 3.
+Answered before the "off" check and before sign-in, to any caller that passes steps 1 to 3. The Mac does not look at the HTTP method for these; an agent must answer at least `GET` (2.2).
 
 | Path | Serves | Content-Type |
 |---|---|---|
@@ -303,11 +305,11 @@ Public. Body: `{"password": "<text>"}`.
 | Answer | When |
 |---|---|
 | `204` + `Set-Cookie` session | password correct |
-| `401` `Wrong password.` | wrong |
-| `429` `Too many wrong tries. Try again in <n> seconds.` | locked out |
+| `401` `Wrong password.` | wrong, and fewer than 5 wrong in a row |
+| `429` `Too many wrong tries. Try again in <n> seconds.` | the 5th wrong try in a row (this try itself starts the lockout), every wrong try after it, or any try while locked out |
 | `409` `No password is set yet.` | no password on the computer |
 
-Lockout: after 5 wrong tries in a row the computer refuses for 60 seconds, then 120, 240, and so on, up to 3600 seconds (1 hour). The count is kept across restarts and is shared with `/passkey/register-options` (which also checks the password). A correct password during a lockout is still `429`. Success, a passkey sign-in or a new password resets it.
+Lockout: the 5th wrong try in a row is itself answered `429` and starts a 60-second lockout; each further wrong try after a lockout ends doubles it (120, 240, and so on, up to 3600 seconds, 1 hour). `<n>` is the seconds left. The count is kept across restarts and is shared with `/passkey/register-options` (which also checks the password). A correct password during a lockout is still `429`. Success, a passkey sign-in or a new password resets it.
 
 Password storage on the Mac: PBKDF2-HMAC-SHA256, 600,000 rounds, 16-byte salt, 32-byte key, constant-time compare. Another agent may use any strong scheme.
 
@@ -348,7 +350,7 @@ The caller's own session is never signed out by this route. An `id` that is not 
 
 `200` JSON `{"lines": ["<time>  <text>", ...]}`: the newest 8 lines, **newest first**. Each line is an ISO 8601 time with offset (for example `2026-10-19T09:30:00+03:00`), then **two spaces**, then the text. The page splits at the first double space; if the time does not parse it shows the row without a time. Control characters are removed from the text and it is cut at 300 characters. The list is empty (`[]`) if there is no log.
 
-The Mac writes the log to `~/Library/Logs/LidAwake-access.log`. What it records: sign-ins, passkey changes, screen viewing started and ended, control used, camera opened and closed, apps opened or quit, locking, screen off.
+The Mac writes the log to `~/Library/Logs/LidAwake-access.log`; Windows writes it to `%LOCALAPPDATA%\LidAwake\LidAwake-access.log` (the previous 1 MB is kept beside it as `.old`). What it records: sign-ins, passkey changes, screen viewing started and ended, control used, camera opened and closed, apps opened or quit, locking, screen off.
 
 #### `POST /awake`
 
@@ -430,8 +432,8 @@ Session needed. Body: `{"password": "<text>"}`. The password is checked again be
 | Answer | When |
 |---|---|
 | `200` `{"challenge": "...", "rpId": "<host>", "ids": ["<credential id>", ...]}` | password correct. Purpose `create`. `ids` lists the stored credential ids so the phone can exclude them |
-| `401` `Wrong password.` | wrong, or no password set |
-| `429` `Too many wrong tries. Try again in <n> seconds.` | locked out (shares the counter with `/login`) |
+| `401` `Wrong password.` | wrong (fewer than 5 wrong in a row), or no password set |
+| `429` `Too many wrong tries. Try again in <n> seconds.` | the 5th wrong try in a row, or any try while locked out (same counter, same answer and same seconds as `/login`; a correct password during a lockout is still `429`) |
 
 #### `POST /passkey/register`
 
@@ -506,12 +508,12 @@ Body: `{"endpoint": "...", "enabled": false}` or `{"endpoint": "...", "off": ["w
 
 | Answer | When |
 |---|---|
-| `204` | `enabled:false` removes the phone. Otherwise `off` replaces that phone's list. An unknown endpoint is ignored |
+| `204` | `enabled:false` removes the phone. Otherwise `off` replaces that phone's whole list, so a body with neither `enabled:false` nor an `off` array (or an `off` that is not a list of strings) **clears** the list and turns every alert back on. Names that are not alert kinds are dropped. An unknown endpoint is ignored |
 | `400` `Missing phone.` | no `endpoint` |
 
 #### Alert kinds
 
-`off` and the push `tag` use these names: `turnedOff`, `lowBattery`, `claudeUsage`, `claudeSession`, `warm`. A sixth kind, `security`, cannot be turned off.
+`off` and the push `tag` use these names: `turnedOff`, `lowBattery`, `claudeUsage`, `claudeSession`, `warm`. A sixth kind, `security`, cannot be turned off: it is accepted in `off` and stored, but sending ignores it, so the phone still gets it.
 
 | Kind | Sent when (Mac) |
 |---|---|
@@ -536,10 +538,10 @@ Query: `id` (required), `size` (optional integer; `512` or more gives 512, anyth
 
 | Answer | When |
 |---|---|
-| `200` `image/png`, square 256x256 or 512x512 | the id is on the list or is open now (the dock) |
+| `200` `image/png`, square 256x256 or 512x512 | the id is on the list, or names any app that is running now. The Mac matches every running app that has a bundle location (`NSRunningApplication.bundleURL`), not only the windowed apps in `otherApps` |
 | `404` `No such app.` | otherwise |
 
-The page also uses this route for icons of the top apps in `/memory` (via their `id`).
+The page also uses this route for icons of the top apps in `/memory` (via their `id`). Such an app is on the list or open in nearly every case; when it is neither the answer is `404` and the page keeps the blank icon.
 
 #### `POST /open-app`
 
@@ -552,7 +554,7 @@ Body: `{"id": "..."}`. Starts the app and brings it to the front. Only apps on t
 
 #### `POST /focus-app`
 
-Body: `{"id": "...", "action": "focus" | "hide" | "quit"}`. `action` defaults to `focus`. Works on any open app (listed or in the dock list `otherApps`) but **cannot start** an app. `focus` shows and fronts it, `hide` hides it, `quit` asks it to quit like the Quit shortcut (it may still ask to save).
+Body: `{"id": "...", "action": "focus" | "hide" | "quit"}`. `action` defaults to `focus`. Works on any running app: the Mac matches every running app that has a bundle location, not only the listed apps and the windowed apps in `otherApps`. It **cannot start** an app. `focus` shows and fronts it, `hide` hides it, `quit` asks it to quit like the Quit shortcut (it may still ask to save).
 
 | Answer | When |
 |---|---|
@@ -645,7 +647,7 @@ Read fresh on every call. The page asks every 2 seconds while the Memory window 
 | `swapUsed` | integer bytes | memory moved to disk |
 | `pressure` | integer 0 to 100 | how hard the system works to find room |
 | `level` | `"normal"`, `"warn"` or `"critical"` | pressure level. The page maps anything else to `normal` |
-| `top` | list | up to 5 programs using the most. Each `{name, bytes, id?}`. `id` is only for apps on the owner's list or open (it makes the page fetch `/app-icon.png?id=`); without it the page draws a blank icon |
+| `top` | list | up to 5 programs using the most. Each `{name, bytes, id?}`. `id` is present for every entry that is an app bundle (its path ends in `.app`), whether or not the owner listed it, and is the same hash of the path as in section 5.6; entries that are not part of an app (a `node` server, say) have none, and the page draws a blank icon. The page fetches `/app-icon.png?id=` for it, which answers `404` when that app is neither on the list nor open (for example a process whose app the system does not list as running), and the icon stays blank |
 | `otherPrograms` | integer bytes | memory of everything readable that is not in `top` |
 
 The page draws a line of `used / total` over the last 2 minutes and shows a row "macOS & system" for the part of `used` not explained by `top` and `otherPrograms` (its label is still Mac wording).
@@ -683,7 +685,9 @@ Body: one input command (section 8). It is the same JSON as a socket input messa
 | `403` `View only: control from the phone is off in the Lid Awake menu on your Mac.` | owner's control switch off |
 | `403` `On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility.` | system control permission missing |
 | `400` `Bad request` | body is not a JSON object |
-| `413` `That's too much text to type at once.` | `text` longer than 2000 characters |
+| `413` `That's too much text to type at once.` | `text` longer than 2000 characters (counted as grapheme clusters, see below) |
+
+**Counting the length.** "At most 2000 characters" counts grapheme clusters, as a user sees characters (the Mac counts Swift `Character`s, `RemoteInput.maxText`). A family emoji or a letter with an accent written as two code points is one. For ordinary text one character is one UTF-16 unit, so counting UTF-16 units agrees; an agent that counts UTF-16 units or code points must not be stricter than 2000 for such text (and counting graphemes is the exact rule).
 
 The page uses this only when the live socket is not open. It sends commands one at a time, in order.
 
@@ -764,17 +768,17 @@ The page hides the Claude section when `claude` is `null` or has neither window.
 
 ### 6.4 Power (omit all of it on a computer with no battery)
 
-These come from `powerInfo()`. On the Mac, a computer with no battery answers `{}` for this group, so every key is absent.
+Every key except `batteryTemp` comes from `powerInfo()`. On the Mac, a computer with no battery answers `{}` for this group, so every key is absent. `batteryTemp` is added separately in `statusJSON` from `batteryTemperature()` (the battery's own sensor, not the power source), so it is present or absent on its own. The last column is what the computer sends when it cannot measure the value.
 
-| Field | Type | Meaning |
-|---|---|---|
-| `battery` | integer 0 to 100 | charge percent. The page shows the battery card only if present |
-| `onBattery` | boolean | running on battery |
-| `charging` | boolean | charging now |
-| `charged` | boolean | fully charged |
-| `minutesToEmpty` | integer | estimate; `-1` = unknown |
-| `minutesToFull` | integer | estimate; `-1` = unknown |
-| `batteryTemp` | number, degrees C, one decimal | battery temperature. Omit if unknown |
+| Field | Type | Meaning | Safe default |
+|---|---|---|---|
+| `battery` | integer 0 to 100 | charge percent. The page shows the battery card only if present | omit (no battery) |
+| `onBattery` | boolean | running on battery | omit when the power source is unknown (the page then shows neither "On battery" nor "Plugged in"); never guess `false` |
+| `charging` | boolean | charging now | `false` |
+| `charged` | boolean | fully charged | `false` |
+| `minutesToEmpty` | integer | estimate; `-1` = unknown | `-1` |
+| `minutesToFull` | integer | estimate; `-1` = unknown | `-1` |
+| `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`) | omit |
 
 ### 6.5 System info
 
@@ -871,7 +875,7 @@ Video and camera layout, byte by byte:
 | Bytes | Content |
 |---|---|
 | 0 | `1`/`2` (screen) or `3`/`4` (camera). Odd-numbered kind (`1`, `3`) means keyframe |
-| 1 to 8 | timestamp in **microseconds**, signed 64-bit integer, **big-endian** |
+| 1 to 8 | timestamp in **microseconds**, signed 64-bit integer, **big-endian**. The epoch is arbitrary: the Mac sends the encoder's presentation time, not the clock time. Any value that increases from frame to frame is fine; the page only passes it to the decoder |
 | 9 to end | one H.264 access unit in **AVCC form**: NAL units each preceded by a 4-byte big-endian length. No Annex B start codes. SPS and PPS are not inside; they come in `description` of the setup message |
 
 Camera sound layout, byte by byte:
@@ -938,9 +942,9 @@ A simpler agent can implement fewer presets or map them to what it can do. The p
 
 ### 7.4 Flow control (what `acks` means)
 
-Without it, a send "completes" when the data is handed to the network, not when the phone has it, so frames pile up on a slow link and the picture falls behind. With `acks: true` the Mac sends at most **two unconfirmed frames**: newer frames replace the one waiting (latest wins). If the phone stops confirming for 3 seconds the count resets so the stream does not freeze. A minimal agent can skip flow control and just send the newest frame whenever the previous send has finished, but it will fall behind on slow links.
+Without it, a send "completes" when the data is handed to the network, not when the phone has it, so frames pile up on a slow link and the picture falls behind. With `acks: true` the **JPEG** path sends at most **two unconfirmed frames**: newer frames replace the one waiting (latest wins). If the phone stops confirming for 3 seconds the count resets so the stream does not freeze. The **video** path allows up to **6 unconfirmed frames**, and only encodes a new frame while fewer than 4 video messages are queued or being sent (the Mac's `Peer.videoReady`); the same 3-second reset applies. A minimal agent can skip flow control and just send the newest frame whenever the previous send has finished, but it will fall behind on slow links.
 
-For video the Mac also holds back new frames while the page is behind, adapts the bitrate to how fast confirmations come back, and restarts from a keyframe if more than 60 messages queue (screen) or 90 (camera). These are quality choices, not part of the contract.
+For video the Mac also holds back new frames while the oldest unconfirmed one is slower than usual, adapts the bitrate to how fast confirmations come back, and restarts from a keyframe if more than 60 messages queue (screen) or 90 (camera). These are quality choices, not part of the contract.
 
 ### 7.5 Camera on the socket
 
@@ -965,7 +969,7 @@ Any message that is not one of the above is treated as an input command (section
 | Lid Awake on and the owner's screen switch on | `Screen access is off.` |
 | owner's control switch on | `View only: control from the phone is off in the Lid Awake menu on your Mac.` |
 | system control permission | `On your Mac, allow Lid Awake in System Settings → Privacy & Security → Accessibility.` |
-| `text` is 2000 characters or fewer | `That's too much text to type at once.` |
+| `text` is 2000 characters or fewer (grapheme clusters, as for `POST /input`) | `That's too much text to type at once.` |
 
 More rules:
 
@@ -993,7 +997,7 @@ One JSON object with a `type`. The same objects are sent as `POST /input` bodies
 | `mouseup` | none | releases the left button. Ignored if already up |
 | `click` | `x`, `y` numbers 0..1 (optional), `button` `"left"` or `"right"` (default left), `count` 1..3 (default 1), `mods` (optional) | moves to the point and clicks. `x` and `y` are fractions of the **main display**, top-left origin, clamped to 0..1. If either is missing, clicks at the pointer. `count` is the click count (2 = double-click). Held modifiers apply to the click |
 | `scroll` | `dx`, `dy` numbers, `x`, `y` optional | scrolls by pixels: `dy` vertical, `dx` horizontal, passed unchanged to a pixel scroll-wheel event. With `x` and `y` the pointer moves there first. The page sends the finger's movement; the content follows the finger (a drag down is a positive `dy`) |
-| `text` | `text` string, at most 2000 characters | types the text, one character at a time, as Unicode (layout-independent) |
+| `text` | `text` string, at most 2000 characters (grapheme clusters, see 5.10) | types the text, one character at a time, as Unicode (layout-independent) |
 | `key` | `key` name **or** `char`, optional `mods` | presses and releases one key with the modifiers held |
 
 `key` names: `return`, `tab`, `space`, `delete` (Backspace), `escape`, `left`, `right`, `down`, `up`. `char` is a single character; it is mapped to a physical key position on a US layout so shortcuts work in any input language. Supported: letters `a`-`z` (an upper-case letter adds Shift), digits `0`-`9`, space, and `= - ] [ ' ; \ , / . `` ` ``. A `char` not in that set, or a `key` name not in the list, is ignored. If both are given, `key` wins when its name is known.
