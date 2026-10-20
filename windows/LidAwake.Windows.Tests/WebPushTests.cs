@@ -387,12 +387,13 @@ public class WebPushTests : IDisposable
         var push = Push();
         var auth = new Auth(new Settings(Path.Combine(folder, "roaming")), iterations: 1000);
         auth.PasswordSet += push.RemoveAll;
+        var key = push.PublicKey;
         Assert.True(push.Subscribe(Fcm + "a", phone.P256dh, phone.AuthText, null, PageHost));
         Assert.True(push.Subscribe(Apple + "b", phone.P256dh, phone.AuthText, null, PageHost));
         auth.SetPassword("correct horse battery");
         Assert.Empty(push.Phones);
         // The key stays: phones subscribe again with the same one.
-        Assert.NotNull(machine.Get<string>(WebPush.KeyName));
+        Assert.Equal(key, new WebPush(machine, service).PublicKey);
     }
 
     // ---- Sending ----
