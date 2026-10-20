@@ -1870,6 +1870,18 @@ Each task gets its own worktree and branch off `claude/windows-phase-3`: `claude
 
 **Tests:** every command's mapping to SendInput structs, through a fake sender (clamps, non-finite → 0, key and char tables, mods order, text with emoji); `/input` and `/power` end to end (204, 400, 403 rules, 413 at 2001 graphemes, with 2000 graphemes of emoji accepted); the rate cap.
 
+### Task 24: Lid closed: the screen on Windows (parallel)
+
+**Contract:** docs/API.md §6 `lidClosed`, `displayAsleep`, `screenOff`, and §7.7 (keeping the screen available). Mac reference: LidScreen.swift, plus how FrameStream.swift reports `lidClosed`.
+
+**What Windows allows (ruling P3-6):** On most laptops, closing the lid turns the built-in panel off at the hardware or driver level. An ordinary app can't override that, and virtual-monitor drivers are out of scope. This task does what Windows allows and reports the rest honestly:
+- **Lid state.** Use `RegisterPowerSettingNotification(GUID_LIDSWITCH_STATE_CHANGE)` on a hidden window. `/status` `lidClosed` comes from it, so the phone's drawing shows the lid. Also send `displayAsleep`, from `GUID_CONSOLE_DISPLAY_STATE` (0 off, 1 on, 2 dimmed).
+- **Display timeout.** While someone watches the screen from the phone, hold `ES_DISPLAY_REQUIRED` so the display doesn't time out. Release it when nobody watches. This coordinates with the screen task via a small `IScreenWatchers` or a callback; at merge, the controller wires it to the live socket's viewer count.
+- **Brightness.** With the lid closed while on: save the brightness and set the lowest level through WMI `root\WMI` `WmiMonitorBrightness` / `WmiMonitorBrightnessMethods.WmiSetBrightness`. Restore it when the lid opens or Lid Awake turns off. Keep the saved value in machine.json, so a crash restores it at the next start. If WMI refuses or there's no internal panel, do nothing and log it once.
+- **Panel off with the lid closed.** When the display state reports off while the lid is closed and someone watches, `/status` says so (`displayAsleep` true), and the README explains it: Windows switches the panel off with the lid closed on many laptops. Open the lid a little, or use an external monitor, to keep the picture. The page already draws the computer dark.
+
+**Tests:** fakes for the lid and display notifications → `/status`; save, lower and restore brightness, including crash recovery from machine.json; ES_DISPLAY_REQUIRED held only while watched (through a fake); WMI failure → no change, one log line.
+
 Remaining Phase 3 features, one task each, in this order:
 
 | Feature | Mac source to port | Windows technology |
