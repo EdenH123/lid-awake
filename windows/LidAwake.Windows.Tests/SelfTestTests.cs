@@ -99,7 +99,7 @@ public class SelfTestTests : IDisposable
         var g = Good();
         var results = SelfTest.Run(new SelfTestProbes
         {
-            TailscaleStatus = () => new Tailnet.CliResult(false, "", Missing: true),
+            TailscaleStatus = g.TailscaleStatus,
             Port = g.Port, SettingsFile = g.SettingsFile, MachineFile = g.MachineFile,
             LidAction = () => null, HasLid = () => false,
             Power = () => new PowerReading(1, 128, 255, -1), Charge = () => new BatteryCharge(Array.Empty<BatteryCell>()),
@@ -109,8 +109,7 @@ public class SelfTestTests : IDisposable
             ClaudeCode = () => ClaudeHook.NoClaudeCode,
         });
         Assert.Equal(0, SelfTest.ExitCode(results));
-        foreach (var name in new[] { "Tailscale installed", "Tailscale signed in", "Tailscale HTTPS name", "Lid setting (powercfg)", "Battery",
-                                     "Temperature", "Camera", "Microphone", "Claude Code" })
+        foreach (var name in new[] { "Lid setting (powercfg)", "Battery", "Temperature", "Camera", "Microphone", "Claude Code" })
         {
             var r = Line(results, name);
             Assert.Equal(CheckOutcome.NotHere, r.State);
@@ -118,6 +117,41 @@ public class SelfTestTests : IDisposable
         }
         Assert.Equal("– Battery: not on this PC (no battery)", Line(results, "Battery").Line);
         Assert.Contains("\nAll required checks passed.\n", SelfTest.Report(results, DateTimeOffset.Now));
+    }
+
+    // Without Tailscale the phone can't reach the PC at all: a required failure, with what to do.
+    [Fact]
+    public void NoTailscaleIsARequiredFailure()
+    {
+        var g = Good();
+        var results = SelfTest.Run(new SelfTestProbes
+        {
+            TailscaleStatus = () => new Tailnet.CliResult(false, "", Missing: true), Port = g.Port, SettingsFile = g.SettingsFile,
+            MachineFile = g.MachineFile, LidAction = g.LidAction, HasLid = g.HasLid, Power = g.Power, Charge = g.Charge,
+            Temperatures = g.Temperatures, Zones = g.Zones, Memory = g.Memory, Screen = g.Screen, Encoder = g.Encoder,
+            Cameras = g.Cameras, Microphones = g.Microphones, ClaudeCode = g.ClaudeCode,
+        });
+        Assert.Equal(1, SelfTest.ExitCode(results));
+        Assert.Equal("✗ Tailscale installed: no; install it from tailscale.com (the phone reaches the PC through it)", Line(results, "Tailscale installed").Line);
+        Assert.Equal("– Tailscale signed in: can't be checked without Tailscale", Line(results, "Tailscale signed in").Line);
+        Assert.Equal("– Tailscale HTTPS name: can't be checked without Tailscale", Line(results, "Tailscale HTTPS name").Line);
+        Assert.Contains("\n1 required check failed: Tailscale installed.\n", SelfTest.Report(results, DateTimeOffset.Now));
+    }
+
+    // A battery whose state Windows can't tell (255) is there, just unknown: not "not on this PC".
+    [Fact]
+    public void ABatteryInAnUnknownStateSaysSo()
+    {
+        var g = Good();
+        var results = SelfTest.Run(new SelfTestProbes
+        {
+            TailscaleStatus = g.TailscaleStatus, Port = g.Port, SettingsFile = g.SettingsFile, MachineFile = g.MachineFile,
+            LidAction = g.LidAction, HasLid = g.HasLid, Power = () => new PowerReading(255, 255, 255, -1), Charge = g.Charge,
+            Temperatures = g.Temperatures, Zones = g.Zones, Memory = g.Memory, Screen = g.Screen, Encoder = g.Encoder,
+            Cameras = g.Cameras, Microphones = g.Microphones, ClaudeCode = g.ClaudeCode,
+        });
+        Assert.Equal(0, SelfTest.ExitCode(results));
+        Assert.Equal("✗ Battery: state unknown (Windows can't tell the battery's state) (optional)", Line(results, "Battery").Line);
     }
 
     [Fact]
@@ -159,6 +193,7 @@ public class SelfTestTests : IDisposable
         Assert.StartsWith("✗ Phone page port 8787: can't be used: An attempt was made", Line(results, "Phone page port 8787").Line);
         Assert.Equal("✗ Lid setting (powercfg): powercfg couldn't read what closing the lid does", Line(results, "Lid setting (powercfg)").Line);
         Assert.Equal(CheckOutcome.Fail, Line(results, "Memory").State);
+        Assert.False(Line(results, "Memory").Required);
         Assert.Equal("✗ Screen capture: none works: Desktop Duplication unavailable: E_ACCESSDENIED", Line(results, "Screen capture").Line);
     }
 
@@ -317,6 +352,23 @@ public class SelfTestTests : IDisposable
         Assert.Equal(Path.Combine(folder, "LidAwake-battery.txt"), Troubleshooting.Save(Troubleshooting.BatteryFlag, "x", folder));
     }
 
+    // The tray shows this run's report only: an older one left from the last run is never taken.
+    [Fact]
+    public void TheTrayShowsOnlyAReportWrittenByThisRun()
+    {
+        var report = Path.Combine(folder, "LidAwake-selftest.txt");
+        File.WriteAllText(report, "last week's report");
+        File.SetLastWriteTimeUtc(report, DateTime.UtcNow.AddDays(-7));
+        var started = DateTime.UtcNow.AddSeconds(-1);
+        // Not saved by this run (a timeout, a crash, a failed save): what it printed, else NotFinished.
+        Assert.Equal<(string?, string?)>((null, "✓ printed\n"), Troubleshooting.Outcome(report, started, "✓ printed\n"));
+        Assert.Equal<(string?, string?)>((null, "The check didn't finish.\n"), Troubleshooting.Outcome(report, started, null));
+        Assert.Equal<(string?, string?)>((null, "The check didn't finish.\n"), Troubleshooting.Outcome(Path.Combine(folder, "none.txt"), started, " \r\n"));
+        // Saved by this run: the file.
+        File.WriteAllText(report, "this run");
+        Assert.Equal<(string?, string?)>((report, null), Troubleshooting.Outcome(report, started, "✓ printed\n"));
+    }
+
     [Fact]
     public void OtherArgumentsAreNotTroubleshooting()
     {
@@ -327,8 +379,9 @@ public class SelfTestTests : IDisposable
 }
 
 // The real LidAwake.exe on this PC (the CI runner): --selftest and --battery end on their own, write
-// their reports, print them, and change no setting. A required check the runner can't pass (no
-// Tailscale, no battery, no lid) must say "not on this PC", so the self-test still exits 0.
+// their reports, print them, and change no setting. What the runner simply doesn't have (no
+// battery, no lid, no camera) says "not on this PC"; it has no Tailscale either, which is the one
+// required failure, so the self-test exits 1.
 [Collection("Real machine")]
 public sealed class RealSelfTestTests
 {
@@ -395,8 +448,10 @@ public sealed class RealSelfTestTests
             Assert.StartsWith(SelfTest.Title + " · ", printed);
             Assert.Contains("Screen capture: ", printed);
             Assert.Contains("Phone page port 8787: ", printed);
-            Assert.Equal(0, code);
-            Assert.Contains("\nAll required checks passed.", printed);
+            // The runner has no Tailscale, which the phone needs: that one required check fails.
+            Assert.Contains("\n✗ Tailscale installed: " + SelfTest.NotInstalled + "\n", printed);
+            Assert.Contains("\n1 required check failed: Tailscale installed.", printed);
+            Assert.Equal(1, code);
             // Saved too, as printed (with Windows line ends).
             Assert.True(File.Exists(report));
             Assert.True(File.GetLastWriteTimeUtc(report) >= started);

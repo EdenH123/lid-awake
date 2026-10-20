@@ -30,34 +30,45 @@ public sealed class DiagnosticsLog
 
     public void Write(string text)
     {
-        try { file.Write(Scrub(text)); }
+        try { file.Write(Scrub(AccessLog.Clean(text))); }
         catch (Exception) { }
     }
 
     // The newest lines first (the tests).
     public List<string> Recent(int count) => file.Recent(count);
 
-    static readonly Regex Link = new(@"\b[a-z][a-z0-9+.\-]*://(?:[^\s/?#@""'<>]*@)?([^\s/:?#""'<>]+)(?::\d+)?([^\s""'<>]*)",
+    static readonly Regex Link = new(@"\b[a-z][a-z0-9+.\-]*://(?:[^\s/?#@""'<>\[]*@)?(\[[^\]\s]*\]|[^\s/:?#""'<>\[]+)(?::\d+)?([^\s""'<>]*)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    static readonly Regex Email = new(@"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}", RegexOptions.CultureInvariant);
+    // The user's folder name may have spaces: everything up to the next slash goes.
+    static readonly Regex UserFolder = new(@"\b[A-Za-z]:[\\/]Users[\\/][^\\/""'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     static readonly Regex V4 = new(@"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])", RegexOptions.CultureInvariant);
     static readonly Regex V6 = new(@"(?<![\w:])[0-9A-Fa-f]*:[0-9A-Fa-f:.]*(?:%\w+)?(?![\w:])", RegexOptions.CultureInvariant);
     static readonly Regex KeyLike = new(@"[A-Za-z0-9_\-+/=]{40,}", RegexOptions.CultureInvariant);
 
     public const string HiddenAddress = "(address)";
     public const string Hidden = "(hidden)";
+    public const string HiddenAccount = "(account)";
+    public const string HiddenProfile = "%USERPROFILE%";
 
-    // A link becomes its host ("web.push.apple.com/…"); an IP address other than the PC's own
-    // (127.0.0.1, ::1) becomes "(address)"; 40 or more letters, digits and base64 signs in a row
-    // (a key, a token, a cookie) become "(hidden)".
+    // A link becomes its host ("web.push.apple.com/…"; a bracketed IPv6 host "(address)"); an
+    // email address (a Tailscale login, say) "(account)"; C:\Users\<name> "%USERPROFILE%"; an IP
+    // address other than the PC's own (127.0.0.1, ::1) "(address)"; 40 or more letters, digits and
+    // base64 signs in a row (a key, a token, a cookie) "(hidden)".
     public static string Scrub(string? text)
     {
         var s = text ?? "";
-        s = Link.Replace(s, m => m.Groups[1].Value + (m.Groups[2].Value.Length > 1 ? "/…" : ""));
+        s = Link.Replace(s, m => LinkHost(m.Groups[1].Value) + (m.Groups[2].Value.Length > 1 ? "/…" : ""));
+        s = Email.Replace(s, HiddenAccount);
+        s = UserFolder.Replace(s, HiddenProfile);
         s = V4.Replace(s, m => IPAddress.TryParse(m.Value, out var a) && !IPAddress.IsLoopback(a) ? HiddenAddress : m.Value);
         s = V6.Replace(s, m => m.Value.Count(c => c == ':') >= 2 && IPAddress.TryParse(m.Value, out var a)
             && a.AddressFamily == AddressFamily.InterNetworkV6 && !IPAddress.IsLoopback(a) ? HiddenAddress : m.Value);
         return KeyLike.Replace(s, Hidden);
     }
+
+    static string LinkHost(string host) =>
+        host.StartsWith('[') && !(IPAddress.TryParse(host.Trim('[', ']'), out var a) && IPAddress.IsLoopback(a)) ? HiddenAddress : host;
 
     // What a push service answered for one phone alert: the alert's kind, the service's host (never
     // the rest of the endpoint, which identifies the phone, nor its keys or the signed token) and the

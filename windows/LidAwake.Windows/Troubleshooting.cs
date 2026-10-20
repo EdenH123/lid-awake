@@ -20,8 +20,11 @@ public static class Troubleshooting
     public const string BatteryFlag = "--battery";
     public const string SelfTestFile = "LidAwake-selftest.txt";
     public const string BatteryFile = "LidAwake-battery.txt";
-    // How long the tray waits for a report before showing what there is.
+    // How long the checks may take before the report says they didn't finish (exit code 1), and
+    // how long the tray waits for the whole run.
+    public static readonly TimeSpan MaxCheck = TimeSpan.FromSeconds(90);
     public static readonly TimeSpan MaxWait = TimeSpan.FromMinutes(2);
+    public const string NotFinished = "The check didn't finish.";
 
     public static string Folder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LidAwake");
 
@@ -34,18 +37,23 @@ public static class Troubleshooting
         if (args.Length == 0 || args[0] is not (SelfTestFlag or BatteryFlag)) return null;
         ClaudeHook.EndStartingCursor();
         var flag = args[0];
-        string text = "";
-        int code = 1;
+        (string Text, int Code) made = ("", 1);
         // On a thread of its own in the multithreaded apartment, as the capture and the encoders
-        // run in the app (Main's thread is single-threaded, for WinForms).
+        // run in the app (Main's thread is single-threaded, for WinForms). A check that hangs (a
+        // driver that never answers) is given up on: the thread is a background one, so the
+        // process still ends.
         var work = new Thread(() =>
         {
-            try { (text, code) = Make(flag); }
-            catch (Exception e) { text = "The check stopped: " + e.Message + "\n"; }
+            (string, int) result;
+            try { result = Make(flag); }
+            catch (Exception e) { result = ("The check stopped: " + e.Message + "\n", 1); }
+            made = result;  // read only after Join returned true
         }) { IsBackground = true, Name = "Lid Awake " + flag };
         work.SetApartmentState(ApartmentState.MTA);
         work.Start();
-        work.Join();
+        var (text, code) = work.Join(MaxCheck)
+            ? made
+            : ($"{NotFinished} It was still running after {MaxCheck.TotalSeconds:0} seconds.\n", 1);
         var path = Save(flag, text);
         Show(text, path);
         return code;
@@ -93,13 +101,16 @@ public static class Troubleshooting
         if (path != null) Open(path);
     }
 
+    // Notepad from Windows' own folder, never one found on the search path.
+    static string Notepad => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "notepad.exe");
+
     // A file in whatever the PC opens it with (.log and .txt: Notepad, usually), else Notepad.
     public static void Open(string path)
     {
         try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
         catch (Exception)
         {
-            try { Process.Start("notepad.exe", "\"" + path + "\""); }
+            try { Process.Start(new ProcessStartInfo(Notepad, "\"" + path + "\"") { UseShellExecute = false }); }
             catch (Exception) { }
         }
     }
@@ -113,30 +124,52 @@ public static class Troubleshooting
         {
             var exe = Environment.ProcessPath;
             if (string.IsNullOrEmpty(exe)) return;
+            var path = ReportPath(flag);
+            // The last run's report must never be shown as this one's: it goes first, and a report
+            // is only taken when it was written after this run started.
+            var started = DateTime.UtcNow;
+            try { File.Delete(path); }
+            catch (Exception) { }
             var info = new ProcessStartInfo(exe, flag)
             {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, StandardOutputEncoding = Encoding.UTF8,
             };
-            using var p = Process.Start(info);
-            if (p == null) return;
-            var output = p.StandardOutput.ReadToEndAsync();
-            if (!p.WaitForExit((int)MaxWait.TotalMilliseconds))
+            string? printed = null;
+            using (var p = Process.Start(info))
             {
-                try { p.Kill(true); }
-                catch (Exception) { }
-                log?.Invoke($"The {flag} check didn't finish in {MaxWait.TotalMinutes:0} minutes");
+                if (p != null)
+                {
+                    var output = p.StandardOutput.ReadToEndAsync();
+                    if (!p.WaitForExit((int)MaxWait.TotalMilliseconds))
+                    {
+                        try { p.Kill(true); }
+                        catch (Exception) { }
+                        log?.Invoke($"The {flag} check didn't finish in {MaxWait.TotalMinutes:0} minutes");
+                    }
+                    try { printed = output.Wait(2000) ? output.Result : null; }
+                    catch (Exception) { }
+                }
             }
-            var path = ReportPath(flag);
-            if (File.Exists(path)) Open(path);
-            else if (output.Wait(1000))
-            {
-                // Couldn't be saved where it should: show what it printed from a temp file.
-                var temp = Path.Combine(Path.GetTempPath(), Path.GetFileName(path));
-                File.WriteAllText(temp, output.Result);
-                Open(temp);
-            }
+            var (fresh, text) = Outcome(path, started, printed);
+            if (fresh != null) { Open(fresh); return; }
+            // Not saved by this run: what it printed, or that it didn't finish, from a temp file.
+            var temp = Path.Combine(Path.GetTempPath(), Path.GetFileName(path));
+            File.WriteAllText(temp, text!.Replace("\r\n", "\n").Replace("\n", "\r\n"), new UTF8Encoding(true));
+            Open(temp);
         }
         catch (Exception e) { log?.Invoke($"The {flag} check couldn't run: {e.Message}"); }
+    }
+
+    // What the tray shows after a run that started at `startedUtc`: the saved report when this run
+    // wrote it (Path), else what the run printed, else NotFinished (Text).
+    public static (string? Path, string? Text) Outcome(string reportPath, DateTime startedUtc, string? printed)
+    {
+        try
+        {
+            if (File.Exists(reportPath) && File.GetLastWriteTimeUtc(reportPath) >= startedUtc) return (reportPath, null);
+        }
+        catch (Exception) { }
+        return (null, string.IsNullOrWhiteSpace(printed) ? NotFinished + "\n" : printed);
     }
 
     // The standard output is a pipe or a file (the tray, a test, "| more", "> report.txt").

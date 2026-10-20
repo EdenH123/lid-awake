@@ -106,10 +106,28 @@ public sealed class CameraService : IDisposable
     // The capture's numbers (under `gate`), from the device opening until EndCapture.
     StreamStats? session;
 
-    void DiagNote(string text)
+    // Lines made under `gate` wait here, and are written by FlushDiag once the gate is let go, so
+    // the file is never written while a phone's frames wait for the lock.
+    readonly List<string> diagLines = new();
+
+    // Under `gate`.
+    void DiagNote(string text) => diagLines.Add(text);
+
+    // Outside `gate`: writes what DiagNote kept, in order.
+    void FlushDiag()
     {
-        try { Diag?.Invoke(text); }
-        catch (Exception) { }
+        List<string> lines;
+        lock (gate)
+        {
+            if (diagLines.Count == 0) return;
+            lines = diagLines.ToList();
+            diagLines.Clear();
+        }
+        foreach (var line in lines)
+        {
+            try { Diag?.Invoke(line); }
+            catch (Exception) { }
+        }
     }
 
     // The check every 2 seconds (switch off, 10 minutes, a camera that stopped sending).
@@ -219,6 +237,7 @@ public sealed class CameraService : IDisposable
             last = viewers.Count == 0;
             if (last) ended = EndCapture();
         }
+        FlushDiag();
         if (last) talk?.Stop();
         if (ended != null) run(() => { lock (deviceGate) Close(ended); });
     }
@@ -235,6 +254,7 @@ public sealed class CameraService : IDisposable
             viewers.Clear();
             ended = EndCapture();
         }
+        FlushDiag();
         talk?.Stop();
         if (!wait)
         {
@@ -302,6 +322,7 @@ public sealed class CameraService : IDisposable
                 }
             }
         }
+        FlushDiag();
         if (stall) AfterFailure(CameraTexts.Stalled, stalled);
         foreach (var (socket, why) in stops) Stop(socket, why);
         talk?.Idle();
@@ -355,6 +376,12 @@ public sealed class CameraService : IDisposable
     }
 
     void OnFrame(int fromGeneration, CameraFrame frame)
+    {
+        try { OnFrameUnderGate(fromGeneration, frame); }
+        finally { FlushDiag(); }
+    }
+
+    void OnFrameUnderGate(int fromGeneration, CameraFrame frame)
     {
         lock (gate)
         {
@@ -458,6 +485,7 @@ public sealed class CameraService : IDisposable
             if (fromGeneration != generation) return;
             ended = FailUnderGate(text);
         }
+        FlushDiag();
         AfterFailure(text, ended);
     }
 

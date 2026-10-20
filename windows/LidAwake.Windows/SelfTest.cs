@@ -121,11 +121,11 @@ public sealed class SelfTestProbes
 
 // `LidAwake.exe --selftest`, the Windows side of the Mac's self-check (main.swift): the things Lid
 // Awake needs, each as a line that says in plain words whether it works. Required (a failure makes
-// the exit code 1): the settings files, the two ports, Tailscale, the lid setting, the memory
-// reading and the screen capture, which is what the Mac's self-check is about. The rest only tells
-// (battery and temperature, the H.264 encoder, the camera and microphone, phone alerts, Claude
-// Code): without them Lid Awake still works, with less. Anything this PC doesn't have (no battery,
-// no lid, no Tailscale) is "not on this PC", never a failure.
+// the exit code 1): the settings files, the two ports, Tailscale (without it the phone can't reach
+// the PC at all), the lid setting and the screen capture, which is what the Mac's self-check is
+// about. The rest only tells (memory, battery and temperature, the H.264 encoder, the camera and
+// microphone, phone alerts, Claude Code): without them Lid Awake still works, with less. What a PC
+// may simply not have (no battery, no lid, no camera) is "not on this PC", never a failure.
 public static class SelfTest
 {
     public const string Title = "Lid Awake self-test";
@@ -215,15 +215,18 @@ public static class SelfTest
         return null;
     }
 
+    public const string NeedsTailscale = "can't be checked without Tailscale";
+    public const string NotInstalled = "no; install it from tailscale.com (the phone reaches the PC through it)";
+
     static void Tailscale(Tailnet.CliResult status, List<CheckResult> results)
     {
         const string Installed = "Tailscale installed", SignedIn = "Tailscale signed in", Https = "Tailscale HTTPS name";
         var (state, name, backend) = Tailnet.ReadSetup(status);
         if (!state.Installed)
         {
-            results.Add(new(Installed, CheckOutcome.NotHere, "not on this PC (install it from tailscale.com: the phone reaches the PC through it)", true));
-            results.Add(new(SignedIn, CheckOutcome.NotHere, "not on this PC (needs Tailscale)", true));
-            results.Add(new(Https, CheckOutcome.NotHere, "not on this PC (needs Tailscale)", true));
+            results.Add(new(Installed, CheckOutcome.Fail, NotInstalled, true));
+            results.Add(new(SignedIn, CheckOutcome.NotHere, NeedsTailscale, true));
+            results.Add(new(Https, CheckOutcome.NotHere, NeedsTailscale, true));
             return;
         }
         results.Add(new(Installed, CheckOutcome.Pass, "yes", true));
@@ -289,7 +292,7 @@ public static class SelfTest
         const string Name = "Battery";
         if (power is not { } p) return new(Name, CheckOutcome.Fail, "Windows didn't say", false);
         if ((p.BatteryFlag & 128) != 0) return new(Name, CheckOutcome.NotHere, "not on this PC (no battery)", false);
-        if (!StatusInfo.HasBattery(p)) return new(Name, CheckOutcome.NotHere, "not on this PC (Windows can't tell the battery's state)", false);
+        if (!StatusInfo.HasBattery(p)) return new(Name, CheckOutcome.Fail, "state unknown (Windows can't tell the battery's state)", false);
         int toFull = TrayText.MinutesToFull(charge);
         return new(Name, CheckOutcome.Pass, TrayText.InfoLine(p, null, toFull), false);
     }
@@ -312,11 +315,11 @@ public static class SelfTest
     static CheckResult Memory(MemoryReading? m)
     {
         const string Name = "Memory";
-        if (m is not { } r || r.Total == 0) return new(Name, CheckOutcome.Fail, "Windows didn't say how much memory there is", true);
+        if (m is not { } r || r.Total == 0) return new(Name, CheckOutcome.Fail, "Windows didn't say how much memory there is", false);
         double gb = 1 << 30;
         var used = (r.Total - Math.Min(r.Available, r.Total)) / gb;
         return new(Name, CheckOutcome.Pass,
-            $"{used.ToString("0.0", CultureInfo.InvariantCulture)} of {(r.Total / gb).ToString("0.0", CultureInfo.InvariantCulture)} GB used", true);
+            $"{used.ToString("0.0", CultureInfo.InvariantCulture)} of {(r.Total / gb).ToString("0.0", CultureInfo.InvariantCulture)} GB used", false);
     }
 
     static CheckResult Screen((string? Kind, int Width, int Height, string? Problem) s)
@@ -375,13 +378,14 @@ public static class PortCheck
     static extern uint GetExtendedTcpTable(IntPtr table, ref int size, [MarshalAs(UnmanagedType.Bool)] bool order,
         int addressFamily, int tableClass, uint reserved);
 
-    const int AfInet = 2, TcpTableOwnerPidListener = 3;
+    const int AfInet = 2, AfInet6 = 23, TcpTableOwnerPidListener = 3;
     const uint ErrorInsufficientBuffer = 122;
     const uint Loopback = 0x0100007F;  // 127.0.0.1 as the table stores it (network byte order)
 
     public static PortUse Probe(int port)
     {
-        if (ListenerPid(port) is { } pid)
+        // An IPv6 listener on :: (a dual-stack socket) or ::1 takes the port too.
+        if ((ListenerPid(port, AfInet) ?? ListenerPid(port, AfInet6)) is { } pid)
         {
             string owner;
             try
@@ -402,34 +406,47 @@ public static class PortCheck
         catch (SocketException e) { return new PortUse(false, Problem: e.Message); }
     }
 
-    // MIB_TCPTABLE_OWNER_PID: a DWORD count, then rows of six DWORDs: state, local address, local
-    // port (network byte order in the low 16 bits), remote address, remote port, owning process id.
-    static int? ListenerPid(int port)
+    // MIB_TCPTABLE_OWNER_PID: a DWORD count, then rows of six DWORDs (24 bytes): state, local
+    // address, local port (network byte order in the low 16 bits), remote address, remote port,
+    // owning process id. MIB_TCP6TABLE_OWNER_PID: the same count, then rows of 56 bytes: local
+    // address (16 bytes), scope id, local port at 20, remote address, scope id, remote port,
+    // state, owning process id at 52.
+    static int? ListenerPid(int port, int family)
     {
+        bool v6 = family == AfInet6;
+        int rowSize = v6 ? 56 : 24, portAt = v6 ? 20 : 8, pidAt = v6 ? 52 : 20;
         int size = 0;
-        GetExtendedTcpTable(IntPtr.Zero, ref size, false, AfInet, TcpTableOwnerPidListener, 0);
+        GetExtendedTcpTable(IntPtr.Zero, ref size, false, family, TcpTableOwnerPidListener, 0);
         for (int attempt = 0; attempt < 3 && size > 0; attempt++)
         {
             var buffer = Marshal.AllocHGlobal(size);
             try
             {
-                uint result = GetExtendedTcpTable(buffer, ref size, false, AfInet, TcpTableOwnerPidListener, 0);
+                uint result = GetExtendedTcpTable(buffer, ref size, false, family, TcpTableOwnerPidListener, 0);
                 if (result == ErrorInsufficientBuffer) continue;
                 if (result != 0) return null;
                 int rows = Marshal.ReadInt32(buffer);
                 for (int i = 0; i < rows; i++)
                 {
-                    var row = buffer + 4 + i * 24;
-                    uint local = (uint)Marshal.ReadInt32(row, 4);
-                    int raw = Marshal.ReadInt32(row, 8);
+                    var row = buffer + 4 + i * rowSize;
+                    int raw = Marshal.ReadInt32(row, portAt);
                     int rowPort = ((raw & 0xFF) << 8) | ((raw >> 8) & 0xFF);
-                    if (rowPort == port && local is Loopback or 0) return Marshal.ReadInt32(row, 20);
+                    if (rowPort != port) continue;
+                    if (v6 ? AnyOrLoopback6(row) : ((uint)Marshal.ReadInt32(row, 4) is Loopback or 0)) return Marshal.ReadInt32(row, pidAt);
                 }
                 return null;
             }
             finally { Marshal.FreeHGlobal(buffer); }
         }
         return null;
+    }
+
+    // :: or ::1: fifteen zero bytes, then 0 or 1.
+    static bool AnyOrLoopback6(IntPtr address)
+    {
+        for (int b = 0; b < 15; b++)
+            if (Marshal.ReadByte(address, b) != 0) return false;
+        return Marshal.ReadByte(address, 15) is 0 or 1;
     }
 }
 

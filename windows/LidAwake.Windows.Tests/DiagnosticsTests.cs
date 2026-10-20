@@ -77,9 +77,24 @@ public class DiagnosticsTests : IDisposable
     [InlineData("the PC itself 127.0.0.1:8787 and ::1", "the PC itself 127.0.0.1:8787 and ::1")]
     [InlineData("at 12:30:45 the screen: ok", "at 12:30:45 the screen: ok")]
     [InlineData("token eyJhbGciOiJFUzI1NiJ9eyJhdWQiOiJodHRwczovL2ZjbS5nb29nbGVhcGlzLmNvbSJ9 end", "token (hidden) end")]
+    [InlineData("signed in as Owner.Name+lid@example.co.uk on pc.tail1234.ts.net", "signed in as (account) on pc.tail1234.ts.net")]
+    [InlineData(@"can't read C:\Users\eden heiser\x", @"can't read %USERPROFILE%\x")]
+    [InlineData(@"can't read C:\Users\eden\AppData\Local\LidAwake\history.json", @"can't read %USERPROFILE%\AppData\Local\LidAwake\history.json")]
+    [InlineData("runs \"c:/users/Eden/.claude/hook\"", "runs \"%USERPROFILE%/.claude/hook\"")]
+    [InlineData("socket at ws://[fd7a:115c:a1e0::5]:8788/live closed", "socket at (address)/… closed")]
+    [InlineData("the PC at http://[::1]:8787/ answered", "the PC at [::1] answered")]
     public void ScrubKeepsHostsAndHidesAddressesAndKeys(string text, string expected)
     {
         Assert.Equal(expected, DiagnosticsLog.Scrub(text));
+    }
+
+    // Control characters are taken out before scrubbing, so a line break can't split a secret in two.
+    [Fact]
+    public void ALineIsCleanedBeforeItIsScrubbed()
+    {
+        var log = new DiagnosticsLog(folder);
+        log.Write("from 100.64.\n0.7 and owner@exam\tple.com");
+        Assert.EndsWith("  from (address) and (account)", Assert.Single(log.Recent(5)));
     }
 
     [Fact]
