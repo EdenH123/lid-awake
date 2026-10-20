@@ -54,6 +54,7 @@ public partial class WebServerTests : IDisposable
             () => turnOffCalls++, (title, body) => announced.Add((title, body)), port, site,
             accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); },
             setLimit: (name, value) => { lock (limitSets) limitSets.Add((name, value)); realLimits?.Set(name, value); });
+        WireApps();
         server.Start();
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
         {

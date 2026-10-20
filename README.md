@@ -181,13 +181,13 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - The low-battery safety limit, and the too-hot one on laptops that report a temperature.
 - Battery, temperature and processor history graphs. Windows has no power log to read, so Lid Awake records its own, once a minute, while it runs (the last 48 hours). The graphs only cover the time Lid Awake has been running on this PC, with gaps while the PC slept, and the processor graph shows overall use, not use per app.
 - Face ID or fingerprint sign-in. On your phone: the gear ⚙︎ → turn on **Face ID** (or fingerprint), then type your password once more. The laptop shows **Face ID or fingerprint added to Lid Awake** at the tray. To remove one, use the tray icon → **Face ID and fingerprint** → click the device. Setting a new phone password removes them all.
+- Open, switch to and quit programs from your phone. Right-click the Lid Awake icon, choose **Apps on phone…**, and tick the programs from the Start menu to show on the phone's Apps page. Programs that are open but not ticked show in the phone's dock.
 
 ### Not on Windows yet
 
 Don't rely on these on Windows. They work on the Mac only, for now.
 
 - Watching the screen and using the phone as trackpad and keyboard.
-- Opening, switching and quitting apps.
 - Alerts on your phone.
 - The camera and microphone.
 

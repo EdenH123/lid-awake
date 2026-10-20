@@ -39,7 +39,10 @@ static class Program
         var limits = new Limits(settings);
         var heat = new HeatSensor(TemperatureSources.Read);
         var safety = new SafetyCheck(limits, heat, readings.Power);
-        var status = new StatusInfo(readings, limits, heat);
+        // The apps the owner picked for the phone (tray: Apps on phone…), and the Windows pieces behind them.
+        var phoneApps = new PhoneApps(settings, new ProcessSource(), new WindowActions(), new WindowsIcons(), log);
+        var startMenu = new StartMenuScanner(new ShortcutResolver());
+        var status = new StatusInfo(readings, limits, heat, phoneApps);
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body),
@@ -56,11 +59,12 @@ static class Program
         server.History = history;
         using var sampler = new HistorySampler(history, readings, () => heat.Latest.Battery);
         sampler.Start();
+        server.Apps = phoneApps;
         string? startError = null;
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, phoneApps, startMenu);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
@@ -86,6 +90,8 @@ sealed class TrayApp : ApplicationContext
     readonly Limits limits;
     readonly HeatSensor heat;
     readonly SafetyCheck safety;
+    readonly PhoneApps? phoneApps;
+    readonly IStartMenuSource? startMenu;
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
@@ -109,8 +115,10 @@ sealed class TrayApp : ApplicationContext
     public AutoOff Countdown { get; }
 
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
-                   Limits limits, HeatSensor heat, SafetyCheck safety)
+                   Limits limits, HeatSensor heat, SafetyCheck safety, PhoneApps? apps = null, IStartMenuSource? startMenu = null)
     {
+        phoneApps = apps;
+        this.startMenu = startMenu;
         this.machine = machine;
         this.auth = auth;
         this.phone = phone;
@@ -163,6 +171,7 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(passkeysMenu);
         menu.Opening += (_, _) => ShowPasskeys();
         ShowPasskeys();
+        if (phoneApps != null && startMenu != null) menu.Items.Add("Apps on phone…", null, (_, _) => ShowAppsForm());
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit Lid Awake", null, (_, _) =>
@@ -427,6 +436,29 @@ sealed class TrayApp : ApplicationContext
         log.Write("Removed a Face ID or fingerprint sign-in on the PC");
         icon.ShowBalloonTip(5000, "Face ID or fingerprint removed", "That device will need the password.", ToolTipIcon.Info);
         ShowPasskeys();
+    }
+
+    bool appsFormOpen;
+
+    // "Apps on phone…": tick the Start menu programs the phone may open, switch to and quit.
+    void ShowAppsForm()
+    {
+        if (appsFormOpen || phoneApps == null || startMenu == null) return;
+        appsFormOpen = true;
+        try
+        {
+            using var form = new AppsForm(phoneApps.Picks(), startMenu.Scan);
+            if (form.ShowDialog() == DialogResult.OK)
+            {
+                phoneApps.SetPicks(form.Result);
+                log.Write($"Apps on the phone changed on the PC ({form.Result.Count} apps)");
+            }
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show("Could not save the apps: " + e.Message, "Lid Awake");
+        }
+        finally { appsFormOpen = false; }
     }
 
     bool passwordFormOpen;

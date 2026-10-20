@@ -329,6 +329,11 @@ public sealed partial class WebServer : IDisposable
             case ("POST", "/passkey/register"):
                 await PasskeyRegister(c, host);
                 return;
+            case ("GET", "/app-icon.png"): await AppIcon(c); return;
+            case ("POST", "/open-app"): await OpenApp(c); return;
+            case ("POST", "/focus-app"): await FocusApp(c); return;
+            case ("POST", "/quit-app"): await QuitApp(c); return;
+            case ("POST", "/apps-order"): await AppsOrder(c); return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
