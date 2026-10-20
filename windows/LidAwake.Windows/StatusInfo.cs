@@ -117,6 +117,10 @@ public sealed class StatusInfo
     // the control fields keep their defaults.
     public RemoteControl? Control { get; init; }
 
+    // Claude plan usage (ClaudeUsage.cs): "claude" in features, and the saved numbers in `claude`.
+    // None (the tests): `claude` is null, as before.
+    public ClaudeUsage? Claude { get; set; }
+
     // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
     // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp). `apps` is
     // the owner's list for the phone's Apps page (none: empty lists, and no "apps" in features).
@@ -170,7 +174,7 @@ public sealed class StatusInfo
             // 6.3
             ["apps"] = appLists.Apps,
             ["otherApps"] = appLists.Others,
-            ["claude"] = null,
+            ["claude"] = Claude?.ForStatus(),
             // 6.6
             ["os"] = "windows",
             // "heat" while either source works: the battery's sensor or the thermal zones.
@@ -249,7 +253,7 @@ public sealed class StatusInfo
     // "apps" is listed only when the apps routes exist (an app list was given), "control" after it
     // only when the control routes do (a RemoteControl was given), and "screen" last only when
     // /screen.jpg and the live socket do (the screen switch was given). "camera" after them only
-    // once the camera is wired (CameraFeature).
+    // once the camera is wired (CameraFeature), and "claude" last once the Claude usage is (Claude).
     string[] FeatureList(bool withHeat)
     {
         IEnumerable<string> list = withHeat ? FeaturesWithHeat : Features;
@@ -257,6 +261,7 @@ public sealed class StatusInfo
         if (Control != null) list = list.Append("control");
         if (screenAllowed != null) list = list.Append("screen");
         if (CameraFeature) list = list.Append("camera");
+        if (Claude != null) list = list.Append("claude");
         return list.ToArray();
     }
 

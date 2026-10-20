@@ -1,0 +1,412 @@
+using System.Globalization;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace LidAwake;
+
+// What Claude Code runs (the Mac's ~/.claude/hooks/lidawake-claude-event.sh and
+// ~/.claude/statusline-lidawake.py, which live outside the repo), as flags of LidAwake.exe itself,
+// so nothing else (Python, a shell script) is needed. Main handles them before the single-instance
+// check, so they never start a tray, and they always end quickly:
+//   --claude-event        a hook (Stop, Notification): stdin (at most 64 KB) becomes a file in
+//                         %LOCALAPPDATA%\LidAwake\claude-events for ClaudeAlerts. Always exit 0.
+//   --claude-statusline   the status line: saves rate_limits to claude-usage.json and prints a
+//                         short line ("Opus · session 59%"). Always exit 0.
+//   --claude-setup on|off|status
+//                         the same as the tray item "Claude alerts and usage from Claude Code…",
+//                         for install.ps1 and uninstall.ps1 (ClaudeSettingsFile). Exit codes: see Setup.
+public static class ClaudeHook
+{
+    public const string EventFlag = "--claude-event";
+    public const string StatusLineFlag = "--claude-statusline";
+    public const string SetupFlag = "--claude-setup";
+    // Below the 64 KB the folder's reader accepts (ClaudeAlerts.MaxFileBytes).
+    public const int MaxInputBytes = 64 * 1024 - 1;
+    // Claude Code waits for its hooks; a stdin that never ends must not hold it up.
+    public static readonly TimeSpan InputWait = TimeSpan.FromSeconds(5);
+
+    // --claude-setup's exit codes.
+    public const int SetUp = 0, NotSetUp = 1, NoClaudeCode = 2, Refused = 3;
+
+    // null: not one of these flags (Lid Awake starts as usual). Otherwise the exit code.
+    public static int? Run(string[] args) =>
+        Run(args, Console.OpenStandardInput, Console.OpenStandardOutput, ClaudeAlerts.DefaultFolder,
+            Path.Combine(ClaudeUsage.DefaultFolder, ClaudeUsage.FileName), new ClaudeSettingsFile(), Environment.ProcessPath ?? "");
+
+    // The same, with its streams and places given (the tests).
+    internal static int? Run(string[] args, Func<Stream> stdin, Func<Stream> stdout, string eventsFolder, string usageFile,
+                             ClaudeSettingsFile settingsFile, string exe)
+    {
+        if (args.Length == 0) return null;
+        void Print(string text)
+        {
+            try
+            {
+                using var output = stdout();
+                output.Write(Encoding.UTF8.GetBytes(text + "\n"));
+            }
+            catch (Exception) { }
+        }
+        switch (args[0])
+        {
+            case EventFlag:
+                try { SaveEvent(ReadInput(stdin()), eventsFolder, DateTimeOffset.UtcNow); }
+                catch (Exception) { }
+                return 0;
+            case StatusLineFlag:
+                string line;
+                try { line = StatusLine(ReadInput(stdin()), usageFile, DateTimeOffset.UtcNow); }
+                catch (Exception) { line = "Claude"; }
+                Print(line);
+                return 0;
+            case SetupFlag:
+                try { return Setup(args.Length > 1 ? args[1] : "status", settingsFile, exe, Print); }
+                catch (Exception e)
+                {
+                    Print(e.Message);
+                    return Refused;
+                }
+            default:
+                return null;
+        }
+    }
+
+    // status: 0 set up (our hooks are there), 1 not set up, 2 no Claude Code on this PC, 3 the file
+    // can't be read. on / off: 0 done (or nothing to do), 3 refused (the reason is printed).
+    public static int Setup(string what, ClaudeSettingsFile file, string exe, Action<string> print, Func<bool>? claudeInstalled = null)
+    {
+        switch (what)
+        {
+            case "on":
+            {
+                var r = file.Install(exe);
+                print(r.Message);
+                return r.Ok ? SetUp : Refused;
+            }
+            case "off":
+            {
+                var r = file.Remove();
+                print(r.Message);
+                return r.Ok ? SetUp : Refused;
+            }
+            default:
+            {
+                var state = file.State();
+                if (state == ClaudeSettingsFile.Setup.Unreadable) return Refused;
+                if (state == ClaudeSettingsFile.Setup.On) return SetUp;
+                return (claudeInstalled ?? ClaudeCodeInstalled)() ? NotSetUp : NoClaudeCode;
+            }
+        }
+    }
+
+    // Claude Code is there: its program (ClaudeFinder's places) or its folder in the profile.
+    public static bool ClaudeCodeInstalled()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return ClaudeFinder.Candidates(profile, appData).Any(File.Exists) || Directory.Exists(Path.Combine(profile, ".claude"));
+    }
+
+    // All of stdin, or null when it is over the limit or doesn't end within a few seconds.
+    public static byte[]? ReadInput(Stream input, int max = MaxInputBytes, TimeSpan? wait = null)
+    {
+        var read = Task.Run(() =>
+        {
+            var all = new MemoryStream();
+            var chunk = new byte[8192];
+            int n;
+            while ((n = input.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                if (all.Length + n > max) return null;
+                all.Write(chunk, 0, n);
+            }
+            return all.ToArray();
+        });
+        try { return read.Wait(wait ?? InputWait) ? read.Result : null; }
+        catch (Exception) { return null; }
+    }
+
+    // One file per event: written as .tmp, then renamed to .json, so the scanner never reads half
+    // of one. Named by time first, so they are handled in order.
+    public static string? SaveEvent(byte[]? data, string folder, DateTimeOffset now)
+    {
+        if (data == null || data.Length == 0) return null;
+        if (!Directory.Exists(folder)) EnsurePrivateFolder(folder);
+        var name = now.UtcTicks.ToString("D19", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
+        var tmp = Path.Combine(folder, name + ".tmp");
+        var done = Path.Combine(folder, name + ".json");
+        File.WriteAllBytes(tmp, data);
+        File.Move(tmp, done);
+        return done;
+    }
+
+    // The events folder is this user's only: inheritance from %LOCALAPPDATA% is cut, and the one
+    // entry left gives this user full control (of the folder and what is created in it).
+    public static void EnsurePrivateFolder(string folder)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(folder))!);
+        using var me = WindowsIdentity.GetCurrent();
+        var user = me.User ?? throw new InvalidOperationException("no user");
+        var security = new DirectorySecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        var dir = new DirectoryInfo(folder);
+        if (!dir.Exists) dir.Create(security);
+        else dir.SetAccessControl(security);
+    }
+
+    // The status line: Claude Code's JSON on stdin. Its rate_limits (five_hour, seven_day; each a
+    // used_percentage and a resets_at in Unix seconds or as an ISO date) are saved for Lid Awake,
+    // checked like the reader checks them. Prints the model and the session's percent.
+    public static string StatusLine(byte[]? input, string usageFile, DateTimeOffset now)
+    {
+        string model = "Claude";
+        double? session = null;
+        try
+        {
+            if (input != null && JsonNode.Parse(input) is JsonObject root)
+            {
+                if (root["model"] is JsonObject m && Text(m["display_name"]) is { Length: > 0 } name) model = name;
+                if (root["rate_limits"] is JsonObject limits)
+                {
+                    var kept = new JsonObject();
+                    foreach (var key in new[] { "five_hour", "seven_day" })
+                    {
+                        if (limits[key] is not JsonObject w || Number(w["used_percentage"]) is not { } pct
+                            || !double.IsFinite(pct) || pct < 0 || pct > 1000) continue;
+                        var window = new JsonObject { ["used_percentage"] = pct };
+                        if (ResetsAt(w["resets_at"]) is { } at) window["resets_at"] = at;
+                        kept[key] = window;
+                        if (key == "five_hour") session = pct;
+                    }
+                    if (kept.Count > 0) ClaudeUsage.Save(usageFile, kept, now);
+                }
+            }
+        }
+        catch (Exception) { }
+        var flat = string.Join(' ', model.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (flat.Length > 60) flat = flat[..60];
+        return session is { } s ? $"{flat} · session {Math.Round(s, MidpointRounding.AwayFromZero).ToString(CultureInfo.InvariantCulture)}%" : flat;
+    }
+
+    static string? Text(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+    static double? Number(JsonNode? node)
+    {
+        if (node is not JsonValue v) return null;
+        if (v.TryGetValue<double>(out var d)) return d;
+        if (v.TryGetValue<JsonElement>(out var e) && e.ValueKind == JsonValueKind.Number && e.TryGetDouble(out d)) return d;
+        return null;
+    }
+
+    static long? ResetsAt(JsonNode? node)
+    {
+        if (Number(node) is { } d) return double.IsFinite(d) && d > 0 && d < 1e11 ? (long)d : null;
+        if (Text(node) is { } s && DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var at))
+        {
+            var unix = at.ToUnixTimeSeconds();
+            return unix > 0 && unix < 100_000_000_000 ? unix : null;
+        }
+        return null;
+    }
+}
+
+// Lid Awake's entries in Claude Code's settings file, %USERPROFILE%\.claude\settings.json: a
+// `Stop` and a `Notification` hook running "<LidAwake.exe>" --claude-event, and a `statusLine`
+// running "<LidAwake.exe>" --claude-statusline (only when there is no status line yet). Changed
+// only when the owner asks (the tray item, or the installer's question), by a JSON merge: every
+// other key and hook stays exactly as it was. An entry is ours when its command contains our flag.
+// The file is backed up (settings.json.lidawake-backup) before it is first changed, written to a
+// temp file first, and left alone (with the reason) when it isn't valid JSON.
+public sealed class ClaudeSettingsFile
+{
+    public const string BackupSuffix = ".lidawake-backup";
+    public static readonly string[] Events = { "Stop", "Notification" };
+    // Seconds Claude Code waits for our hook (it takes a fraction of one).
+    public const int HookTimeout = 10;
+    // A settings file bigger than this is not one to rewrite.
+    public const int MaxBytes = 4 * 1024 * 1024;
+
+    public enum Setup { Off, On, Unreadable }
+
+    // Ok false: nothing changed, and Message says why. TheirStatusLine: theirs was kept.
+    public readonly record struct Result(bool Ok, bool Changed, string Message, bool TheirStatusLine = false);
+
+    readonly string path;
+
+    public ClaudeSettingsFile(string? path = null) =>
+        this.path = path ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "settings.json");
+
+    public string FilePath => path;
+
+    // The command Claude Code runs: the absolute path in quotes, with forward slashes, which both
+    // cmd.exe and Git Bash read the same way.
+    public static string Command(string exe, string flag) => "\"" + exe.Replace('\\', '/') + "\" " + flag;
+
+    public static bool IsOurs(JsonNode? entry, string flag) =>
+        entry is JsonObject o && o["command"] is JsonValue v && v.TryGetValue<string>(out var c) && c.Contains(flag, StringComparison.Ordinal);
+
+    // A path the shells would read differently ($, `, %, !, a quote) is never written.
+    public static bool UsablePath(string exe) =>
+        Path.IsPathFullyQualified(exe) && exe.IndexOfAny(new[] { '"', '$', '`', '%', '!' }) < 0;
+
+    // On: both hooks of ours are there.
+    public Setup State()
+    {
+        if (Load(out var root) is { } failed) return failed.Ok ? Setup.Off : Setup.Unreadable;
+        var hooks = root!["hooks"] as JsonObject;
+        return Events.All(e => Ours(hooks?[e] as JsonArray, ClaudeHook.EventFlag).Any()) ? Setup.On : Setup.Off;
+    }
+
+    public Result Install(string exe)
+    {
+        if (!UsablePath(exe)) return new Result(false, false, $"Lid Awake's place ({exe}) can't be written into Claude Code's settings safely. Nothing was changed.");
+        if (Load(out var root) is { } failed && !failed.Ok) return failed;
+        root ??= new JsonObject();
+        var before = root.ToJsonString();
+        var hooks = root["hooks"] as JsonObject;
+        if (hooks == null) root["hooks"] = hooks = new JsonObject();
+        var command = Command(exe, ClaudeHook.EventFlag);
+        foreach (var e in Events)
+        {
+            var list = hooks[e] as JsonArray;
+            if (list == null) hooks[e] = list = new JsonArray();
+            var ours = Ours(list, ClaudeHook.EventFlag).ToList();
+            foreach (var entry in ours) entry["command"] = command;  // an older place of LidAwake.exe
+            if (ours.Count == 0)
+                list.Add((JsonNode)new JsonObject { ["hooks"] = new JsonArray(new JsonObject { ["type"] = "command", ["command"] = command, ["timeout"] = HookTimeout }) });
+        }
+        bool theirs = false;
+        var statusCommand = Command(exe, ClaudeHook.StatusLineFlag);
+        if (!root.ContainsKey("statusLine")) root["statusLine"] = new JsonObject { ["type"] = "command", ["command"] = statusCommand };
+        else if (IsOurs(root["statusLine"], ClaudeHook.StatusLineFlag)) root["statusLine"]!["command"] = statusCommand;
+        else theirs = true;
+        var note = theirs
+            ? " Your own status line is kept, so the usage numbers come from Lid Awake's /usage check instead."
+            : "";
+        if (root.ToJsonString() == before)
+            return new Result(true, false, "Claude Code is already set up for Lid Awake." + note, theirs);
+        var real = RealPath();
+        try
+        {
+            if (File.Exists(real)) File.Copy(real, path + BackupSuffix, overwrite: true);
+        }
+        catch (Exception e) { return new Result(false, false, $"Couldn't back up {path}: {e.Message} Nothing was changed."); }
+        if (!Write(real, root)) return new Result(false, false, $"Couldn't write {path}. Nothing was changed.");
+        return new Result(true, true, $"Added Lid Awake's hooks and status line to {path} (a copy of the old file is in {path + BackupSuffix})." + note, theirs);
+    }
+
+    // Our entries take the new place of LidAwake.exe. Nothing is added: what the owner removed stays removed.
+    public Result Update(string exe)
+    {
+        if (!UsablePath(exe)) return new Result(false, false, "unusable path");
+        if (Load(out var root) is { } failed) return failed;
+        var before = root!.ToJsonString();
+        var command = Command(exe, ClaudeHook.EventFlag);
+        if (root["hooks"] is JsonObject hooks)
+            foreach (var e in Events)
+                foreach (var entry in Ours(hooks[e] as JsonArray, ClaudeHook.EventFlag)) entry["command"] = command;
+        if (IsOurs(root["statusLine"], ClaudeHook.StatusLineFlag)) root["statusLine"]!["command"] = Command(exe, ClaudeHook.StatusLineFlag);
+        if (root.ToJsonString() == before) return new Result(true, false, "Nothing to change.");
+        return Write(RealPath(), root) ? new Result(true, true, $"Lid Awake's place updated in {path}.") : new Result(false, false, $"Couldn't write {path}.");
+    }
+
+    // Exactly what Install added: our hooks, a group or list they leave empty, an empty "hooks",
+    // and our status line. Anything else, also an empty list that was there before, stays.
+    public Result Remove()
+    {
+        if (Load(out var root) is { } failed) return failed.Ok ? new Result(true, false, "Claude Code has no settings file: nothing to remove.") : failed;
+        var before = root!.ToJsonString();
+        if (root["hooks"] is JsonObject hooks)
+        {
+            bool removedAny = false;
+            foreach (var e in Events)
+            {
+                if (hooks[e] is not JsonArray list) continue;
+                bool removedHere = false;
+                for (int g = list.Count - 1; g >= 0; g--)
+                {
+                    if (list[g] is not JsonObject group || group["hooks"] is not JsonArray entries) continue;
+                    bool fromGroup = false;
+                    for (int i = entries.Count - 1; i >= 0; i--)
+                        if (IsOurs(entries[i], ClaudeHook.EventFlag)) { entries.RemoveAt(i); fromGroup = true; }
+                    if (!fromGroup) continue;
+                    removedHere = true;
+                    if (entries.Count == 0) list.RemoveAt(g);
+                }
+                if (removedHere && list.Count == 0) hooks.Remove(e);
+                removedAny |= removedHere;
+            }
+            if (removedAny && hooks.Count == 0) root.Remove("hooks");
+        }
+        if (IsOurs(root["statusLine"], ClaudeHook.StatusLineFlag)) root.Remove("statusLine");
+        if (root.ToJsonString() == before) return new Result(true, false, "Claude Code has none of Lid Awake's hooks: nothing to remove.");
+        return Write(RealPath(), root)
+            ? new Result(true, true, $"Removed Lid Awake's hooks and status line from {path}.")
+            : new Result(false, false, $"Couldn't write {path}. Nothing was changed.");
+    }
+
+    static IEnumerable<JsonObject> Ours(JsonArray? list, string flag)
+    {
+        if (list == null) yield break;
+        foreach (var group in list)
+            if (group is JsonObject g && g["hooks"] is JsonArray entries)
+                foreach (var entry in entries)
+                    if (IsOurs(entry, flag)) yield return (JsonObject)entry!;
+    }
+
+    // null with `root` set: loaded. A Result with Ok true: there is no file (root null). Ok false:
+    // it can't be used, and why.
+    Result? Load(out JsonObject? root)
+    {
+        root = null;
+        var real = RealPath();
+        if (!File.Exists(real)) return new Result(true, false, "no file");
+        string text;
+        try
+        {
+            if (new FileInfo(real).Length > MaxBytes) return new Result(false, false, $"{path} is too big to change. Nothing was changed.");
+            text = File.ReadAllText(real);
+        }
+        catch (Exception e) { return new Result(false, false, $"Couldn't read {path}: {e.Message}"); }
+        JsonNode? node;
+        try { node = JsonNode.Parse(text); }
+        catch (JsonException e)
+        {
+            return new Result(false, false, $"{path} isn't valid JSON ({e.Message}), so Lid Awake left it alone. Fix it in Claude Code (or an editor) and try again.");
+        }
+        if (node is not JsonObject o) return new Result(false, false, $"{path} isn't a JSON object, so Lid Awake left it alone.");
+        if (o.ContainsKey("hooks") && o["hooks"] is not JsonObject)
+            return new Result(false, false, $"\"hooks\" in {path} isn't an object, so Lid Awake left the file alone.");
+        if (o["hooks"] is JsonObject h)
+            foreach (var e in Events)
+                if (h.ContainsKey(e) && h[e] is not JsonArray)
+                    return new Result(false, false, $"\"hooks\".\"{e}\" in {path} isn't a list, so Lid Awake left the file alone.");
+        root = o;
+        return null;
+    }
+
+    // A settings file that is a link (dotfiles) is changed where it really is.
+    string RealPath()
+    {
+        try { return new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? path; }
+        catch (Exception) { return path; }
+    }
+
+    static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    static bool Write(string file, JsonObject root)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
+            return HistoryStore.WriteAtomic(file, root.ToJsonString(Pretty) + Environment.NewLine);
+        }
+        catch (Exception) { return false; }
+    }
+}

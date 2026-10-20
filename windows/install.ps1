@@ -50,6 +50,29 @@ function Invoke-Quietly([scriptblock]$command) {
     try { & $command } finally { $ErrorActionPreference = $saved }
 }
 
+# Runs the installed LidAwake.exe --claude-setup <on|off|status> (hidden, at most 30 seconds): the
+# same code as the tray item "Claude alerts and usage from Claude Code...". Returns its exit code
+# (-1 when it could not run) and what it printed. Status: 0 set up, 1 not set up, 2 no Claude
+# Code on this PC, 3 Claude Code's settings file can't be read. On and off: 0 done, 3 refused.
+function Invoke-ClaudeSetup([string]$what) {
+    $out = Join-Path ([IO.Path]::GetTempPath()) ('LidAwake-claude-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    try {
+        $p = Start-Process -FilePath $exe -ArgumentList '--claude-setup', $what -PassThru -WindowStyle Hidden -RedirectStandardOutput $out
+        [void]$p.Handle  # Windows PowerShell 5.1 returns no ExitCode unless the handle is read
+        if (-not $p.WaitForExit(30000)) {
+            try { $p.Kill() } catch { }
+            return [pscustomobject]@{ Code = -1; Text = 'it did not finish.' }
+        }
+        $text = ''
+        if (Test-Path -LiteralPath $out) { $text = ([IO.File]::ReadAllText($out)).Trim() }
+        return [pscustomobject]@{ Code = $p.ExitCode; Text = $text }
+    } catch {
+        return [pscustomobject]@{ Code = -1; Text = $_.Exception.Message }
+    } finally {
+        Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-TailscaleSignedIn {
     try {
         $json = Invoke-Quietly { (& $tsExe status --json 2>$null) | Out-String }
@@ -205,6 +228,39 @@ if ($NoStart) {
         Show-Ok 'Running. Look for the Lid Awake icon by the clock.'
     } catch {
         Stop-Here ('Lid Awake did not start: ' + $_.Exception.Message + ' Run this installer again.')
+    }
+}
+
+# ---- Optional: Claude ------------------------------------------------------------------
+# Only when Claude Code is on this PC (silent otherwise), and only with the owner's yes: it changes
+# Claude Code's settings file. Not asked in automated tests (-NoPause), or with nobody to answer.
+$claudeState = Invoke-ClaudeSetup 'status'
+$claudeLater = 'Later: right-click the Lid Awake icon by the clock -> Claude alerts and usage from Claude Code...'
+if ($claudeState.Code -eq 0) {
+    Show-Step 'Claude alerts on your phone (optional)'
+    Show-Ok 'Already set up'
+} elseif ($claudeState.Code -eq 3) {
+    Show-Step 'Claude alerts on your phone (optional)'
+    Show-Note "Skipped: Claude Code's settings file (.claude\settings.json in your user folder) isn't valid JSON, so Lid Awake left it alone."
+} elseif ($claudeState.Code -eq 1) {
+    Show-Step 'Claude alerts on your phone (optional)'
+    Show-Note 'Shows your Claude usage after each reply, and alerts your phone when Claude finishes or needs you.'
+    Show-Note "It adds Lid Awake to Claude Code's settings (a copy of the old file is saved first)."
+    if ($NoPause -or -not [Environment]::UserInteractive) {
+        Show-Note ('Skipped. ' + $claudeLater)
+    } else {
+        $answer = Read-Host '       Turn it on? [Y/n]'
+        if ($answer.Trim() -match '^(n|no)$') {
+            Show-Note ('Skipped. ' + $claudeLater)
+        } else {
+            $claudeOn = Invoke-ClaudeSetup 'on'
+            if ($claudeOn.Code -eq 0) {
+                Show-Ok 'Turned on. Claude Code picks it up in new sessions.'
+                if ($claudeOn.Text -match 'own status line') { Show-Note 'Your own status line is kept; Lid Awake asks Claude Code for the usage numbers itself.' }
+            } else {
+                Write-Host ('  [X] Not turned on: ' + $claudeOn.Text) -ForegroundColor Red
+            }
+        }
     }
 }
 
