@@ -39,7 +39,11 @@ static class Program
         var limits = new Limits(settings);
         var heat = new HeatSensor(TemperatureSources.Read);
         var safety = new SafetyCheck(limits, heat, readings.Power);
-        var status = new StatusInfo(readings, limits, heat);
+        // The phone's mouse and keyboard on this PC, and lock / display off / wake (POST /input,
+        // POST /power). Only through the owner's switches, which need the screen switch.
+        var nativeInput = new NativeInput();
+        var control = new RemoteControl(settings, new InputInjector(nativeInput), new NativePower(nativeInput));
+        var status = new StatusInfo(readings, limits, heat) { Control = control };
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body),
@@ -50,12 +54,12 @@ static class Program
                 // next /status already shows it; then applied at the tray.
                 limits.Set(name, on);
                 tray?.LimitsChanged();
-            });
+            }, control: control);
         string? startError = null;
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety, control);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
         Application.Run(tray);
@@ -81,6 +85,10 @@ sealed class TrayApp : ApplicationContext
     readonly Limits limits;
     readonly HeatSensor heat;
     readonly SafetyCheck safety;
+    // "Allow control from phone" (off to start with; it needs the screen switch).
+    readonly RemoteControl? control;
+    const string ControlTitle = "Allow control from phone";
+    readonly ToolStripMenuItem controlItem = new(ControlTitle);
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
@@ -104,8 +112,9 @@ sealed class TrayApp : ApplicationContext
     public AutoOff Countdown { get; }
 
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
-                   Limits limits, HeatSensor heat, SafetyCheck safety)
+                   Limits limits, HeatSensor heat, SafetyCheck safety, RemoteControl? control = null)
     {
+        this.control = control;
         this.machine = machine;
         this.auth = auth;
         this.phone = phone;
@@ -151,8 +160,14 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(timerMenu);
         menu.Items.Add(batteryItem);
         menu.Items.Add(heatItem);
+        if (control != null)
+        {
+            controlItem.Click += (_, _) => FlipControl();
+            menu.Items.Add(controlItem);
+            ShowControl();
+        }
         // Shown as they are now, and read again in the background (the item follows by Changed).
-        menu.Opening += (_, _) => { ShowLimits(); RefreshTemperature(); };
+        menu.Opening += (_, _) => { ShowLimits(); ShowControl(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
@@ -197,6 +212,8 @@ sealed class TrayApp : ApplicationContext
         timerCheck.Stop();
         serveCheck.Stop();
         try { safetyTimer.Dispose(); }
+        catch (Exception) { }
+        try { control?.ReleaseHeld(); }
         catch (Exception) { }
         base.ExitThreadCore();
     }
@@ -325,6 +342,27 @@ sealed class TrayApp : ApplicationContext
         bool available = heat.Available;
         heatItem.Enabled = available;
         heatItem.Text = available ? HeatTitle : HeatTitle + NoTemperature;
+    }
+
+    // ---- Control from the phone ----
+
+    // Ticked only while both switches are on; greyed out while the screen switch is off, as on
+    // the Mac, because control needs it.
+    void ShowControl()
+    {
+        if (control == null) return;
+        bool screen = control.ScreenAllowed;
+        controlItem.Enabled = screen;
+        controlItem.Checked = control.ControlAllowed;
+        controlItem.Text = screen ? ControlTitle : ControlTitle + " (needs screen viewing)";
+    }
+
+    void FlipControl()
+    {
+        if (control == null || !control.ScreenAllowed) return;
+        try { control.SetControl(!control.ControlAllowed); }
+        catch (Exception) { }  // the settings file couldn't be written: the switch stays as it was
+        ShowControl();
     }
 
     // Open the activity log in whatever the PC opens .log files with, or Notepad.
