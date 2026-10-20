@@ -266,6 +266,9 @@ public sealed class LiveServer : IDisposable
     {
         int count;
         lock (gate) { peers[peer.Id] = peer; count = peers.Count; }
+        // Turned off (or the screen withdrawn) between the handshake and here: CloseAll may have
+        // looked before this phone was listed, so it closes now rather than at the 2-second check.
+        if (!Allowed()) peer.Abort();
         Changed(count);
         LogQuietly("Screen viewing started · " + peer.Device);
         var sender = Task.Run(() => SendLoop(peer));
@@ -287,7 +290,8 @@ public sealed class LiveServer : IDisposable
                 try { camera.Closed(cs); }
                 catch (Exception) { }
             }
-            feed.Unsubscribe(peer.Id);
+            // Under CameraGate: a camera switch-over can't subscribe this closed phone again.
+            lock (peer.CameraGate) feed.Unsubscribe(peer.Id);
             lock (gate) { peers.Remove(peer.Id); count = peers.Count; }
             Changed(count);
             LogQuietly("Screen viewing ended · " + peer.Device);
@@ -314,6 +318,7 @@ public sealed class LiveServer : IDisposable
         if (camera == null || peer.CameraSocket is not { } cs) return;
         lock (peer.CameraGate)
         {
+            if (peer.Closed) return;
             bool open;
             try { open = camera.IsOpen(cs); }
             catch (Exception) { open = false; }
