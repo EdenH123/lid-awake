@@ -1,4 +1,3 @@
-using System.Management;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -28,9 +27,16 @@ public static class TemperatureMath
 // One round of temperature readings, in °C, each null when its source has none. They are kept
 // apart because they mean different things: the battery (its own sensor, or a laptop maker's
 // sensor labelled for the battery; limit maxBatteryTemp, 40 °C, and the only one sent as
-// batteryTemp), and the thermal zones or a maker's processor or board sensor, where 40 to 60 °C is
-// normal (limit MaxPcTemp, 90 °C).
-public readonly record struct TemperatureReading(double? Battery, double? Zone)
+// batteryTemp), and the PC itself: the thermal zones or a maker's board sensor, where 40 to 60 °C is
+// normal (ZoneLimit Limits.MaxPcTemp, 90 °C), or, only on a PC with no board-type sensor, a maker's
+// processor die sensor (ZoneLimit Limits.MaxDieTemp, 100 °C).
+// ZoneConfirmed: the zone may turn Lid Awake off or refuse a turn-on. TemperatureChain sets it only
+// once the zone has been at or above ZoneLimit on HotReads reads in a row and has been seen at two
+// different values in this run (a sensor that never moves is not trusted). A reading made directly
+// (tests) counts as confirmed. Throttled: Windows has held the processor to half its speed or less
+// (PercentPassiveLimit) on HotReads reads in a row, the Mac's thermal state "critical".
+public readonly record struct TemperatureReading(double? Battery, double? Zone, int ZoneLimit = Limits.MaxPcTemp,
+    bool ZoneConfirmed = true, bool Throttled = false)
 {
     public static readonly TemperatureReading None = new(null, null);
 
@@ -39,17 +45,22 @@ public readonly record struct TemperatureReading(double? Battery, double? Zone)
 }
 
 // Windows' own sources every round (as the Mac checks both the battery temperature and the thermal
-// state), and the laptop makers' WMI sensors when those give nothing (TemperatureChain). Never
-// throws; blocks for about 3 seconds per WMI query that answers slowly, so never call it on the UI
-// thread (HeatSensor calls it from the safety check's background timer).
+// state), and the laptop makers' WMI sensors for what those leave out (TemperatureChain). Never
+// throws; blocks for about 3 seconds per WMI query that answers slowly (the makers' together at most
+// about 6), so never call it on the UI thread (HeatSensor calls it from the safety check's
+// background timer).
 public static class TemperatureSources
 {
     // Told which source the temperature comes from, once per source (the tray sets this to the
     // activity log's Write): "Temperature from HP BIOS sensors".
     public static Action<string>? Log { get; set; }
 
-    static readonly TemperatureChain chain = new(BatteryTemperature.Read, ThermalZones.Read,
-        () => ThermalZoneReading.Read()?.Hottest, VendorSensors.All, Wmi.Shared, log: text => Log?.Invoke(text));
+    // The processor load between two rounds (GetSystemTimes), for the stuck-sensor check.
+    static readonly SystemReadings cpu = new();
+    static readonly CpuMeter meter = new();
+
+    static readonly TemperatureChain chain = new(BatteryTemperature.Read, ZoneCounters.Read, VendorSensors.All, Wmi.Shared,
+        load: () => cpu.Cpu() is { } times ? meter.Percent(times, Environment.TickCount64) : null, log: text => Log?.Invoke(text));
 
     public static TemperatureReading Read()
     {
@@ -354,47 +365,45 @@ public static class BatteryTemperature
     }
 }
 
-// ACPI thermal zones through WMI (root\WMI MSAcpi_ThermalZoneTemperature, tenths of a kelvin): the
-// hottest zone in °C, or null. Most PCs refuse this without admin rights (access denied), and many
-// have no zones: both are null. The query gets 3 seconds; a query still stuck from an earlier call
-// is left to finish and no second one is started.
+// ACPI thermal zones through WMI (root\WMI MSAcpi_ThermalZoneTemperature, tenths of a kelvin), each
+// by its InstanceName. Most PCs refuse this without admin rights (access denied), and many have no
+// zones: TemperatureChain then leaves it alone for 10 minutes. Through Wmi: 3 seconds per query.
 public static class ThermalZones
 {
     public static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(3);
-    static readonly OneAtATime<double?> query = new();
+    public const string Scope = @"root\WMI";
+    public const string Query = "SELECT InstanceName, CurrentTemperature FROM MSAcpi_ThermalZoneTemperature";
 
-    public static double? Read() => query.Run(Query, QueryTimeout, null);
-
-    static double? Query()
+    // The hottest zone in °C, or null (none, refused, failed).
+    public static double? Read()
     {
-        try
-        {
-            // System.Management's options, not System.IO's (the implicit usings bring in both names).
-            var options = new System.Management.EnumerationOptions { Timeout = QueryTimeout, ReturnImmediately = true, Rewindable = false };
-            using var searcher = new ManagementObjectSearcher(new ManagementScope(@"root\WMI"),
-                new ObjectQuery("SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature"), options);
-            using var zones = searcher.Get();
-            double? hottest = null;
-            foreach (ManagementBaseObject zone in zones)
-            {
-                using (zone)
-                {
-                    if (Whole(zone, "CurrentTemperature") is { } tenths && TemperatureMath.FromTenthsOfKelvin(tenths) is { } celsius
-                        && (hottest == null || celsius > hottest))
-                        hottest = celsius;
-                }
-            }
-            return hottest;
-        }
+        try { return NamedZone.Hottest(Each(Wmi.Shared.Query(Scope, Query).Rows)); }
         catch (Exception) { return null; }
     }
 
-    // A whole-number property (CurrentTemperature, a uint32, and the counters of
-    // ThermalZoneInformation); anything else (missing, another type) is no reading.
-    internal static long? Whole(ManagementBaseObject zone, string name)
+    // Every zone with a CurrentTemperature (a uint32); Celsius null for garbage.
+    public static List<NamedZone> Each(IEnumerable<IReadOnlyDictionary<string, object?>> rows)
     {
-        try { return WmiValues.Whole(zone[name]); }
-        catch (Exception) { return null; }
+        var zones = new List<NamedZone>();
+        foreach (var row in rows)
+        {
+            if (!row.TryGetValue("CurrentTemperature", out var v) || WmiValues.Whole(v) is not { } tenths) continue;
+            string name = row.TryGetValue("InstanceName", out var n) && n is string s && s.Length > 0 ? s : "zone " + zones.Count;
+            zones.Add(new NamedZone(name, TemperatureMath.FromTenthsOfKelvin(tenths)));
+        }
+        return zones;
+    }
+}
+
+// One thermal zone's temperature, by its name; Celsius null when it gave garbage.
+public readonly record struct NamedZone(string Name, double? Celsius)
+{
+    public static double? Hottest(IEnumerable<NamedZone> zones)
+    {
+        double? hottest = null;
+        foreach (var z in zones)
+            if (z.Celsius is { } c && TemperatureMath.IsSane(c) && (hottest == null || c > hottest)) hottest = c;
+        return hottest;
     }
 }
 
@@ -469,50 +478,97 @@ public sealed record ThermalZoneReading(double? Hottest, int? PassiveLimit)
 {
     public static readonly ThermalZoneReading None = new(null, null);
 
+    public const string Scope = @"root\cimv2";
+    public const string Query =
+        "SELECT Name, HighPrecisionTemperature, Temperature, PercentPassiveLimit FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation";
+
+    // Each zone by its counter instance name ("\_TZ.TZ00"), for TemperatureChain's stuck-sensor check.
+    public IReadOnlyList<NamedZone> Zones { get; init; } = Array.Empty<NamedZone>();
+
+    public bool Equals(ThermalZoneReading? other) => other is not null && Hottest == other.Hottest
+        && PassiveLimit == other.PassiveLimit && Zones.SequenceEqual(other.Zones);
+
+    public override int GetHashCode() => HashCode.Combine(Hottest, PassiveLimit, Zones.Count);
+
     // Read again in the background at most this often (SystemReadings).
     public static readonly TimeSpan Every = TimeSpan.FromSeconds(15);
 
     // Each zone's temperature in tenths of a kelvin (HighPrecisionTemperature, else Temperature in
     // whole kelvins times 10) and its PercentPassiveLimit, as the counters give them (null: none).
     // A limit of 0 or over 100 is no reading: some zones have no passive cooling at all.
-    public static ThermalZoneReading From(IEnumerable<(long? Tenths, long? PassiveLimit)> zones)
+    public static ThermalZoneReading From(IEnumerable<(long? Tenths, long? PassiveLimit)> zones) =>
+        From(zones.Select((z, i) => ("zone " + i, z.Tenths, z.PassiveLimit)));
+
+    // The same, each zone with its name (Zones lists the ones with a temperature).
+    public static ThermalZoneReading From(IEnumerable<(string Name, long? Tenths, long? PassiveLimit)> zones)
     {
-        double? hottest = null;
         int? limit = null;
-        foreach (var (tenths, passive) in zones)
+        var named = new List<NamedZone>();
+        foreach (var (name, tenths, passive) in zones)
         {
-            if (tenths is { } t && TemperatureMath.FromTenthsOfKelvin(t) is { } celsius && (hottest == null || celsius > hottest))
-                hottest = celsius;
+            if (tenths is { } t) named.Add(new NamedZone(name, TemperatureMath.FromTenthsOfKelvin(t)));
             if (passive is >= 1 and <= 100 && (limit == null || passive < limit)) limit = (int)passive.Value;
         }
-        return new ThermalZoneReading(hottest, limit);
+        return new ThermalZoneReading(NamedZone.Hottest(named), limit)
+        {
+            Zones = named.Count == 0 ? Array.Empty<NamedZone>() : named,
+        };
     }
 
-    // Blocks for up to about 3 seconds (WMI): only in the background. Null when the query failed
-    // (then the last reading is kept); None when this PC has no zones.
+    // From the counters' WMI objects.
+    public static ThermalZoneReading FromRows(IEnumerable<IReadOnlyDictionary<string, object?>> rows) =>
+        From(rows.Select((row, i) =>
+        {
+            long? precise = Whole(row, "HighPrecisionTemperature"), kelvin = Whole(row, "Temperature");
+            long? tenths = precise > 0 ? precise : kelvin > 0 ? kelvin * 10 : null;
+            string name = row.TryGetValue("Name", out var n) && n is string s && s.Length > 0 ? s : "zone " + i;
+            return (name, tenths, Whole(row, "PercentPassiveLimit"));
+        }).ToList());
+
+    static long? Whole(IReadOnlyDictionary<string, object?> row, string name) =>
+        row.TryGetValue(name, out var v) ? WmiValues.Whole(v) : null;
+
+    // Through Wmi (3 seconds, one query at a time): only in the background. Null when the query
+    // failed or took too long (then the last reading is kept); None when this PC has no zones or
+    // may not read them. ZoneCounters shares one reading between its two users.
     public static ThermalZoneReading? Read()
     {
         try
         {
-            var options = new System.Management.EnumerationOptions { Timeout = ThermalZones.QueryTimeout, ReturnImmediately = true, Rewindable = false };
-            using var searcher = new ManagementObjectSearcher(new ManagementScope(@"root\cimv2"),
-                new ObjectQuery("SELECT HighPrecisionTemperature, Temperature, PercentPassiveLimit FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation"),
-                options);
-            using var zones = searcher.Get();
-            var read = new List<(long?, long?)>();
-            foreach (ManagementBaseObject zone in zones)
+            var result = Wmi.Shared.Query(Scope, Query);
+            return result.Outcome switch
             {
-                using (zone)
-                {
-                    long? precise = ThermalZones.Whole(zone, "HighPrecisionTemperature"), kelvin = ThermalZones.Whole(zone, "Temperature");
-                    long? tenths = precise > 0 ? precise : kelvin > 0 ? kelvin * 10 : null;
-                    read.Add((tenths, ThermalZones.Whole(zone, "PercentPassiveLimit")));
-                }
-            }
-            return From(read);
+                WmiOutcome.Rows => FromRows(result.Rows),
+                WmiOutcome.Missing => None,
+                _ => null,
+            };
         }
-        catch (ManagementException e) when (e.ErrorCode == ManagementStatus.InvalidClass) { return None; }
         catch (Exception) { return null; }
+    }
+}
+
+// The Thermal Zone Information counters, read at most every Fresh (10 seconds) for both their users:
+// the temperature chain on the safety check's thread and thermalState (SystemReadings), so one query
+// serves both. A read that fails is not kept, and the next caller tries again.
+public static class ZoneCounters
+{
+    public static readonly TimeSpan Fresh = TimeSpan.FromSeconds(10);
+    static readonly object gate = new();
+    static ThermalZoneReading? last;
+    static long lastAt;
+
+    public static ThermalZoneReading? Read()
+    {
+        lock (gate)
+        {
+            if (last != null && Environment.TickCount64 - lastAt < (long)Fresh.TotalMilliseconds) return last;
+        }
+        var read = ThermalZoneReading.Read();
+        if (read != null)
+        {
+            lock (gate) (last, lastAt) = (read, Environment.TickCount64);
+        }
+        return read;
     }
 }
 

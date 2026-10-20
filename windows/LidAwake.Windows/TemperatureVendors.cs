@@ -1,49 +1,90 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Management;
+using System.Text.RegularExpressions;
 
 namespace LidAwake;
 
-// The temperature sources in order (TemperatureSources.Read uses one of these for the whole app).
-// First Windows' own: the battery's sensor (IOCTL), the ACPI thermal zones (MSAcpi_ThermalZoneTemperature,
-// admin only on most PCs) and, when those zones say nothing, the Thermal Zone Information counters
-// (readable by any user). Only when all of them give nothing: the laptop makers' own WMI sensors
-// (VendorSensors.All, in that order), the first one with a sane reading. A vendor source that isn't
-// on this PC (no namespace, no class, access refused, no temperature sensor in it), or that failed
-// FailuresBeforeRest times in a row, is left alone for Recheck (10 minutes) before it is asked again.
-// Each WMI query gets 3 seconds (Wmi). Never throws. Blocks: call it only off the UI thread.
-// Which source gave the reading goes to the activity log, once per source per run.
+// Every temperature source, put together into one reading per round (TemperatureSources.Read uses
+// one chain for the whole app). Never throws. Blocks: call it only off the UI thread.
+//
+// The battery: its own sensor (IOCTL_BATTERY_QUERY_INFORMATION), else a maker's sensor labelled for
+// the battery. The PC itself (the zone), the first group that has a live reading:
+//   1. the ACPI thermal zones (MSAcpi_ThermalZoneTemperature, admin only on most PCs),
+//   2. a maker's board-type sensors (board, chassis, ambient, skin, memory, chipset...),
+//   3. the Thermal Zone Information counters (readable by any user),
+// all three with the 90 °C limit (Limits.MaxPcTemp); and only when none of them has one, a maker's
+// processor die sensors (cpu, core, package, gpu, "internal") with their own 100 °C limit
+// (Limits.MaxDieTemp), since a die runs far hotter than the board around it.
+// The makers' sources (VendorSensors.All, the first with a sane reading) are asked whenever the
+// battery or the ACPI zones have nothing, within MakersBudget (about 6 seconds) per round.
+//
+// A zone value is checked for life, per source and per zone: one that has not changed for
+// StuckAfter (30 minutes) while the processor load moved by LoadSwing (25) points or more is not a
+// real sensor (a fixed value the firmware reports) and is left out until it changes; the activity
+// log says so once per source. A zone may only turn Lid Awake off (ZoneConfirmed) once it has been
+// at or above its limit on HotReads (2) reads in a row and has been seen at two different values in
+// this run. Windows holding the processor to ThrottledLimit (50) percent or less on HotReads reads
+// in a row (PercentPassiveLimit) is Throttled.
+//
+// A WMI source that isn't on this PC (no namespace or class, access refused, no temperature sensor
+// in it), or that failed FailuresBeforeRest (3) times in a row, is left alone for Recheck (10
+// minutes). Which sources gave the reading goes to the activity log, once per combination per run.
 public sealed class TemperatureChain
 {
     public static readonly TimeSpan Recheck = TimeSpan.FromMinutes(10);
     public const int FailuresBeforeRest = 3;
+    public static readonly TimeSpan StuckAfter = TimeSpan.FromMinutes(30);
+    public const double LoadSwing = 25;
+    public const int HotReads = 2;
+    public const int ThrottledLimit = 50;
+    public static readonly TimeSpan MakersBudget = TimeSpan.FromSeconds(6);
 
     public const string FromBattery = "the battery's own sensor";
     public const string FromAcpiZones = "the ACPI thermal zones";
     public const string FromZoneCounters = "the thermal zone counters";
 
-    readonly Func<double?> battery, acpiZones, zoneCounters;
+    readonly Func<double?> battery;
+    readonly Func<ThermalZoneReading?> counters;
     readonly IReadOnlyList<VendorSource> vendors;
     readonly IWmi wmi;
+    readonly Func<double?> load;
     readonly Func<long> clock;
     readonly Action<string>? log;
     readonly object gate = new();
-    readonly long?[] restUntil;
-    readonly int[] failures;
+    readonly Dictionary<string, Resting> resting = new();
+    readonly Dictionary<string, Track> tracks = new();
     readonly HashSet<string> logged = new();
+    int hotStreak, throttledStreak;
 
-    // `battery`, `acpiZones` and `zoneCounters` are Windows' own sources (°C or null); `clock` is
-    // milliseconds that only go forward; `log` is the activity log's Write.
-    public TemperatureChain(Func<double?> battery, Func<double?> acpiZones, Func<double?> zoneCounters,
-        IReadOnlyList<VendorSource> vendors, IWmi wmi, Func<long>? clock = null, Action<string>? log = null)
+    sealed class Resting { public long? Until; public int Failures; }
+
+    // One zone's history: its value, since when, and the processor load's range since then.
+    sealed class Track
     {
-        (this.battery, this.acpiZones, this.zoneCounters) = (battery, acpiZones, zoneCounters);
-        (this.vendors, this.wmi, this.log) = (vendors, wmi, log);
-        this.clock = clock ?? (() => Environment.TickCount64);
-        restUntil = new long?[vendors.Count];
-        failures = new int[vendors.Count];
+        public double Value;
+        public long Since;
+        public double? LowLoad, HighLoad;
+        public bool Moved, Stuck;
     }
 
-    // What gave the last reading ("HP BIOS sensors", "the battery's own sensor"), null when nothing did.
+    // A zone that counts this round: its value and whether it has moved in this run.
+    readonly record struct Live(double Celsius, bool Moved);
+
+    // `battery` is the battery's own sensor (°C or null), `counters` the Thermal Zone Information
+    // counters (ZoneCounters.Read), `wmi` answers the ACPI zones' and the makers' queries, `load` the
+    // processor load in percent since the last call (null: unknown), `clock` milliseconds that only
+    // go forward, `log` the activity log's Write.
+    public TemperatureChain(Func<double?> battery, Func<ThermalZoneReading?> counters, IReadOnlyList<VendorSource> vendors,
+        IWmi wmi, Func<double?>? load = null, Func<long>? clock = null, Action<string>? log = null)
+    {
+        (this.battery, this.counters, this.vendors, this.wmi, this.log) = (battery, counters, vendors, wmi, log);
+        this.load = load ?? (() => null);
+        this.clock = clock ?? (() => Environment.TickCount64);
+    }
+
+    // What gave the last reading ("HP BIOS sensors", "the battery's own sensor and the thermal
+    // zone counters"), null when nothing did.
     public string? Source { get; private set; }
 
     public TemperatureReading Read()
@@ -52,66 +93,164 @@ public sealed class TemperatureChain
         {
             var reading = ReadOnce(out var source);
             Source = source;
-            if (source != null && logged.Add(source))
-            {
-                try { log?.Invoke("Temperature from " + source); }
-                catch (Exception) { }
-            }
+            if (source != null && logged.Add("from " + source)) Note("Temperature from " + source);
             return reading;
         }
     }
 
     TemperatureReading ReadOnce(out string? source)
     {
-        double? b = Sane(Try(battery)), z = Sane(Try(acpiZones));
-        bool counters = false;
-        if (z == null) counters = (z = Sane(Try(zoneCounters))) != null;
-        if (b != null || z != null)
+        double? cpu = Try(load);
+        double? b = Sane(Try(battery));
+        string? batteryFrom = b != null ? FromBattery : null;
+
+        // 1. The ACPI zones.
+        List<Live>? acpi = null;
+        if (Ask(ThermalZones.Scope, ThermalZones.Query) is { } found)
         {
-            var parts = new List<string>();
-            if (b != null) parts.Add(FromBattery);
-            if (z != null) parts.Add(counters ? FromZoneCounters : FromAcpiZones);
-            source = string.Join(" and ", parts);
-            return new TemperatureReading(b, z);
+            var zones = ThermalZones.Each(found.Rows);
+            if (zones.Count == 0) Rest(ThermalZones.Scope, ThermalZones.Query);
+            else acpi = Alive(FromAcpiZones, zones);
         }
-        for (int i = 0; i < vendors.Count; i++)
+        // The counters, every round: their PercentPassiveLimit is the throttling signal (one shared
+        // reading with thermalState, so this is no extra query).
+        ThermalZoneReading? counted = null;
+        try { counted = counters(); }
+        catch (Exception) { }
+        var counterZones = counted is { Zones.Count: > 0 } ? Alive(FromZoneCounters, counted.Zones) : new List<Live>();
+
+        // 2. The makers', for what Windows leaves out.
+        VendorSource? maker = null;
+        List<VendorSensor> sensors = new();
+        if (b == null || acpi is not { Count: > 0 }) (maker, sensors) = AskMakers();
+        var makerBoard = maker == null ? new List<Live>() : Alive(maker.Name, Group(sensors, SensorKind.Board));
+        var makerDie = maker == null ? new List<Live>() : Alive(maker.Name, Group(sensors, SensorKind.Die));
+        if (b == null && maker != null && NamedZone.Hottest(Group(sensors, SensorKind.Battery)) is { } makerBattery)
+            (b, batteryFrom) = (makerBattery, maker.Name);
+
+        // The zone: the first group with a live reading.
+        List<Live> zone = new();
+        string? zoneFrom = null;
+        int limit = Limits.MaxPcTemp;
+        if (acpi is { Count: > 0 }) (zone, zoneFrom) = (acpi, FromAcpiZones);
+        else if (makerBoard.Count > 0) (zone, zoneFrom) = (makerBoard, maker!.Name);
+        else if (counterZones.Count > 0) (zone, zoneFrom) = (counterZones, FromZoneCounters);
+        else if (makerDie.Count > 0) (zone, zoneFrom, limit) = (makerDie, maker!.Name, Limits.MaxDieTemp);
+
+        double? z = null;
+        bool moved = false;
+        foreach (var live in zone)
+            if (z == null || live.Celsius > z) (z, moved) = (live.Celsius, live.Moved);
+        hotStreak = z >= limit && moved ? hotStreak + 1 : 0;
+        throttledStreak = counted?.PassiveLimit <= ThrottledLimit ? throttledStreak + 1 : 0;
+
+        var parts = new List<string>();
+        if (batteryFrom != null) parts.Add(batteryFrom);
+        if (zoneFrom != null && zoneFrom != batteryFrom) parts.Add(zoneFrom);
+        source = parts.Count == 0 ? null : string.Join(" and ", parts);
+        return new TemperatureReading(b, z, limit, ZoneConfirmed: hotStreak >= HotReads, Throttled: throttledStreak >= HotReads);
+
+        // The zones that are alive this round, each tracked by its source and name.
+        List<Live> Alive(string from, IEnumerable<NamedZone> named)
         {
-            if (restUntil[i] is { } until && clock() < until) continue;
-            restUntil[i] = null;
-            var vendor = vendors[i];
-            WmiResult result;
-            try { result = wmi.Query(vendor.Scope, vendor.Query); }
-            catch (Exception) { result = WmiResult.Failed; }
-            switch (result.Outcome)
+            var alive = new List<Live>();
+            foreach (var n in named)
             {
-                case WmiOutcome.Missing:
-                    Rest(i);
-                    continue;
-                case WmiOutcome.Failed:
-                    if (++failures[i] >= FailuresBeforeRest) Rest(i);
-                    continue;
+                if (n.Celsius is not { } c || !TemperatureMath.IsSane(c)) continue;
+                if (Watch(from, n.Name, c, cpu) is { } live) alive.Add(live);
             }
-            failures[i] = 0;
-            var sensors = VendorSensors.Each(result.Rows, vendor.Parse);
-            // The class is there but holds no temperature sensor (fans and voltages only, or none
-            // with a reading): not on this PC either.
-            if (sensors.Count == 0) { Rest(i); continue; }
-            var found = VendorSensors.Hottest(sensors);
-            if (found.Any)
-            {
-                source = vendor.Name;
-                return found;
-            }
-            // Temperature sensors, but none with a sane value this time: asked again next round.
+            return alive;
         }
-        source = null;
-        return TemperatureReading.None;
     }
 
-    void Rest(int i)
+    // The first maker's source with a sane reading, and its temperature sensors.
+    (VendorSource?, List<VendorSensor>) AskMakers()
     {
-        restUntil[i] = clock() + (long)Recheck.TotalMilliseconds;
-        failures[i] = 0;
+        long start = clock();
+        foreach (var vendor in vendors)
+        {
+            if (clock() - start >= (long)MakersBudget.TotalMilliseconds) break;
+            if (Ask(vendor.Scope, vendor.Query) is not { } found) continue;
+            var sensors = VendorSensors.Each(found.Rows, vendor.Parse);
+            // The class is there but holds no temperature sensor (fans and voltages only, or none
+            // with a reading): not on this PC either.
+            if (sensors.Count == 0) { Rest(vendor.Scope, vendor.Query); continue; }
+            if (sensors.Any(s => s.Celsius is { } c && TemperatureMath.IsSane(c))) return (vendor, sensors);
+            // Temperature sensors, but none with a sane value this time: asked again next round.
+        }
+        return (null, new List<VendorSensor>());
+    }
+
+    static IEnumerable<NamedZone> Group(List<VendorSensor> sensors, SensorKind kind) =>
+        sensors.Where(s => s.Kind == kind).Select(s => new NamedZone(s.Label, s.Celsius));
+
+    // Null when that source rests, or when it isn't on this PC or failed (then it may rest).
+    WmiResult? Ask(string scope, string query)
+    {
+        var state = State(scope, query);
+        if (state.Until is { } until && clock() < until) return null;
+        state.Until = null;
+        WmiResult result;
+        try { result = wmi.Query(scope, query); }
+        catch (Exception) { result = WmiResult.Failed; }
+        switch (result.Outcome)
+        {
+            case WmiOutcome.Missing:
+                Rest(scope, query);
+                return null;
+            case WmiOutcome.Failed:
+                if (++state.Failures >= FailuresBeforeRest) Rest(scope, query);
+                return null;
+        }
+        state.Failures = 0;
+        return result;
+    }
+
+    Resting State(string scope, string query)
+    {
+        string key = scope + "\n" + query;
+        if (!resting.TryGetValue(key, out var state)) resting[key] = state = new Resting();
+        return state;
+    }
+
+    void Rest(string scope, string query)
+    {
+        var state = State(scope, query);
+        state.Until = clock() + (long)Recheck.TotalMilliseconds;
+        state.Failures = 0;
+    }
+
+    // The zone `name` of `from` read `celsius`: null while it is stuck.
+    Live? Watch(string from, string name, double celsius, double? cpu)
+    {
+        long now = clock();
+        string key = from + "\n" + name;
+        if (!tracks.TryGetValue(key, out var t)) tracks[key] = t = new Track { Value = celsius, Since = now };
+        else if (t.Value != celsius)
+        {
+            (t.Value, t.Since, t.LowLoad, t.HighLoad) = (celsius, now, null, null);
+            t.Moved = true;
+            t.Stuck = false;
+        }
+        if (cpu is { } l)
+        {
+            if (t.LowLoad == null || l < t.LowLoad) t.LowLoad = l;
+            if (t.HighLoad == null || l > t.HighLoad) t.HighLoad = l;
+        }
+        if (!t.Stuck && now - t.Since >= (long)StuckAfter.TotalMilliseconds && t.HighLoad - t.LowLoad >= LoadSwing)
+        {
+            t.Stuck = true;
+            if (logged.Add("stuck " + from))
+                Note($"{char.ToUpperInvariant(from[0])}{from[1..]} have said {TemperatureMath.OneDecimal(celsius).ToString("0.0", CultureInfo.InvariantCulture)}°C " +
+                     $"for {StuckAfter.TotalMinutes:0} minutes while the processor load changed: not used");
+        }
+        return t.Stuck ? null : new Live(celsius, t.Moved);
+    }
+
+    void Note(string text)
+    {
+        try { log?.Invoke(text); }
+        catch (Exception) { }
     }
 
     static double? Try(Func<double?> read)
@@ -124,13 +263,17 @@ public sealed class TemperatureChain
 }
 
 // One vendor's sensor class: where it is, and how one of its objects reads (null: not a
-// temperature sensor, or one with no reading at all).
+// temperature sensor, or one with no reading at all). Name says it in the activity log, after
+// "Temperature from" and "The".
 public sealed record VendorSource(string Name, string Scope, string Query, Func<IReadOnlyDictionary<string, object?>, VendorSensor?> Parse);
 
-// One temperature sensor: its label, its temperature in °C (null: garbage this time) and whether
-// it measures the battery (then it gets the battery's 40 °C limit and is sent as batteryTemp;
-// everything else is the processor, the board or a zone, with the 90 °C limit).
-public readonly record struct VendorSensor(string Label, double? Celsius, bool Battery);
+// What a maker's sensor measures, from its label: the battery (the 40 °C limit, sent as
+// batteryTemp), the board around the processor (the 90 °C limit), or the processor's die itself
+// (the 100 °C limit, used only on a PC with no board-type sensor).
+public enum SensorKind { Battery, Board, Die }
+
+// One temperature sensor: its label, its temperature in °C (null: garbage this time), and its kind.
+public readonly record struct VendorSensor(string Label, double? Celsius, SensorKind Kind);
 
 public static class VendorSensors
 {
@@ -175,21 +318,28 @@ public static class VendorSensors
     public static readonly VendorSource DellCommandMonitor =
         new("Dell Command | Monitor sensors", @"root\dcim\sysman", "SELECT * FROM DCIM_NumericSensor", Dell);
 
-    // Any PC: root\cimv2 Win32_TemperatureProbe, CurrentReading sint32 in tenths of a degree C.
-    // Microsoft says WMI doesn't fill CurrentReading today (SMBIOS has no live reading), so this
-    // almost never gives anything; it costs one quick query every 10 minutes.
-    // https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-temperatureprobe
-    public static readonly VendorSource WindowsProbes =
-        new("Windows temperature probes", @"root\cimv2", "SELECT * FROM Win32_TemperatureProbe", Probe);
-
     // Left out, as nothing could be confirmed: Lenovo (root\Lenovo Lenovo_Battery only exists when
-    // Commercial Vantage's policy writes it, and no temperature property is documented; Vantage
-    // shows the battery temperature, but not through a documented class), ASUS (AsusAtkWmi_WMNB in
-    // root\WMI is a method, DSTS, that needs admin rights and a per-model device id, and the Linux
-    // asus-wmi driver found models answering 1 deci-kelvin), and root\WMI BatteryTemperature (the
-    // battery class driver's WMI copy of the same IOCTL value Lid Awake already reads, and no
-    // documentation of the class).
-    public static readonly IReadOnlyList<VendorSource> All = new[] { HpInstrumentedBios, HpAcpiWmi, DellCommandMonitor, WindowsProbes };
+    // Commercial Vantage's policy writes it, and no temperature property is documented), ASUS
+    // (AsusAtkWmi_WMNB in root\WMI is a method, DSTS, that needs admin rights and a per-model device
+    // id, and the Linux asus-wmi driver found models answering 1 deci-kelvin), root\WMI
+    // BatteryTemperature (the battery class driver's WMI copy of the same IOCTL value Lid Awake
+    // already reads, and no documentation of the class), and root\cimv2 Win32_TemperatureProbe
+    // (Microsoft: WMI doesn't fill CurrentReading, the SMBIOS values are static;
+    // https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-temperatureprobe).
+    public static readonly IReadOnlyList<VendorSource> All = new[] { HpInstrumentedBios, HpAcpiWmi, DellCommandMonitor };
+
+    // Whole words, so "Battery Temperature" and "BATT Temp" count but "Battery Charger IC" (the
+    // charging circuit, part of the board) doesn't.
+    static readonly Regex BatteryWord = new(@"\bbatt(ery)?\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    static readonly Regex NotTheCells = new(@"\b(charg\w*|ic|fet|circuit|pmic|vr|regulator)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    static readonly Regex DieWord = new(@"\b(cpu|gpu|core)\d*\b|\b(processor|package|internal)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    public static SensorKind Kind(string? label)
+    {
+        label ??= "";
+        if (BatteryWord.IsMatch(label) && !NotTheCells.IsMatch(label)) return SensorKind.Battery;
+        return DieWord.IsMatch(label) ? SensorKind.Die : SensorKind.Board;
+    }
 
     public static VendorSensor? Hp(IReadOnlyDictionary<string, object?> row)
     {
@@ -211,13 +361,6 @@ public static class VendorSensors
         return Numeric(row, label);
     }
 
-    public static VendorSensor? Probe(IReadOnlyDictionary<string, object?> row)
-    {
-        if (Whole(row, "CurrentReading") is not { } tenths) return null;
-        string label = Text(row, "Name") ?? Text(row, "Description") ?? Text(row, "DeviceID") ?? "";
-        return new VendorSensor(label, Degrees(tenths, DegreesC, -1), IsBattery(label));
-    }
-
     // A CIM_NumericSensor-style reading: CurrentReading x 10^UnitModifier, in BaseUnits. Not a
     // sensor when the unit isn't a temperature (an HP "Thermal Index" in "Other" units) or there
     // is no reading at all.
@@ -226,15 +369,20 @@ public static class VendorSensors
         if (Whole(row, "BaseUnits") is not { } units || units is not (DegreesC or DegreesF or DegreesK)
             || Whole(row, "CurrentReading") is not { } reading)
             return null;
-        return new VendorSensor(label, Degrees(reading, units, Whole(row, "UnitModifier") ?? 0), IsBattery(label));
+        return new VendorSensor(label, Degrees(reading, units, Whole(row, "UnitModifier") ?? 0), Kind(label));
     }
 
-    // °C from a raw reading, its base unit and its power of ten; null for a raw 0 (no reading: no
-    // laptop is at exactly 0 °C, as the kelvin sources treat a raw 0), any other unit, a modifier
-    // that is garbage, or a value outside the sane range.
+    // A raw value that means "no reading": 0 (no laptop is at exactly 0 °C, as the kelvin sources
+    // treat a raw 0), and the usual "not there" fillers, rejected before any scaling (0x7FFF at
+    // UnitModifier -3 would otherwise read as a plausible 32.8 °C).
+    public static bool IsSentinel(long reading) =>
+        reading is 0 or -1 or 0x7FFF or 0xFFFF or 0xFFFFFFFF or int.MinValue or int.MaxValue;
+
+    // °C from a raw reading, its base unit and its power of ten; null for a sentinel, any other unit,
+    // a modifier that is garbage, or a value outside the sane range.
     public static double? Degrees(long reading, long baseUnits, long unitModifier)
     {
-        if (reading == 0 || unitModifier is < -MaxModifier or > MaxModifier) return null;
+        if (IsSentinel(reading) || unitModifier is < -MaxModifier or > MaxModifier) return null;
         // Divided for a negative power, so tenths come out as the nearest double (452 -> 45.2).
         double value = unitModifier < 0 ? reading / Math.Pow(10, -unitModifier) : reading * Math.Pow(10, unitModifier);
         double celsius = baseUnits switch
@@ -246,10 +394,6 @@ public static class VendorSensors
         };
         return TemperatureMath.IsSane(celsius) ? celsius : null;
     }
-
-    // A sensor labelled for the battery ("Battery Temperature", "BATT Temp"); anything else is the
-    // processor, the board or a zone.
-    public static bool IsBattery(string? label) => Mentions(label, "batt");
 
     // Every row that is a temperature sensor; a row that can't be read is skipped.
     public static List<VendorSensor> Each(IEnumerable<IReadOnlyDictionary<string, object?>> rows, Func<IReadOnlyDictionary<string, object?>, VendorSensor?> parse)
@@ -264,19 +408,6 @@ public static class VendorSensors
             catch (Exception) { }
         }
         return sensors;
-    }
-
-    // The hottest battery sensor and the hottest of the others, each null without a sane one.
-    public static TemperatureReading Hottest(IEnumerable<VendorSensor> sensors)
-    {
-        double? battery = null, zone = null;
-        foreach (var s in sensors)
-        {
-            if (s.Celsius is not { } c || !TemperatureMath.IsSane(c)) continue;
-            if (s.Battery) { if (battery == null || c > battery) battery = c; }
-            else if (zone == null || c > zone) zone = c;
-        }
-        return new TemperatureReading(battery, zone);
     }
 
     static bool Mentions(string? text, string word) => text?.Contains(word, StringComparison.OrdinalIgnoreCase) == true;
@@ -299,14 +430,15 @@ public sealed record WmiResult(WmiOutcome Outcome, IReadOnlyList<IReadOnlyDictio
     public static WmiResult Of(IReadOnlyList<IReadOnlyDictionary<string, object?>> rows) => new(WmiOutcome.Rows, rows);
 }
 
-// One WMI query, so the vendor sources can be tested with made-up objects.
+// One WMI query, so the sources can be tested with made-up objects.
 public interface IWmi
 {
     WmiResult Query(string scope, string query);
 }
 
-// The real WMI: each query on the thread pool, given ThermalZones.QueryTimeout (3 s); one still
-// stuck from an earlier call is left to finish and counts as Failed, without starting a second.
+// The real WMI: each query on the thread pool, given ThermalZones.QueryTimeout (3 s), through
+// OneAtATime: callers of the same query share it, and one stuck past the timeout counts as Failed
+// without a second one being started.
 public sealed class Wmi : IWmi
 {
     public static readonly Wmi Shared = new();
@@ -352,25 +484,39 @@ public sealed class Wmi : IWmi
         or ManagementStatus.ProviderLoadFailure;
 }
 
-// Runs a slow call on the thread pool and waits for it up to a timeout; `fallback` when it takes
-// longer or throws, or while the previous call is still running (that one is left to finish, and
-// no second one is started).
+// Runs a slow call on the thread pool and waits for it up to a timeout. A caller that comes while a
+// call is running waits for that same call, up to the timeout counted from when it started, so
+// two users of one query share it; once a call has run past the timeout it is left to finish and
+// every caller gets `fallback` at once, without a second call being started. `fallback` also when
+// the call throws.
 public sealed class OneAtATime<T>
 {
     readonly object gate = new();
     Task<T>? pending;
+    long startedAt;
 
     public T Run(Func<T> call, TimeSpan timeout, T fallback)
     {
         try
         {
             Task<T> task;
+            long wait = (long)timeout.TotalMilliseconds;
             lock (gate)
             {
-                if (pending is { IsCompleted: false }) return fallback;
-                task = pending = Task.Run(call);
+                long now = Environment.TickCount64;
+                if (pending is { IsCompleted: false })
+                {
+                    wait -= now - startedAt;
+                    if (wait <= 0) return fallback;
+                    task = pending;
+                }
+                else
+                {
+                    task = pending = Task.Run(call);
+                    startedAt = now;
+                }
             }
-            return task.Wait(timeout) ? task.Result : fallback;
+            return task.Wait(TimeSpan.FromMilliseconds(wait)) ? task.Result : fallback;
         }
         catch (Exception) { return fallback; }
     }

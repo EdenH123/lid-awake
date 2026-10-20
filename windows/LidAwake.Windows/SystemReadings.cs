@@ -108,7 +108,7 @@ public static class DisplayScale
 // throwing, so one failing call only leaves its field out. Safe to call from any thread.
 public sealed class SystemReadings : ISystemReadings, ISlowReadings
 {
-    readonly BackgroundValue<ThermalZoneReading> zones = new(ThermalZoneReading.Read, ThermalZoneReading.Every);
+    readonly BackgroundValue<ThermalZoneReading> zones = new(ZoneCounters.Read, ThermalZoneReading.Every);
     readonly BackgroundValue<BatteryCharge> charge = new(BatteryCharge.Read, BatteryCharge.Every);
 
     public ThermalZoneReading? Zones() => zones.Latest;
