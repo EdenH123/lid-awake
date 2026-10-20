@@ -33,8 +33,9 @@ static class Program
         // two requests. It is built on the web server's threads and touches no WinForms controls
         // (IsOn is a volatile field, and the timer is under its own lock).
         var readings = new SystemReadings();
-        // The safety switches and the last temperature read, shared by /status, POST /limits and
-        // the tray's 15-second check. The temperature is read only on that check's background timer.
+        // The safety switches and the last temperatures read (battery and thermal zones, kept
+        // apart), shared by /status, POST /limits and the tray's 15-second check. The temperatures
+        // are only read off the UI thread.
         var limits = new Limits(settings);
         var heat = new HeatSensor(TemperatureSources.Read);
         var safety = new SafetyCheck(limits, heat, readings.Power);
@@ -83,8 +84,10 @@ sealed class TrayApp : ApplicationContext
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
     // temperature can take a few seconds to read. What it finds is applied on the UI thread.
     readonly System.Threading.Timer safetyTimer;
-    int safetyChecking;  // 1 while a check runs: a slow one is never doubled
-    int safetyAgain;     // 1 when a check was asked for while one ran: it runs once more
+    // One check at a time; one asked for during a check runs right after it (never dropped).
+    readonly Coalescer checks;
+    // Turns off on the UI thread, deciding again there (two queued posts turn off once).
+    readonly SafetyStop stopper;
     // Checked every couple of seconds on the UI thread: when the time is up, Lid Awake turns off.
     readonly System.Windows.Forms.Timer timerCheck = new() { Interval = 2000 };
     // Tailscale Serve is checked again every minute, as on the Mac (docs/API.md 9): added back
@@ -111,7 +114,14 @@ sealed class TrayApp : ApplicationContext
         this.heat = heat;
         this.safety = safety;
         Countdown = new AutoOff(settings);
-        safetyTimer = new System.Threading.Timer(_ => CheckSafety(read: true), null, Timeout.Infinite, Timeout.Infinite);
+        checks = new Coalescer(CheckSafety);
+        stopper = new SafetyStop(() => isOn, safety, why =>
+        {
+            SetAwake(false);
+            log.Write(why.LogOff);
+            icon.ShowBalloonTip(10000, "Lid Awake turned off", why.OffBody, ToolTipIcon.Warning);
+        });
+        safetyTimer = new System.Threading.Timer(_ => checks.Request(read: true), null, Timeout.Infinite, Timeout.Infinite);
         toggle.Click += (_, _) =>
         {
             if (isOn) { SetAwake(false); return; }
@@ -140,7 +150,8 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(timerMenu);
         menu.Items.Add(batteryItem);
         menu.Items.Add(heatItem);
-        menu.Opening += (_, _) => ShowLimits();
+        // Shown as they are now, and read again in the background (the item follows by Changed).
+        menu.Opening += (_, _) => { ShowLimits(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Set phone password…", null, (_, _) => ShowPasswordForm());
         menu.Items.Add("Show activity log", null, (_, _) => ShowActivityLog());
@@ -264,43 +275,28 @@ sealed class TrayApp : ApplicationContext
         if (safety.Now() is not { } why) return true;
         log.Write(why.LogRefused);
         icon.ShowBalloonTip(10000, "Lid Awake not turned on", why.RefusedBody, ToolTipIcon.Warning);
+        RefreshTemperature();  // so the next try decides on a current reading
         return false;
     }
 
-    // Off the UI thread. From the timer (`read`): read the temperature (every 15 s while on, every
-    // minute while off). Then, while on, turn off on the UI thread if a limit is reached. Only the
-    // timer reads the hardware; a check after a switch change uses the last reading. Nothing here
-    // may throw into the timer, and a failed temperature read is only "no reading".
+    // Read the temperatures again soon, in the background, unless they were read in the last
+    // 10 seconds. A failure is only "no reading".
+    void RefreshTemperature() => Task.Run(() =>
+    {
+        try { heat.Refresh(HeatSensor.Fresh); }
+        catch (Exception) { }
+    });
+
+    // Off the UI thread, one at a time (through `checks`). From the timer (`read`): read the
+    // temperatures (every 15 s while on, every minute while off). Then, while on, turn off on the
+    // UI thread if a limit is reached; SafetyStop decides again there, so a switch turned off (or
+    // Lid Awake turned off) in the meantime is respected. A check after a switch change uses the
+    // last readings. A failed temperature read is only "no reading".
     void CheckSafety(bool read)
     {
-        if (Interlocked.Exchange(ref safetyChecking, 1) == 1)
-        {
-            Interlocked.Exchange(ref safetyAgain, 1);  // a switch changed during a slow read
-            return;
-        }
-        try
-        {
-            do
-            {
-                Interlocked.Exchange(ref safetyAgain, 0);
-                bool on = isOn;
-                if (read) heat.Refresh(on ? HeatSensor.Fresh : HeatSensor.WhileOff);
-                read = false;
-                if (on && safety.Now() != null) OnUi(StopForSafety);
-            } while (Volatile.Read(ref safetyAgain) == 1);
-        }
-        catch (Exception) { }
-        finally { Interlocked.Exchange(ref safetyChecking, 0); }
-    }
-
-    // On the UI thread: decided again here, so a switch turned off (or Lid Awake turned off) in
-    // the meantime is respected.
-    void StopForSafety()
-    {
-        if (!isOn || safety.Now() is not { } why) return;
-        SetAwake(false);
-        log.Write(why.LogOff);
-        icon.ShowBalloonTip(10000, "Lid Awake turned off", why.OffBody, ToolTipIcon.Warning);
+        bool on = isOn;
+        if (read) heat.Refresh(on ? HeatSensor.Fresh : HeatSensor.WhileOff);
+        if (on && safety.Now() != null) OnUi(() => stopper.Run());
     }
 
     // A switch ticked in the tray menu.
@@ -316,7 +312,7 @@ sealed class TrayApp : ApplicationContext
     public void LimitsChanged()
     {
         OnUi(ShowLimits);
-        Task.Run(() => CheckSafety(read: false));
+        Task.Run(() => checks.Request(read: false));
     }
 
     void ShowLimits()

@@ -1265,7 +1265,7 @@ public class WebServerTests : IDisposable
     public async Task ALimitChangedOverHttpShowsInTheNextStatusAndIsStored()
     {
         realLimits = new Limits(settings);
-        var info = new StatusInfo(new FakeReadings(), realLimits, new HeatSensor(() => null));
+        var info = new StatusInfo(new FakeReadings(), realLimits, new HeatSensor(() => TemperatureReading.None));
         statusAnswer = () => info.Build(true);
         var cookie = await SignIn();
 
@@ -1298,7 +1298,7 @@ public class WebServerTests : IDisposable
     [Fact]
     public async Task StatusOverHttpListsHeatAndBatteryTempOnlyWithATemperature()
     {
-        double? source = null;
+        var source = TemperatureReading.None;
         var heat = new HeatSensor(() => source);
         var info = new StatusInfo(new FakeReadings { PowerNow = new PowerReading(0, 1, 80, 7200) }, new Limits(settings), heat);
         statusAnswer = () => info.Build(true);
@@ -1309,7 +1309,14 @@ public class WebServerTests : IDisposable
         Assert.Equal(new[] { "limits" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(noTemperature.TryGetProperty("batteryTemp", out _));
 
-        source = 36.66;
+        // Only a thermal zone: the heat switch shows, but batteryTemp is the battery's alone.
+        source = new TemperatureReading(null, 55.0);
+        heat.Refresh(TimeSpan.Zero);
+        var zoneOnly = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(new[] { "limits", "heat" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.False(zoneOnly.TryGetProperty("batteryTemp", out _));
+
+        source = new TemperatureReading(36.66, 55.0);
         heat.Refresh(TimeSpan.Zero);
         var withHeat = Json(await Send("GET", "/status", cookie: cookie));
         Assert.Equal(new[] { "limits", "heat" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());

@@ -208,7 +208,7 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 
 The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits","heat"]`.
 
-Windows sends `"limits"` always, and `"heat"` only while a temperature source works (the battery's own sensor, or else the ACPI thermal zones; see 6.4), re-checked with each status.
+Windows sends `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
 Dependencies on the Mac side:
 
@@ -381,7 +381,7 @@ Body: `{"name": "battery" | "heat", "on": true | false}`.
 
 The limits the switches control, checked every 15 seconds while on: `battery` turns Lid Awake off when running on battery below `batteryLimit` percent; `heat` turns it off when the battery is at or above `maxBatteryTemp` degrees, or the system thermal state is `serious` or `critical`. Both can also stop a turn-on request.
 
-**Windows.** The same answers, and the switch applies at once (it is stored in the roaming settings as `batteryGuard` / `heatGuard`, both on by default). `heat` is accepted even on a PC with no temperature source, because the setting is stored; the page hides that row there anyway (no `"heat"` in `features`). The battery limit uses `GetSystemPowerStatus` (on battery and below `batteryLimit`). The heat limit uses the temperature in 6.4 (at or above `maxBatteryTemp`); Windows has no system thermal state. The check runs every 15 seconds while on, off the UI thread; a limit reached turns Lid Awake off with a tray balloon and an activity log line (`Turned off: battery below 10%`, `Turned off: too hot (41.2°C)`), and a turn-on from the tray is refused with a balloon (`Not turned on: …` in the log).
+**Windows.** The same answers, and the switch applies at once (it is stored in the roaming settings as `batteryGuard` / `heatGuard`, both on by default). `heat` is accepted even on a PC with no temperature source, because the setting is stored; the page hides that row there anyway (no `"heat"` in `features`). The battery limit uses `GetSystemPowerStatus` (on battery and below `batteryLimit`). Windows has no system thermal state, so the heat limit uses two readings, checked in this order: the battery's own sensor at or above `maxBatteryTemp` (40 °C), worded like the Mac (`Battery is too hot (41.2°C).`), then the hottest ACPI thermal zone at or above 90 °C (`Your PC is too hot (92.0°C).`). The zones measure the processor or the board, where 40 to 60 °C is normal, so they get their own, higher limit, and they are never sent as `batteryTemp`. Only obvious garbage counts as no reading: a raw 0, 0xFFFF or 0xFFFFFFFF, or a value outside -40 to 150 °C, so real overheating above 100 °C is not hidden. A source that stops answering keeps its last good value through two failed reads and loses it at the third (about 45 seconds while on). The check runs every 15 seconds while on, off the UI thread; a limit reached turns Lid Awake off with a tray balloon and an activity log line (`Turned off: battery below 10%`, `Turned off: battery too hot (41.2°C)`, `Turned off: PC too hot (92.0°C)`), and a turn-on from the tray is refused with a balloon (`Not turned on: …` in the log).
 
 #### `POST /timer`
 
@@ -785,7 +785,7 @@ Every key except `batteryTemp` comes from `powerInfo()`. On the Mac, a computer 
 | `charged` | boolean | fully charged | `false` |
 | `minutesToEmpty` | integer | estimate; `-1` = unknown | `-1` |
 | `minutesToFull` | integer | estimate; `-1` = unknown | `-1` |
-| `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`). Windows: the battery's own sensor (`IOCTL_BATTERY_QUERY_INFORMATION`, `BatteryTemperature`), or else the hottest ACPI thermal zone (WMI `root\WMI` `MSAcpi_ThermalZoneTemperature`, which usually needs admin rights); both are tenths of a kelvin, and a value outside -20 to 100 °C counts as none. Read at most every 15 seconds and cached, so `/status` never waits for it. Present exactly when `features` has `"heat"` | omit |
+| `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`). Windows: only the battery's own sensor (`IOCTL_BATTERY_QUERY_INFORMATION`, `BatteryTemperature`, tenths of a kelvin), never a thermal zone; read at most every 15 seconds and cached, so `/status` never waits for it. A PC whose only temperature is a thermal zone has `"heat"` in `features` but no `batteryTemp` | omit |
 
 ### 6.5 System info
 

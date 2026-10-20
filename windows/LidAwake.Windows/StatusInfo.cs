@@ -100,8 +100,8 @@ public sealed class StatusInfo
     readonly CpuMeter cpu = new();
     readonly NetMeter net = new();
 
-    // `limits` are the two safety switches (none: both on, the documented default). `heat` is the
-    // last temperature read (none: no temperature, so no "heat" and no batteryTemp).
+    // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
+    // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp).
     public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null)
     {
         this.readings = readings;
@@ -114,7 +114,7 @@ public sealed class StatusInfo
     public Dictionary<string, object?> Build(bool lidAwake, AutoOff? timer = null)
     {
         // The cached reading only: /status never waits for the hardware.
-        var temperature = heat?.Latest;
+        var temperature = heat?.Latest ?? TemperatureReading.None;
         var s = new Dictionary<string, object?>
         {
             // 6.1
@@ -146,7 +146,8 @@ public sealed class StatusInfo
             ["claude"] = null,
             // 6.6
             ["os"] = "windows",
-            ["features"] = temperature != null ? FeaturesWithHeat : Features,
+            // "heat" while either source works: the battery's sensor or the thermal zones.
+            ["features"] = temperature.Any ? FeaturesWithHeat : Features,
         };
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
@@ -168,8 +169,9 @@ public sealed class StatusInfo
             s["minutesToEmpty"] = onBattery && p.LifeSeconds > 0 ? (int)(p.LifeSeconds / 60) : -1;
             s["minutesToFull"] = -1;
         }
-        // 6.4: on its own, like the Mac (the battery's sensor, or else the ACPI thermal zones).
-        if (temperature is { } celsius) s["batteryTemp"] = TemperatureMath.OneDecimal(celsius);
+        // 6.4: on its own, like the Mac, and only from the battery's own sensor (a thermal zone
+        // measures the processor or the board, not the battery).
+        if (temperature.Battery is { } celsius) s["batteryTemp"] = TemperatureMath.OneDecimal(celsius);
 
         long now = readings.Milliseconds();
         var memory = readings.Memory();

@@ -4,15 +4,17 @@ using Microsoft.Win32.SafeHandles;
 
 namespace LidAwake;
 
-// Both Windows sources give the temperature in tenths of a kelvin. A value outside -20 to 100 °C
-// is a sensor that isn't really there (0, a fixed placeholder, garbage), so it counts as no reading.
+// Both Windows sources give the temperature in tenths of a kelvin. Only obvious garbage counts as
+// no reading: a raw 0, 0xFFFF or 0xFFFFFFFF (a sensor that isn't really there), or a value outside
+// -40 to 150 °C. A real 101 to 150 °C is kept, so real overheating is never hidden.
 public static class TemperatureMath
 {
-    public const double Lowest = -20.0;
-    public const double Highest = 100.0;
+    public const double Lowest = -40.0;
+    public const double Highest = 150.0;
 
     public static double? FromTenthsOfKelvin(long tenths)
     {
+        if (tenths is 0 or 0xFFFF or 0xFFFFFFFF) return null;
         double celsius = tenths / 10.0 - 273.15;
         return IsSane(celsius) ? celsius : null;
     }
@@ -23,15 +25,31 @@ public static class TemperatureMath
     public static double OneDecimal(double celsius) => Math.Round(celsius * 10, MidpointRounding.AwayFromZero) / 10;
 }
 
-// The temperature the heat limit uses, in °C, or null. The battery's own sensor first, then the
-// ACPI thermal zones. Never throws; blocks for up to about 3 seconds (WMI), so never call it on
-// the UI thread (HeatSensor calls it from the safety check's background timer).
+// One round of temperature readings, in °C, each null when its source has none. They are kept
+// apart because they mean different things: the battery's own sensor (limit maxBatteryTemp, 40 °C,
+// and the only one sent as batteryTemp), and the ACPI thermal zones, which measure the processor
+// or the board, where 40 to 60 °C is normal (limit MaxPcTemp, 90 °C).
+public readonly record struct TemperatureReading(double? Battery, double? Zone)
+{
+    public static readonly TemperatureReading None = new(null, null);
+
+    // Some source gave a temperature.
+    public bool Any => Battery != null || Zone != null;
+}
+
+// Both sources, every round (as the Mac checks both the battery temperature and the thermal state).
+// Never throws; blocks for up to about 3 seconds (WMI), so never call it on the UI thread
+// (HeatSensor calls it from the safety check's background timer).
 public static class TemperatureSources
 {
-    public static double? Read()
+    public static TemperatureReading Read()
     {
-        try { return BatteryTemperature.Read() ?? ThermalZones.Read(); }
-        catch (Exception) { return null; }
+        double? battery = null, zone = null;
+        try { battery = BatteryTemperature.Read(); }
+        catch (Exception) { }
+        try { zone = ThermalZones.Read(); }
+        catch (Exception) { }
+        return new TemperatureReading(battery, zone);
     }
 }
 
