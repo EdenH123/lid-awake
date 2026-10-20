@@ -21,6 +21,7 @@ public sealed class HistoryRouteTests : IDisposable
     readonly WebServer server;
     readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(30) };
     readonly HistoryStore history;
+    readonly FakeAppIcons icons = new();
     readonly int port;
 
     public HistoryRouteTests()
@@ -33,7 +34,7 @@ public sealed class HistoryRouteTests : IDisposable
         settings.Set("tailnetOwner", Owner);
         auth = new Auth(settings, iterations: 1000);
         auth.SetPassword(Good);
-        history = new HistoryStore(Path.Combine(folder, "history"), () => T0, 8);
+        history = new HistoryStore(Path.Combine(folder, "history"), () => T0, 8) { Icons = icons };
         port = FreePort();
         server = new WebServer(auth, new Tailnet(settings, _ => null), () => true, () => new { os = "windows" },
             () => { }, (_, _) => { }, port, site) { History = history };
@@ -156,6 +157,70 @@ public sealed class HistoryRouteTests : IDisposable
         Assert.Equal(404, icon.Code);
         Assert.Equal("No such app.", icon.Body);
         Assert.Equal(404, (await Get("/cpu-icon", cookie)).Code);
+    }
+
+    // A program the processor history names: its icon, by key. Any other key (a path, a system
+    // entry, a program it doesn't name) is refused.
+    [Fact]
+    public async Task CpuIconSendsOnlyTheIconsOfProgramsTheHistoryNames()
+    {
+        const string Exe = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        var chrome = new CpuApp(PhoneApps.Id(Exe), "Google Chrome", "app", Exe);
+        history.Add(new HistorySample(T0 - 60, 50, true, false, null, 50, 60, new Dictionary<string, double> { [chrome.Key] = 30, ["other.windows"] = 1 }),
+                    new[] { chrome, new CpuApp("other.windows", "Windows (other)", "other") });
+        var cookie = await SignIn();
+
+        var cpu = JsonDocument.Parse((await Get("/cpu-history", cookie)).Body).RootElement;
+        Assert.Equal(chrome.Key, cpu.GetProperty("apps")[0].GetProperty("key").GetString());
+        Assert.Equal("app", cpu.GetProperty("apps")[0].GetProperty("kind").GetString());
+        Assert.Equal("other", cpu.GetProperty("apps")[1].GetProperty("kind").GetString());
+
+        using (var req = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{port}/cpu-icon?key={chrome.Key}"))
+        {
+            req.Headers.Host = TailHost;
+            req.Headers.TryAddWithoutValidation("Tailscale-User-Login", Owner);
+            req.Headers.TryAddWithoutValidation("Cookie", cookie);
+            var r = await http.SendAsync(req);
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+            Assert.Equal("image/png", r.Content.Headers.ContentType?.MediaType);
+            Assert.Equal(FakeAppIcons.Image, await r.Content.ReadAsByteArrayAsync());
+        }
+        foreach (var key in new[] { "other.windows", Uri.EscapeDataString(Exe), PhoneApps.Id(@"C:\Windows\notepad.exe"), "", "..%2f..%2fwindows" })
+        {
+            var refused = await Get("/cpu-icon?key=" + key, cookie);
+            Assert.Equal(404, refused.Code);
+            Assert.Equal("No such app.", refused.Body);
+        }
+        Assert.Single(icons.Asked);
+    }
+
+    // GET /memory (5.8) through the whole pipeline: a session, then the Mac's shape.
+    [Fact]
+    public async Task MemoryAnswersWithASessionOnly()
+    {
+        const ulong GiB = 1UL << 30;
+        var processes = new FakeProcessTable
+        {
+            Next = new ProcessSnapshot(new[] { new ProcessEntry(10, 1, "chrome.exe", @"C:\Apps\chrome.exe", 2 * GiB, 2 * GiB, 0) }, 1),
+        };
+        server.Memory = new MemoryInfo(new FakeMemorySource
+        {
+            Now = new MemoryCounts(16 * GiB, 6 * GiB, GiB, 5 * GiB, 8 * GiB, 24 * GiB, 0, null, false),
+        }, processes, @"C:\Windows", exe => "Chrome");
+        Assert.Equal(401, (await Get("/memory", null)).Code);
+        var cookie = await SignIn();
+        var r = await Get("/memory", cookie);
+        Assert.Equal(200, r.Code);
+        Assert.StartsWith("application/json", r.Type);
+        var m = JsonDocument.Parse(r.Body).RootElement;
+        Assert.Equal(16 * GiB, m.GetProperty("total").GetUInt64());
+        Assert.Equal(10 * GiB, m.GetProperty("used").GetUInt64());
+        Assert.Equal("normal", m.GetProperty("level").GetString());
+        Assert.Equal($"[{{\"name\":\"Chrome\",\"bytes\":{2 * GiB},\"id\":\"{PhoneApps.Id(@"C:\Apps\chrome.exe")}\"}}]", m.GetProperty("top").GetRawText());
+        Assert.Equal(0UL, m.GetProperty("otherPrograms").GetUInt64());
+
+        server.Memory = null;
+        Assert.Equal(404, (await Get("/memory", cookie)).Code);
     }
 
     [Fact]

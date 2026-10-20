@@ -700,7 +700,7 @@ public partial class WebServerTests : IDisposable
         var unknown = await Send("GET", "/nope", cookie: cookie);
         Assert.Equal(404, unknown.Code);
         Assert.Equal("Not found", unknown.Body);
-        // A route that is not built yet: 404 after the session check, like any route that does not exist.
+        // A route this server wasn't given (no MemoryInfo here): 404 after the session check, like any route that does not exist.
         Assert.Equal(404, (await Send("GET", "/memory", cookie: cookie)).Code);
         Assert.Equal(401, (await Send("GET", "/memory")).Code);
         Assert.Equal(401, (await Send("GET", "/sessions")).Code);
@@ -1315,20 +1315,20 @@ public partial class WebServerTests : IDisposable
 
         heat.Refresh(TimeSpan.Zero);
         var noTemperature = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(noTemperature.TryGetProperty("batteryTemp", out _));
 
         // Only a thermal zone: the heat switch shows, but batteryTemp is the battery's alone.
         source = new TemperatureReading(null, 55.0);
         heat.Refresh(TimeSpan.Zero);
         var zoneOnly = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "heat", "passkeys", "push" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "heat", "memory", "passkeys", "push" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(zoneOnly.TryGetProperty("batteryTemp", out _));
 
         source = new TemperatureReading(36.66, 55.0);
         heat.Refresh(TimeSpan.Zero);
         var withHeat = Json(await Send("GET", "/status", cookie: cookie));
-        Assert.Equal(new[] { "limits", "history", "heat", "passkeys", "push" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "heat", "memory", "passkeys", "push" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.Equal(36.7, withHeat.GetProperty("batteryTemp").GetDouble());
         StatusInfoTests.AssertEveryKeyWithItsKind(withHeat);
     }

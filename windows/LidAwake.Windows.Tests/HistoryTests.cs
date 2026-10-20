@@ -198,8 +198,10 @@ public sealed class HistoryTests : IDisposable
         var store = NewStore();
         store.Add(Sample(T0, 87, plugged: true, charging: false, temp: 31.25, cpu: 4.2, span: 60));
         var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "history.json"))).RootElement;
-        Assert.Equal(1, doc.GetProperty("v").GetInt32());
+        Assert.Equal(2, doc.GetProperty("v").GetInt32());
+        // A row with no programs listed keeps the 7 numbers of version 1.
         Assert.Equal("[" + T0 + ",87,1,0,31.25,4.2,60]", doc.GetProperty("samples")[0].GetRawText());
+        Assert.Equal("{}", doc.GetProperty("apps").GetRawText());
         Assert.DoesNotContain("\n", File.ReadAllText(Path.Combine(folder, "history.json")));
     }
 

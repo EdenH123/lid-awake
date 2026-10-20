@@ -90,9 +90,9 @@ public sealed class StatusInfo
     // Section 4. "limits" (POST /limits and the low-battery switch), "history" (the graphs,
     // recorded by Lid Awake itself), "passkeys" (/passkey/*) and "push" (/push/*) always; "heat"
     // (the too-hot switch) only while a temperature source works, re-checked with each status.
-    // FeatureList adds apps, control, screen and camera. No /memory route, so no "memory".
-    public static readonly string[] Features = { "limits", "history", "passkeys", "push" };
-    public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat", "passkeys", "push" };
+    // FeatureList adds apps, control, screen and camera. "memory": GET /memory (MemoryInfo).
+    public static readonly string[] Features = { "limits", "history", "memory", "passkeys", "push" };
+    public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat", "memory", "passkeys", "push" };
 
     // "camera" too, but only once the camera is wired to passkeys, the H.264 encoder and the live
     // socket (CameraFeature.Ready, in Program). Off by default, so a build without them never offers it.

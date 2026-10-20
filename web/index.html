@@ -1414,7 +1414,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="card tile mem-tile"><div class="tile-head">Overflow to disk</div><div class="tile-value" id="memSwapNum">—</div></div>
     </div>
     <div class="section" id="memAppsSection" hidden><div class="section-head">Using the most</div><div class="list mem-apps" id="memApps"></div></div>
-    <div class="section-foot">Pressure shows how hard your <span data-w="computer">Mac</span> is working to find room. Green is fine even when memory looks full: macOS keeps recent files in spare memory and hands it back the moment an app needs it. Overflow to disk is memory moved to storage when room ran out.</div>
+    <div class="section-foot">Pressure shows how hard your <span data-w="computer">Mac</span> is working to find room. Green is fine even when memory looks full: <span data-w="os">macOS</span> keeps recent files in spare memory and hands it back the moment an app needs it. Overflow to disk is memory moved to storage when room ran out.</div>
   </div>
 </section>
 <input class="live-input" id="liveInput" data-w-label="Type directly on your {computer}"
@@ -1453,8 +1453,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const PHONE_WORDS = ALL_PHONE_WORDS[PHONE];
   const COMPUTER_WORDS = {
     mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option", menuBar: "the menu bar",
+               os: "macOS", systemPart: "macOS & system", systemGlyph: "\uF8FF",
                logPath: "Lid Awake menu → Signed-in devices → Show activity log" },
     windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt", menuBar: "the tray by the clock (it may be under the ^ arrow)",
+               os: "Windows", systemPart: "Windows & system", systemGlyph: "",
                logPath: "the Lid Awake icon by the clock → Show activity log" },
   };
   let COMPUTER = "mac", FEATURES = null;  // FEATURES null = not known yet: show everything
@@ -4834,11 +4836,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       seen.add(a.name);
     }
     // Then the rest, so the list adds up to Used: the owner's smaller programs, and what Lid Awake
-    // can't name (macOS's own programs, the system core, graphics and shared memory).
+    // can't name (the system's own programs, the system core, graphics and shared memory). Its
+    // name and glyph follow the computer ("macOS & system" with the Apple logo, "Windows & system").
     const others = m.otherPrograms || 0;
     const system = (m.used || 0) - top.reduce((sum, a) => sum + a.bytes, 0) - others;
     for (const [key, name, bytes, glyph] of [["\0others", "Your other programs", others, ""],
-                                             ["\0system", "macOS & system", system, "\uF8FF"]]) {
+                                             ["\0system", word("systemPart"), system, word("systemGlyph")]]) {
       if (!top.length || bytes < 0.05 * GiB) continue;
       let row = memRows.get(key);
       if (!row) {

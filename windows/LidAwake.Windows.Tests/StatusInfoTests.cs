@@ -212,9 +212,9 @@ public class StatusInfoTests
     {
         var s = Run(new FakeReadings());
         Assert.Equal("windows", s.GetProperty("os").GetString());
-        // Always "limits", "history", "passkeys" and "push": there is no /memory route (or any other optional one) yet,
+        // Always "limits", "history", "memory", "passkeys" and "push" (no optional route was given),
         // and without a temperature source there is no "heat".
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push" }, s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push" }, s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         Assert.False(s.TryGetProperty("batteryTemp", out _));
     }
 

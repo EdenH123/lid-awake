@@ -35,7 +35,7 @@ public class ScreenWiringTests : IDisposable
         Assert.False(off.GetProperty("remoteScreen").GetBoolean());
         Assert.True(off.GetProperty("screenPermission").GetBoolean());
         Assert.Equal(1920, off.GetProperty("screenWidth").GetInt32());
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push", "screen" }, Features(off));
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push", "screen" }, Features(off));
         // No control given: still false.
         Assert.False(off.GetProperty("remoteControl").GetBoolean());
 
@@ -47,7 +47,7 @@ public class ScreenWiringTests : IDisposable
         var none = Run(new StatusInfo(new FakeReadings()).Build(true));
         Assert.False(none.GetProperty("remoteScreen").GetBoolean());
         Assert.False(none.GetProperty("screenPermission").GetBoolean());
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push" }, Features(none));
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push" }, Features(none));
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public class ScreenWiringTests : IDisposable
         var control = new RemoteControl(settings, () => true, new InputInjector(new FakeInput()), new FakePower());
         var info = new StatusInfo(new FakeReadings(), apps: apps, screenAllowed: () => ScreenSwitch.IsOn(settings)) { Control = control };
         var s = Run(info.Build(true));
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push", "apps", "control", "screen" }, Features(s));
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push", "apps", "control", "screen" }, Features(s));
         // One switch: the control's view of the screen switch is ScreenSwitch's.
         Assert.False(s.GetProperty("remoteScreen").GetBoolean());
         Assert.False(control.ScreenAllowed);

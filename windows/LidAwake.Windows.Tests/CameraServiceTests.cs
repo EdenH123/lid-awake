@@ -748,9 +748,9 @@ public class CameraFeatureTests
         Assert.DoesNotContain("camera", Run(info).GetProperty("features").EnumerateArray().Select(f => f.GetString()));
 
         info.CameraFeature = true;
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push", "camera" }, Run(info).GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push", "camera" }, Run(info).GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
         // The shared lists are untouched.
-        Assert.Equal(new[] { "limits", "history", "passkeys", "push" }, StatusInfo.Features);
-        Assert.Equal(new[] { "limits", "history", "heat", "passkeys", "push" }, StatusInfo.FeaturesWithHeat);
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push" }, StatusInfo.Features);
+        Assert.Equal(new[] { "limits", "history", "heat", "memory", "passkeys", "push" }, StatusInfo.FeaturesWithHeat);
     }
 }
