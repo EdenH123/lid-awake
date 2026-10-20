@@ -210,6 +210,8 @@ The Mac sends: `["screen","control","camera","apps","history","memory","push","p
 
 Windows sends `"limits"` always, and `"heat"` only while a temperature source works, re-checked with each status. It reads two sources every round and keeps them apart: the battery's own sensor and the ACPI thermal zones (see 6.4 and `POST /limits`). Either one is enough for `"heat"`.
 
+Windows also sends `"screen"`: `/screen.jpg` and the live socket, with the Mac's handshake, messages and flow control. It captures with DXGI Desktop Duplication (GDI when that fails) and sends H.264 from Media Foundation's encoder (the graphics card's when it works, else Microsoft's software one), or JPEG when there is no encoder. `screenPermission` is always `true` (Windows asks no permission), and `remoteScreen` is the tray's "Allow screen from phone" switch (off until the owner turns it on, setting `remoteScreen`). Its sentences say PC: `Waking the PC's screen… This usually takes a few seconds.` and `Screen access is off. Turn on “Allow screen from phone” in the Lid Awake menu on your PC.` Input and camera messages on the socket are ignored for now; `{"type":"ping"}` is answered after the screen check only. A long poll whose `after` is not the latest id (also one from before a restart) gets the latest picture at once.
+
 Dependencies on the Mac side:
 
 - `camera` needs `passkeys` (the camera asks for a passkey every time) and `screen` (the live socket and the owner's screen switch).
@@ -1056,7 +1058,7 @@ tailscale serve --https=443 off
 
 On the Mac the Tailscale binary is `/Applications/Tailscale.app/Contents/MacOS/Tailscale` run with the environment variable `TAILSCALE_BE_CLI=1`.
 
-**Windows differs in three ways.** It removes Serve only when it added the mapping itself (remembered as `servedByLidAwake` in its settings, and cleared once removed), so a Serve setup of the owner's own stays; this is checked at start-up too, after a crash. While off, a removal that failed is retried by the one-minute check until it is confirmed. It matches `127.0.0.1:<port>` exactly (`8787` does not match `87870`). After `serve --bg` it reads `serve status --json` again; if the mapping is missing, the command timed out, or Tailscale printed a link (to allow Serve or HTTPS for the tailnet), it writes what Tailscale printed to the activity log and tells the owner at the tray.
+**Windows differs in three ways.** It removes Serve only when it added the mapping itself (remembered as `servedByLidAwake` in its settings, and cleared once removed), so a Serve setup of the owner's own stays; this is checked at start-up too, after a crash. While off, a removal that failed is retried by the one-minute check until it is confirmed. It matches `127.0.0.1:<port>` exactly (`8787` does not match `87870`). After `serve --bg` it reads `serve status --json` again; if the mapping is missing, the command timed out, or Tailscale printed a link (to allow Serve or HTTPS for the tailnet), it writes what Tailscale printed to the activity log and tells the owner at the tray. It maps `/live` only while its own live socket server holds `127.0.0.1:8788` (the handshake carries the session cookie), the same rule as for the page on 8787.
 
 For `link` in `/status` (6.6) the agent runs `tailscale status --json` at most every 10 seconds, in the background.
 

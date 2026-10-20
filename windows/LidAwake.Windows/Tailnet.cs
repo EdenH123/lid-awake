@@ -29,6 +29,21 @@ public sealed class Tailnet
     // The port of our page, remembered even while off, to check `serve status` for after a failed
     // removal. 0 until known; then the default port is used.
     volatile int knownPort;
+    // The live socket's port for /live (section 9), 0 for none. Set by PhoneAccess, and only while
+    // our own LiveServer holds the port, for the same reason as the page. The last one used is
+    // remembered, so a removal can be checked for it too.
+    volatile int livePort;
+    volatile int knownLivePort;
+
+    public int LivePort
+    {
+        get => livePort;
+        set
+        {
+            livePort = value;
+            if (value != 0) knownLivePort = value;
+        }
+    }
 
     // `run` takes the arguments and returns the output, or null when the command could not be
     // run or failed. Tests pass a fake one.
@@ -95,9 +110,9 @@ public sealed class Tailnet
         catch (Exception) { }
     }
 
-    // Make https://<pc>.ts.net/ reach the page on `port` (section 9, the HTTP part). Only adds
-    // what is missing, and never leaves Funnel (the public internet) on. The /live socket comes
-    // later. Callers must make sure our own web server holds `port` (see PhoneAccess).
+    // Make https://<pc>.ts.net/ reach the page on `port` (section 9), and /live the live socket
+    // on LivePort when it is set. Only adds what is missing, and never leaves Funnel (the public
+    // internet) on. Callers must make sure our own servers hold the ports (see PhoneAccess).
     // Returns null when the page is published (or Tailscale is not installed), otherwise what
     // Tailscale printed: after `serve --bg`, `serve status` must show our mapping, and a link in
     // what it printed means the owner must allow something first.
@@ -110,14 +125,29 @@ public sealed class Tailnet
             if (first.Missing) return null;
             var status = first.Ok ? first.Output : "";
             if (HasFunnel(status)) Run("funnel --https=443 off");
-            if (Maps(status, port)) return null;
+            var live = livePort;
+            bool pageMapped = Maps(status, port), liveMapped = live == 0 || Maps(status, live);
+            if (pageMapped && liveMapped) return null;
             // Remembered first, so a crash halfway still gets the mapping removed at the next start.
             settings.Set(ServedKey, true);
-            var added = exec($"serve --bg {port}");
-            var said = (added.Output + "\n" + added.Error).Trim();
+            var said = "";
+            bool timedOut = false;
+            if (!pageMapped)
+            {
+                var added = exec($"serve --bg {port}");
+                said = (added.Output + "\n" + added.Error).Trim();
+                timedOut = added.TimedOut;
+            }
+            if (!liveMapped)
+            {
+                // The live socket for the Screen tab: wss://<pc>.ts.net/live.
+                var added = exec($"serve --bg --set-path /live http://127.0.0.1:{live}");
+                said = (said + "\n" + added.Output + "\n" + added.Error).Trim();
+                timedOut |= added.TimedOut;
+            }
             var after = Run("serve status --json") ?? "";
-            if (!added.TimedOut && Maps(after, port) && !AsksForConsent(said)) return null;
-            if (said.Length == 0) said = added.TimedOut ? "Tailscale did not answer in time." : "Tailscale printed nothing.";
+            if (!timedOut && Maps(after, port) && (live == 0 || Maps(after, live)) && !AsksForConsent(said)) return null;
+            if (said.Length == 0) said = timedOut ? "Tailscale did not answer in time." : "Tailscale printed nothing.";
             return Brief(said);
         }
         catch (Exception) { return null; }
@@ -139,7 +169,8 @@ public sealed class Tailnet
         var status = exec("serve status --json");
         if (!status.Ok) return false;
         var port = knownPort != 0 ? knownPort : WebServer.DefaultPort;
-        return !Maps(status.Output, port);
+        var live = knownLivePort;
+        return !Maps(status.Output, port) && (live == 0 || !Maps(status.Output, live));
     }
 
     // Unserve, but only when Lid Awake added the mapping (ServedKey); then forget it, but only

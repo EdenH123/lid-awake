@@ -39,7 +39,15 @@ static class Program
         var limits = new Limits(settings);
         var heat = new HeatSensor(TemperatureSources.Read);
         var safety = new SafetyCheck(limits, heat, readings.Power);
-        var status = new StatusInfo(readings, limits, heat);
+        // Screen viewing from the phone: the owner's switch, the capture and encoders (only while
+        // someone watches), and the live socket on 127.0.0.1:8788. "screenEncoder": "software" in
+        // settings.json skips the graphics card's encoder.
+        bool ScreenAllowed() => ScreenSwitch.IsOn(settings);
+        var grabbers = new ScreenGrabbers { Note = text => log.Write("Screen: " + text) };
+        using var feed = new ScreenFeed(grabbers.Open,
+            MfH264Encoder.Factory(allowHardware: settings.Get<string>("screenEncoder") != "software"),
+            note: text => log.Write("Screen: " + text));
+        var status = new StatusInfo(readings, limits, heat, ScreenAllowed);
         using var server = new WebServer(auth, tailnet, () => tray?.IsOn == true,
             () => status.Build(tray?.IsOn == true, tray?.Countdown),
             () => tray?.OnUi(() => tray?.SetAwake(false)), (title, body) => tray?.Announce(title, body),
@@ -50,14 +58,20 @@ static class Program
                 // next /status already shows it; then applied at the tray.
                 limits.Set(name, on);
                 tray?.LimitsChanged();
-            });
+            },
+            screen: feed, screenAllowed: ScreenAllowed);
         string? startError = null;
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }
+        using var live = new LiveServer(auth, tailnet, () => tray?.IsOn == true, ScreenAllowed, feed, log: log);
+        string? liveError = null;
+        try { live.Start(); }
+        catch (Exception e) { liveError = e.Message; }
         tailnet.NotPublished = said => tray?.NotPublished(said);
-        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server), log, limits, heat, safety);
+        tray = new TrayApp(settings, machine, auth, new PhoneAccess(tailnet, server, live), log, limits, heat, safety, live);
         // Told at the tray (not in a window that waits for a click), once the tray icon exists.
         if (startError != null) tray.PortInUse(startError);
+        if (liveError != null) log.Write($"Live screen couldn't start on 127.0.0.1:{live.Port}: {liveError}");
         Application.Run(tray);
     }
 }
@@ -65,6 +79,10 @@ static class Program
 sealed class TrayApp : ApplicationContext
 {
     readonly Settings machine;  // the machine-state settings KeepAwake saves the lid values in
+    readonly Settings settings;
+    readonly LiveServer? live;
+    // The owner's switch for screen viewing from the phone, off until ticked (ScreenSwitch).
+    readonly ToolStripMenuItem screenItem = new("Allow screen from phone");
     readonly Auth auth;
     readonly PhoneAccess phone;
     readonly AccessLog log;
@@ -104,9 +122,11 @@ sealed class TrayApp : ApplicationContext
     public AutoOff Countdown { get; }
 
     public TrayApp(Settings settings, Settings machine, Auth auth, PhoneAccess phone, AccessLog log,
-                   Limits limits, HeatSensor heat, SafetyCheck safety)
+                   Limits limits, HeatSensor heat, SafetyCheck safety, LiveServer? live = null)
     {
         this.machine = machine;
+        this.settings = settings;
+        this.live = live;
         this.auth = auth;
         this.phone = phone;
         this.log = log;
@@ -151,6 +171,12 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(timerMenu);
         menu.Items.Add(batteryItem);
         menu.Items.Add(heatItem);
+        if (live != null)
+        {
+            screenItem.Checked = ScreenSwitch.IsOn(settings);
+            screenItem.Click += (_, _) => SetScreenAllowed(!ScreenSwitch.IsOn(settings));
+            menu.Items.Add(screenItem);
+        }
         // Shown as they are now, and read again in the background (the item follows by Changed).
         menu.Opening += (_, _) => { ShowLimits(); RefreshTemperature(); };
         menu.Items.Add(new ToolStripSeparator());
@@ -208,6 +234,7 @@ sealed class TrayApp : ApplicationContext
         if (!isOn) return;
         isOn = false;
         Countdown.Stop();
+        live?.CloseAll();
         try
         {
             toggle.Checked = false;
@@ -339,6 +366,17 @@ sealed class TrayApp : ApplicationContext
         }
     }
 
+    // The "Allow screen from phone" switch. Turning it off closes every live socket at once (the
+    // Mac does the same); /screen.jpg answers 403 from then on.
+    void SetScreenAllowed(bool allowed)
+    {
+        try { ScreenSwitch.Set(settings, allowed); }
+        catch (Exception) { return; }  // the settings file couldn't be written: the switch stays as it was
+        screenItem.Checked = allowed;
+        if (!allowed) live?.CloseAll();
+        log.Write(allowed ? "Screen from phone allowed on the PC" : "Screen from phone turned off on the PC");
+    }
+
     // A balloon from the tray icon: "New sign-in to Lid Awake".
     public void Announce(string title, string body) =>
         OnUi(() => icon.ShowBalloonTip(5000, title, body, ToolTipIcon.Info));
@@ -366,6 +404,8 @@ sealed class TrayApp : ApplicationContext
         isOn = on;
         toggle.Checked = on;
         icon.Text = on ? "Lid Awake: on" : "Lid Awake: off";
+        // Off: every live socket closes now, not only at the socket's 2-second check.
+        if (!on) live?.CloseAll();
         // Serve the page to the phone only while on, as on the Mac, and only if it is our page.
         if (on && !phone.PageRunning)
             icon.ShowBalloonTip(5000, "Phone page not available",

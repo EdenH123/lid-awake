@@ -96,17 +96,21 @@ public sealed class StatusInfo
     readonly ISystemReadings readings;
     readonly Limits? limits;
     readonly HeatSensor? heat;
+    readonly Func<bool>? screenAllowed;
     readonly object gate = new();
     readonly CpuMeter cpu = new();
     readonly NetMeter net = new();
 
     // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
     // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp).
-    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null)
+    // `screenAllowed` is the owner's "Allow screen from phone" switch: with it, "screen" is in
+    // features and remoteScreen follows it (none: no screen viewing on this PC).
+    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null, Func<bool>? screenAllowed = null)
     {
         this.readings = readings;
         this.limits = limits;
         this.heat = heat;
+        this.screenAllowed = screenAllowed;
     }
 
     // `timer` is the "Turn off after" setting: timerMinutes is its length and timerRemaining the
@@ -149,6 +153,17 @@ public sealed class StatusInfo
             // "heat" while either source works: the battery's sensor or the thermal zones.
             ["features"] = temperature.Any ? FeaturesWithHeat : Features,
         };
+
+        // 6.2 and 4: screen viewing. Windows needs no permission to capture the screen.
+        if (screenAllowed != null)
+        {
+            bool allowed;
+            try { allowed = screenAllowed(); }
+            catch (Exception) { allowed = false; }
+            s["remoteScreen"] = allowed;
+            s["screenPermission"] = true;
+            s["features"] = ((IEnumerable<string>)s["features"]!).Append("screen").ToArray();
+        }
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
         if (lidAwake && timer?.Remaining() is { } left) s["timerRemaining"] = left;

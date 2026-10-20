@@ -179,12 +179,13 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - See your signed-in devices and sign one out.
 - The activity log.
 - The low-battery safety limit, and the too-hot one on laptops that report a temperature.
+- Watching the screen live. Tick **Allow screen from phone** in the tray menu first (it starts off). Turning it off, or turning Lid Awake off, closes the picture on your phone at once.
 
 ### Not on Windows yet
 
 Don't rely on these on Windows. They work on the Mac only, for now.
 
-- Watching the screen and using the phone as trackpad and keyboard.
+- Using the phone as trackpad and keyboard.
 - Opening, switching and quitting apps.
 - Alerts on your phone.
 - Face ID or fingerprint sign-in (you use your password).
