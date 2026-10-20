@@ -989,7 +989,7 @@ Messages with `quality`, `acks`, `video`, `camera` and the others in 7.3 are han
 
 ### 7.7 Keeping the screen available
 
-While a phone is watching (a socket, or recent `/screen.jpg` polls) the Mac keeps the display awake (a "user activity" signal, at most once every 15 seconds) and runs capture. Capture stops 10 seconds after the last viewer or poll. After `POST /power` `displayoff` it stops waking the display until a `wake` or any accepted input. The Mac also keeps the screen usable behind a closed lid (at the lowest brightness).
+While a phone is watching (a socket, or recent `/screen.jpg` polls) the Mac keeps the display awake (a "user activity" signal, at most once every 15 seconds) and runs capture. Capture stops 10 seconds after the last viewer or poll. After `POST /power` `displayoff` it stops waking the display until a `wake` or any accepted input. The Mac also keeps the screen usable behind a closed lid (at the lowest brightness). **Windows** does the same only as far as Windows allows: while watched it holds the display awake (`ES_DISPLAY_REQUIRED`), and with the lid closed it lowers the built-in panel's brightness (saved in `machine.json` and put back when the lid opens, on turn-off, quit, sign-out and at the next start). Many laptops switch the panel off with the lid closed regardless; `lidClosed` and `displayAsleep` (from the lid and console-display power notifications) say so, and the picture may stop until the lid is opened a little or an external monitor is used.
 
 ---
 
