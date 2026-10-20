@@ -51,6 +51,11 @@ static class Program
                 limits.Set(name, on);
                 tray?.LimitsChanged();
             });
+        // The graphs: a sample every minute while the app runs, off the UI thread.
+        var history = new HistoryStore();
+        server.History = history;
+        using var sampler = new HistorySampler(history, readings, () => heat.Latest.Battery);
+        sampler.Start();
         string? startError = null;
         try { server.Start(); }
         catch (Exception e) { startError = e.Message; }

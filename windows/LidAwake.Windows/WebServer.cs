@@ -58,6 +58,10 @@ public sealed class WebServer : IDisposable
 
     public int Port => port;
 
+    // The recorded samples behind /temp-history, /battery-history and /cpu-history (none: those
+    // routes answer 404, as for a feature the PC doesn't have). Set before Start.
+    public HistoryStore? History { get; set; }
+
     // True after Start succeeded, until Stop or Dispose. Tailscale Serve may only point at the
     // port while this is true (PhoneAccess).
     public bool IsRunning => app != null;
@@ -300,6 +304,19 @@ public sealed class WebServer : IDisposable
                 Empty(c);
                 return;
             }
+            case ("GET", "/temp-history") when History is { } tempHistory:
+                await SendJson(c, tempHistory.Temperature(HistoryStore.ClampHours(req.Query["hours"].FirstOrDefault())));
+                return;
+            case ("GET", "/battery-history") when History is { } batteryHistory:
+                await SendJson(c, batteryHistory.Battery(HistoryStore.ClampHours(req.Query["hours"].FirstOrDefault())));
+                return;
+            case ("GET", "/cpu-history") when History is { } cpuHistory:
+                await SendJson(c, cpuHistory.Cpu(HistoryStore.ClampHours(req.Query["hours"].FirstOrDefault())));
+                return;
+            case ("GET", "/cpu-icon") when History != null:
+                // Windows sends no per-app processor use, so no app is ever listed to have an icon.
+                await SendText(c, 404, "No such app.");
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;

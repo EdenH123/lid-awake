@@ -87,11 +87,12 @@ public sealed class NetMeter
 // all requests, because processor load and network speed are measured between two requests.
 public sealed class StatusInfo
 {
-    // Section 4. "limits" (POST /limits and the low-battery switch) always; "heat" (the too-hot
-    // switch) only while a temperature source works, re-checked with each status. No /memory
-    // route yet, so "memory" is not listed. Grows as features land.
-    public static readonly string[] Features = { "limits" };
-    public static readonly string[] FeaturesWithHeat = { "limits", "heat" };
+    // Section 4. "limits" (POST /limits and the low-battery switch) and "history" (the graphs,
+    // recorded by Lid Awake itself) always; "heat" (the too-hot switch) only while a temperature
+    // source works, re-checked with each status. No /memory route yet, so "memory" is not listed.
+    // Grows as features land.
+    public static readonly string[] Features = { "limits", "history" };
+    public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat" };
 
     readonly ISystemReadings readings;
     readonly Limits? limits;

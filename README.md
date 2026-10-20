@@ -179,6 +179,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - See your signed-in devices and sign one out.
 - The activity log.
 - The low-battery safety limit, and the too-hot one on laptops that report a temperature.
+- Battery, temperature and processor history graphs. Windows has no power log to read, so Lid Awake records its own, once a minute, while it runs (the last 48 hours). The graphs only cover the time Lid Awake has been running on this PC, with gaps while the PC slept, and the processor graph shows overall use, not use per app.
 
 ### Not on Windows yet
 
@@ -189,7 +190,6 @@ Don't rely on these on Windows. They work on the Mac only, for now.
 - Alerts on your phone.
 - Face ID or fingerprint sign-in (you use your password).
 - The camera and microphone.
-- Battery and temperature history graphs.
 
 ### Update or remove it on Windows
 
