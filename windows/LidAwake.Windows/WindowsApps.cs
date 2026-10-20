@@ -35,7 +35,7 @@ static class Win32Apps
     [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder name, ref uint size);
 
     const int GwOwner = 4;
@@ -47,6 +47,7 @@ static class Win32Apps
     const int SwMinimize = 6;
     const int SwRestore = 9;
     const uint ProcessQueryLimitedInformation = 0x1000;
+    const int ErrorInsufficientBuffer = 122;
 
     // The full path of the exe of a process, or null (a protected process, or one that is gone).
     public static string? ExePath(uint pid)
@@ -55,9 +56,15 @@ static class Win32Apps
         if (handle == IntPtr.Zero) return null;
         try
         {
-            var text = new StringBuilder(1024);
-            uint size = (uint)text.Capacity;
-            return QueryFullProcessImageNameW(handle, 0, text, ref size) ? text.ToString(0, (int)size) : null;
+            // 1024 characters almost always do; a longer path (up to 32 K) gets one retry.
+            foreach (var capacity in new[] { 1024, 32768 })
+            {
+                var text = new StringBuilder(capacity);
+                uint size = (uint)capacity;
+                if (QueryFullProcessImageNameW(handle, 0, text, ref size)) return text.ToString(0, (int)size);
+                if (Marshal.GetLastWin32Error() != ErrorInsufficientBuffer) return null;
+            }
+            return null;
         }
         finally { CloseHandle(handle); }
     }
@@ -174,6 +181,10 @@ public sealed class WindowActions : IWindowActions
 {
     public void Start(string exe)
     {
+        // Defence in depth against a hand-edited settings file: only an existing .exe is started,
+        // never a document, script or link. PhoneApps logs the refusal.
+        if (!exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(exe))
+            throw new InvalidOperationException("not a program that exists");
         // Lets the new program take the foreground, if Windows allows it.
         Win32Apps.AllowAnyForeground();
         Process.Start(new ProcessStartInfo(exe)
@@ -298,30 +309,50 @@ public sealed class WindowsIcons : IAppIcons
     }
 }
 
-// What a .lnk points to, through WScript.Shell (late bound, so no COM interop declarations).
-public sealed class ShortcutResolver : IShortcutResolver
+// What a .lnk points to, through WScript.Shell (late bound, so no COM interop declarations). One
+// WScript.Shell object is made on the first shortcut and reused until Dispose (the scan disposes
+// it at its end), so reading a Start menu does not create hundreds of them.
+public sealed class ShortcutResolver : IShortcutResolver, IDisposable
 {
+    readonly object gate = new();
+    object? shell;
+
     public string? Target(string shortcutPath)
     {
-        object? shell = null;
-        object? link = null;
-        try
+        lock (gate)
         {
-            var type = Type.GetTypeFromProgID("WScript.Shell");
-            if (type == null) return null;
-            shell = Activator.CreateInstance(type);
-            if (shell == null) return null;
-            dynamic wsh = shell;
-            link = wsh.CreateShortcut(shortcutPath);
-            dynamic shortcut = link!;
-            string target = shortcut.TargetPath;
-            return string.IsNullOrWhiteSpace(target) ? null : Environment.ExpandEnvironmentVariables(target);
+            object? link = null;
+            try
+            {
+                shell ??= CreateShell();
+                if (shell == null) return null;
+                dynamic wsh = shell;
+                link = wsh.CreateShortcut(shortcutPath);
+                dynamic shortcut = link!;
+                string target = shortcut.TargetPath;
+                return string.IsNullOrWhiteSpace(target) ? null : Environment.ExpandEnvironmentVariables(target);
+            }
+            catch (Exception) { return null; }
+            finally
+            {
+                if (link != null && Marshal.IsComObject(link)) Marshal.ReleaseComObject(link);
+            }
         }
-        catch (Exception) { return null; }
-        finally
+    }
+
+    static object? CreateShell()
+    {
+        var type = Type.GetTypeFromProgID("WScript.Shell");
+        return type == null ? null : Activator.CreateInstance(type);
+    }
+
+    // Releases the shell; a later Target makes a new one.
+    public void Dispose()
+    {
+        lock (gate)
         {
-            if (link != null && Marshal.IsComObject(link)) Marshal.ReleaseComObject(link);
             if (shell != null && Marshal.IsComObject(shell)) Marshal.ReleaseComObject(shell);
+            shell = null;
         }
     }
 }
@@ -350,6 +381,12 @@ public sealed class StartMenuScanner : IStartMenuSource
         }.Where(f => !string.IsNullOrEmpty(f));
 
     public IReadOnlyList<StartApp> Scan()
+    {
+        try { return ScanFolders(); }
+        finally { (resolver as IDisposable)?.Dispose(); }
+    }
+
+    IReadOnlyList<StartApp> ScanFolders()
     {
         var found = new Dictionary<string, StartApp>(StringComparer.OrdinalIgnoreCase);
         var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };

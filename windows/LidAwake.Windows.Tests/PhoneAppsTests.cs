@@ -10,7 +10,12 @@ public sealed class FakeAppProcesses : IProcessSource
 {
     public List<RunningApp> Apps = new();
     public bool Throws;
-    public IReadOnlyList<RunningApp> Running() => Throws ? throw new InvalidOperationException("no process list") : Apps.ToList();
+    public int Scans;
+    public IReadOnlyList<RunningApp> Running()
+    {
+        Scans++;
+        return Throws ? throw new InvalidOperationException("no process list") : Apps.ToList();
+    }
 }
 
 // Window actions that only record what was asked.
@@ -59,12 +64,13 @@ public class PhoneAppsTests : IDisposable
     readonly FakeAppIcons icons = new();
     readonly HashSet<string> missing = new(StringComparer.OrdinalIgnoreCase);
     readonly PhoneApps apps;
+    long now = 1_000;   // the clock the scan cache reads, moved by hand
 
     public PhoneAppsTests()
     {
         settings = new Settings(Path.Combine(folder, "settings"));
         log = new AccessLog(Path.Combine(folder, "logs"));
-        apps = new PhoneApps(settings, processes, actions, icons, log, exe => !missing.Contains(exe));
+        apps = new PhoneApps(settings, processes, actions, icons, log, exe => !missing.Contains(exe), () => now);
     }
 
     public void Dispose()
@@ -167,6 +173,56 @@ public class PhoneAppsTests : IDisposable
         Assert.Equal(new[] { "id", "name" }, only.Keys.ToArray());
         Assert.Equal(PhoneApps.Id(Beta), only["id"]);
         Assert.Equal("Beta", only["name"]);
+    }
+
+    // ---- one cached scan ----
+
+    [Fact]
+    public void TwoStatusBuildsWithinTheCacheTimeMakeOneScan()
+    {
+        PickAll();
+        processes.Apps.Add(new RunningApp(Beta, "Beta", true));
+        var info = new StatusInfo(new FakeReadings(), apps: apps);
+        info.Build(true);
+        now += PhoneApps.ScanTtlMilliseconds - 1;
+        info.Build(true);
+        apps.IconPng(PhoneApps.Id(Delta), 256);   // the icon route shares the same look
+        Assert.Equal(1, processes.Scans);
+    }
+
+    [Fact]
+    public void OneStatusBuildIsOneScanEvenForBothLists()
+    {
+        PickAll();
+        new StatusInfo(new FakeReadings(), apps: apps).Build(true);
+        Assert.Equal(1, processes.Scans);
+        now += PhoneApps.ScanTtlMilliseconds;   // the cache has run out
+        new StatusInfo(new FakeReadings(), apps: apps).Build(true);
+        Assert.Equal(2, processes.Scans);
+    }
+
+    [Fact]
+    public void OpenFocusAndQuitMakeTheNextStatusLookAgain()
+    {
+        PickAll();
+        Assert.Equal(false, apps.List()[0]["running"]);
+        Assert.Equal(1, processes.Scans);
+        processes.Apps.Add(new RunningApp(Alpha, "Alpha", true));
+        Assert.Equal(false, apps.List()[0]["running"]);   // still the old look
+        Assert.Equal(1, processes.Scans);
+        actions.WithWindow.Add(Alpha);
+        Assert.True(apps.Open(PhoneApps.Id(Alpha), "iPhone"));   // decided on the old look, then forgets it
+        Assert.Equal(true, apps.List()[0]["running"]);
+        Assert.Equal(2, processes.Scans);
+
+        apps.List();
+        Assert.Equal(2, processes.Scans);
+        apps.Focus(PhoneApps.Id(Alpha), "hide", "iPhone");
+        apps.List();
+        Assert.Equal(3, processes.Scans);
+        apps.Quit(PhoneApps.Id(Alpha), "iPhone");
+        apps.List();
+        Assert.Equal(4, processes.Scans);
     }
 
     // ---- order ----
@@ -276,6 +332,22 @@ public class PhoneAppsTests : IDisposable
         processes.Apps.Add(new RunningApp(Alpha, "Alpha", false));
         Assert.False(apps.Focus(PhoneApps.Id(Alpha), "focus", "iPhone"));   // running, no window
         Assert.False(apps.Focus(PhoneApps.Id(Alpha), "quit", "iPhone"));    // no window to ask
+    }
+
+    [Fact]
+    public void AProcessWithNoWindowCannotBeReachedByItsId()
+    {
+        processes.Apps.Add(new RunningApp(@"C:\Windows\explorer.exe", "explorer", false));
+        actions.WithWindow.Add(@"C:\Windows\explorer.exe");
+        actions.QuitAnswers[@"C:\Windows\explorer.exe"] = QuitResult.Asked;
+        var id = PhoneApps.Id(@"C:\Windows\explorer.exe");
+        Assert.False(apps.Focus(id, "focus", "iPhone"));
+        Assert.False(apps.Focus(id, "hide", "iPhone"));
+        Assert.False(apps.Focus(id, "quit", "iPhone"));
+        Assert.Null(apps.IconPng(id, 256));
+        Assert.Empty(actions.Calls);
+        Assert.Empty(icons.Asked);
+        Assert.Empty(apps.Others());
     }
 
     [Fact]
@@ -451,8 +523,12 @@ public class PhoneAppsTests : IDisposable
         dynamic shortcut = shell.CreateShortcut(link);
         shortcut.TargetPath = Cmd;
         shortcut.Save();
-        Assert.Equal(Cmd, new ShortcutResolver().Target(link), ignoreCase: true);
-        Assert.Null(new ShortcutResolver().Target(Path.Combine(folder, "nothing.lnk")));
+        using (var resolver = new ShortcutResolver())
+        {
+            Assert.Equal(Cmd, resolver.Target(link), ignoreCase: true);
+            Assert.Equal(Cmd, resolver.Target(link), ignoreCase: true);   // the same shell, used again
+            Assert.Null(resolver.Target(Path.Combine(folder, "nothing.lnk")));
+        }
         // And the scanner built on it.
         var found = new StartMenuScanner(new ShortcutResolver(), new[] { folder }).Scan();
         var app = Assert.Single(found);
@@ -467,6 +543,22 @@ public class PhoneAppsTests : IDisposable
         var self = running.Where(r => r.IsSelf).ToArray();
         Assert.NotEmpty(self);
         Assert.Equal(Environment.ProcessPath, self[0].Exe, ignoreCase: true);
+    }
+
+    [Fact]
+    public void TheRealStartRefusesAnythingButAnExistingExe()
+    {
+        Directory.CreateDirectory(folder);
+        var script = Path.Combine(folder, "run.bat");
+        File.WriteAllText(script, "@echo off\r\necho x > " + Path.Combine(folder, "ran.txt") + "\r\n");
+        var document = Path.Combine(folder, "notes.txt");
+        File.WriteAllText(document, "hi");
+        var actionsReal = new WindowActions();
+        Assert.Throws<InvalidOperationException>(() => actionsReal.Start(script));
+        Assert.Throws<InvalidOperationException>(() => actionsReal.Start(document));
+        Assert.Throws<InvalidOperationException>(() => actionsReal.Start(@"C:\definitely\not\here.exe"));
+        Thread.Sleep(500);
+        Assert.False(File.Exists(Path.Combine(folder, "ran.txt")));   // the script never ran
     }
 
     [Fact]

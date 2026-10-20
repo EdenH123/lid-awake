@@ -62,6 +62,9 @@ public sealed class PhoneApps
     public const string SettingsKey = "phoneApps";
     public const int SmallIcon = 256;
     public const int BigIcon = 512;
+    // How long one look at the running programs is reused: several phones poll /status every 3
+    // seconds, and a scan walks every process and every window.
+    public const long ScanTtlMilliseconds = 2000;
 
     readonly Settings settings;
     readonly IProcessSource processes;
@@ -69,13 +72,18 @@ public sealed class PhoneApps
     readonly IAppIcons icons;
     readonly AccessLog? log;
     readonly Func<string, bool> exists;
+    readonly Func<long> clock;
     readonly object gate = new();
+    readonly object scanGate = new();
+    IReadOnlyList<RunningApp>? scan;
+    long scannedAt;
     readonly ConcurrentDictionary<string, byte[]> iconCache = new();
 
     // `exists` tells whether an exe is still there (apps that were uninstalled are left out).
     public PhoneApps(Settings settings, IProcessSource processes, IWindowActions actions, IAppIcons icons,
-                     AccessLog? log = null, Func<string, bool>? exists = null)
+                     AccessLog? log = null, Func<string, bool>? exists = null, Func<long>? clock = null)
     {
+        this.clock = clock ?? (() => Environment.TickCount64);
         this.settings = settings;
         this.processes = processes;
         this.actions = actions;
@@ -145,27 +153,56 @@ public sealed class PhoneApps
 
     // ---- what is running ----
 
+    // One look at the running programs, reused for ScanTtlMilliseconds. The lock is held during the
+    // scan, so phones asking at the same time share one scan instead of each making their own.
     IReadOnlyList<RunningApp> Running()
     {
-        try { return processes.Running(); }
-        catch (Exception) { return Array.Empty<RunningApp>(); }
+        lock (scanGate)
+        {
+            var now = clock();
+            if (scan != null && now - scannedAt >= 0 && now - scannedAt < ScanTtlMilliseconds) return scan;
+            IReadOnlyList<RunningApp> found;
+            try { found = processes.Running(); }
+            catch (Exception) { found = Array.Empty<RunningApp>(); }
+            scan = found;
+            scannedAt = now;
+            return found;
+        }
     }
 
-    // Any running program by its id, except Lid Awake itself (the Mac matches every running app).
+    // After an open, front, hide or quit: the next status looks again.
+    void Rescan()
+    {
+        lock (scanGate) scan = null;
+    }
+
+    // A running program with an ordinary visible window, by its id, never Lid Awake itself. The Mac
+    // matches every running app; here a program with no window (explorer's background processes,
+    // services, shell hosts) is not reachable, so the phone cannot compute an id for any process.
     RunningApp? RunningFor(string id)
     {
         if (id.Length == 0) return null;
-        return Running().FirstOrDefault(r => !r.IsSelf && Id(r.Exe) == id);
+        return Running().FirstOrDefault(r => r.HasWindow && !r.IsSelf && Id(r.Exe) == id);
     }
 
     // ---- /status ----
 
     // `apps`: the picked apps, in order, with whether each is running. One that was uninstalled
     // since is left out.
-    public List<Dictionary<string, object>> List()
+    public List<Dictionary<string, object>> List() => Lists().Apps;
+
+    // Both lists of one status from a single look at the running programs.
+    public (List<Dictionary<string, object>> Apps, List<Dictionary<string, object>> Others) Lists()
     {
-        var running = new HashSet<string>(Running().Select(r => Normalize(r.Exe)), StringComparer.OrdinalIgnoreCase);
-        return Picks()
+        var running = Running();
+        var picks = Picks();
+        return (BuildList(picks, running), BuildOthers(picks, running));
+    }
+
+    List<Dictionary<string, object>> BuildList(IReadOnlyList<StartApp> picks, IReadOnlyList<RunningApp> now)
+    {
+        var running = new HashSet<string>(now.Select(r => Normalize(r.Exe)), StringComparer.OrdinalIgnoreCase);
+        return picks
             .Where(p => Safe(() => exists(p.Exe)))
             .Select(p => new Dictionary<string, object>
             {
@@ -178,12 +215,14 @@ public sealed class PhoneApps
 
     // `otherApps`: programs with an ordinary visible window that are not picked (the phone's dock),
     // once each, never Lid Awake itself.
-    public List<Dictionary<string, object>> Others()
+    public List<Dictionary<string, object>> Others() => Lists().Others;
+
+    static List<Dictionary<string, object>> BuildOthers(IReadOnlyList<StartApp> picks, IReadOnlyList<RunningApp> now)
     {
-        var mine = new HashSet<string>(Picks().Select(p => Id(p.Exe)));
+        var mine = new HashSet<string>(picks.Select(p => Id(p.Exe)));
         var seen = new HashSet<string>();
         var result = new List<Dictionary<string, object>>();
-        foreach (var r in Running())
+        foreach (var r in now)
         {
             if (!r.HasWindow || r.IsSelf) continue;
             var id = Id(r.Exe);
@@ -230,10 +269,12 @@ public sealed class PhoneApps
             try { actions.Start(app.Exe); }
             catch (Exception e)
             {
+                Rescan();
                 log?.Write($"Couldn't open {app.Name}: {e.Message} · {device}");
                 return true;
             }
         }
+        Rescan();
         log?.Write($"Opened {app.Name} from the phone · {device}");
         return true;
     }
@@ -251,6 +292,7 @@ public sealed class PhoneApps
             "quit" => Try(() => actions.Quit(app.Exe) == QuitResult.Asked),
             _ => Try(() => actions.Focus(app.Exe)),
         };
+        Rescan();
         if (!done) return false;
         var what = action == "hide" ? $"Hid {name}" : action == "quit" ? $"Quit {name}" : $"Brought {name} to the front";
         log?.Write($"{what} from the phone · {device}");
@@ -266,6 +308,7 @@ public sealed class PhoneApps
         QuitResult result;
         try { result = actions.Quit(app.Exe); }
         catch (Exception) { result = QuitResult.NoWindow; }
+        Rescan();
         if (result != QuitResult.Asked) return false;
         log?.Write($"Quit {app.Name} from the phone · {device}");
         return true;

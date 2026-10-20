@@ -118,6 +118,8 @@ public sealed class StatusInfo
     {
         // The cached reading only: /status never waits for the hardware.
         var temperature = heat?.Latest ?? TemperatureReading.None;
+        // One look at the running programs for both lists.
+        var appLists = AppLists();
         var s = new Dictionary<string, object?>
         {
             // 6.1
@@ -144,8 +146,8 @@ public sealed class StatusInfo
             ["lidClosed"] = false,
             ["displayAsleep"] = false,
             // 6.3
-            ["apps"] = AppList(a => a.List()),
-            ["otherApps"] = AppList(a => a.Others()),
+            ["apps"] = appLists.Apps,
+            ["otherApps"] = appLists.Others,
             ["claude"] = null,
             // 6.6
             ["os"] = "windows",
@@ -219,11 +221,15 @@ public sealed class StatusInfo
     }
 
     // Never lets a failing process or settings read take the whole status down: an empty list.
-    object AppList(Func<PhoneApps, List<Dictionary<string, object>>> read)
+    (object Apps, object Others) AppLists()
     {
-        if (apps == null) return Array.Empty<object>();
-        try { return read(apps); }
-        catch (Exception) { return Array.Empty<object>(); }
+        if (apps == null) return (Array.Empty<object>(), Array.Empty<object>());
+        try
+        {
+            var lists = apps.Lists();
+            return (lists.Apps, lists.Others);
+        }
+        catch (Exception) { return (Array.Empty<object>(), Array.Empty<object>()); }
     }
 
     // Windows gives Wi-Fi signal as a quality from 0 to 100, not dBm. The usual approximation:

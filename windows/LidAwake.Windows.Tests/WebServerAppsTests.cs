@@ -175,6 +175,26 @@ public partial class WebServerTests
         Assert.Equal(new[] { "start " + AppAlpha }, appActions.Calls.ToArray());
     }
 
+    [Fact]
+    public async Task AProcessWithNoWindowHasNoIconAndCannotBeFrontedOrQuit()
+    {
+        const string background = @"C:\Windows\explorer.exe";
+        appProcesses.Apps.Add(new RunningApp(background, "explorer", false));
+        appActions.WithWindow.Add(background);
+        appActions.QuitAnswers[background] = QuitResult.Asked;
+        var cookie = await SignIn();
+        var id = PhoneApps.Id(background);
+        Assert.Equal(404, (await Send("GET", "/app-icon.png?id=" + id, cookie: cookie)).Code);
+        foreach (var action in new[] { "focus", "hide", "quit" })
+        {
+            var r = await Post("/focus-app", cookie, "{\"id\":\"" + id + "\",\"action\":\"" + action + "\"}");
+            Assert.Equal(404, r.Code);
+            Assert.Equal("That app isn't open any more.", r.Body);
+        }
+        Assert.Empty(appActions.Calls);
+        Assert.Empty(appIcons.Asked);
+    }
+
     // ---- POST /focus-app ----
 
     [Fact]
