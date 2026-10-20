@@ -278,7 +278,7 @@ public sealed class WmiBrightness : IBrightness
     }
 
     static ManagementObjectSearcher Search(ManagementScope scope, string query) =>
-        new(scope, new ObjectQuery(query), new EnumerationOptions { Timeout = WmiTimeout, ReturnImmediately = false });
+        new(scope, new ObjectQuery(query), new System.Management.EnumerationOptions { Timeout = WmiTimeout, ReturnImmediately = false });
 
     static T Bounded<T>(Func<T> work)
     {
