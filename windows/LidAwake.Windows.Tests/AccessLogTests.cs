@@ -135,6 +135,24 @@ public class AccessLogTests : IDisposable
         Assert.Empty(log.Recent(8));
     }
 
+    // On Windows an open file cannot be replaced: here .old is held open (an editor showing it, a
+    // backup program), so rolling the log aside fails. The line must still be written, and
+    // nothing may throw (the tray calls Write on the UI thread).
+    [Fact]
+    public void ALogThatCannotBeRolledAsideStillGetsTheLine()
+    {
+        var log = NewLog(maxBytes: 100);
+        log.Write(new string('a', 200));
+        Assert.True(new FileInfo(LogPath).Length > 100);
+        File.WriteAllText(LogPath + ".old", "the previous log");
+        using var held = new FileStream(LogPath + ".old", FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var thrown = Record.Exception(() => log.Write("still written"));
+
+        Assert.Null(thrown);
+        Assert.EndsWith("  still written", log.Recent(1)[0]);
+    }
+
     [Fact]
     public async Task WritesFromManyThreadsAllArriveWhole()
     {

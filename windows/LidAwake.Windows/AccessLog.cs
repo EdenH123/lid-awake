@@ -43,22 +43,28 @@ public sealed class AccessLog
         return sb.ToString();
     }
 
+    // Never throws, whatever goes wrong (a locked or full disk, a path that is gone): the tray
+    // calls it on the UI thread. Rolling the old log aside is its own step: if that fails (the
+    // .old file is open in an editor, say), the line is still appended to the current file.
     public void Write(string text)
     {
-        var line = now().ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture) + "  " + Clean(text) + "\n";
-        lock (gate)
+        try
         {
-            try
+            var line = now().ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture) + "  " + Clean(text) + "\n";
+            lock (gate)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                var info = new FileInfo(path);
-                if (info.Exists && info.Length > maxBytes)
-                    File.Move(path, path + ".old", overwrite: true);
+                try
+                {
+                    var info = new FileInfo(path);
+                    if (info.Exists && info.Length > maxBytes)
+                        File.Move(path, path + ".old", overwrite: true);
+                }
+                catch (Exception) { }
                 File.AppendAllText(path, line, new UTF8Encoding(false));
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
         }
+        catch (Exception) { }
     }
 
     // The newest lines first, for the phone's Settings page. Empty if there is no log.
@@ -77,8 +83,7 @@ public sealed class AccessLog
                 lines.Reverse();
                 return lines.Take(count).ToList();
             }
-            catch (IOException) { return new(); }
-            catch (UnauthorizedAccessException) { return new(); }
+            catch (Exception) { return new(); }
         }
     }
 }
