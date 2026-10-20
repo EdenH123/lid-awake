@@ -55,8 +55,8 @@ sealed class FakePhone : IDisposable
         }
     }
 
-    public string P256dh => WebPush.Base64Url(Public);
-    public string AuthText => WebPush.Base64Url(Auth);
+    public string P256dh => Passkeys.Base64Url(Public);
+    public string AuthText => Passkeys.Base64Url(Auth);
 
     public void Dispose() => Key.Dispose();
 }
@@ -136,7 +136,7 @@ public class WebPushTests : IDisposable
         return phone;
     }
 
-    static byte[] B(string base64url) => WebPush.FromBase64Url(base64url)!;
+    static byte[] B(string base64url) => Passkeys.FromBase64Url(base64url)!;
 
     // ---- RFC 8291 ----
 
@@ -166,7 +166,7 @@ public class WebPushTests : IDisposable
     {
         using var server = KeyFrom(RfcServerPrivate, RfcServerPublic);
         var body = WebPush.Encrypt(Encoding.UTF8.GetBytes(RfcPlain), B(RfcPhonePublic), B(RfcAuth), server, B(RfcSalt));
-        Assert.Equal(RfcBody, WebPush.Base64Url(body));
+        Assert.Equal(RfcBody, Passkeys.Base64Url(body));
     }
 
     [Fact]
@@ -256,7 +256,7 @@ public class WebPushTests : IDisposable
         using var verifier = Verifier(push.PublicKey);
         var signed = Encoding.ASCII.GetBytes(parts[0] + "." + parts[1]);
         Assert.True(verifier.VerifyData(signed, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
-        var forged = Encoding.ASCII.GetBytes(parts[0] + "." + WebPush.Base64Url(Encoding.UTF8.GetBytes("{\"aud\":\"https://evil.example\"}")));
+        var forged = Encoding.ASCII.GetBytes(parts[0] + "." + Passkeys.Base64Url(Encoding.UTF8.GetBytes("{\"aud\":\"https://evil.example\"}")));
         Assert.False(verifier.VerifyData(forged, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
     }
 
@@ -330,12 +330,12 @@ public class WebPushTests : IDisposable
         var key = phone.Public;
         var compressedStart = (byte[])key.Clone();
         compressedStart[0] = 3;
-        Assert.False(push.Subscribe(Fcm + "a", WebPush.Base64Url(key[..64]), phone.AuthText, null, PageHost));
-        Assert.False(push.Subscribe(Fcm + "a", WebPush.Base64Url(compressedStart), phone.AuthText, null, PageHost));
+        Assert.False(push.Subscribe(Fcm + "a", Passkeys.Base64Url(key[..64]), phone.AuthText, null, PageHost));
+        Assert.False(push.Subscribe(Fcm + "a", Passkeys.Base64Url(compressedStart), phone.AuthText, null, PageHost));
         Assert.False(push.Subscribe(Fcm + "a", "not base64!", phone.AuthText, null, PageHost));
         Assert.False(push.Subscribe(Fcm + "a", null, phone.AuthText, null, PageHost));
-        Assert.False(push.Subscribe(Fcm + "a", phone.P256dh, WebPush.Base64Url(phone.Auth[..15]), null, PageHost));
-        Assert.False(push.Subscribe(Fcm + "a", phone.P256dh, WebPush.Base64Url(new byte[17]), null, PageHost));
+        Assert.False(push.Subscribe(Fcm + "a", phone.P256dh, Passkeys.Base64Url(phone.Auth[..15]), null, PageHost));
+        Assert.False(push.Subscribe(Fcm + "a", phone.P256dh, Passkeys.Base64Url(new byte[17]), null, PageHost));
         Assert.False(push.Subscribe(Fcm + "a", phone.P256dh, null, null, PageHost));
         Assert.Empty(push.Phones);
         // Padded base64url is fine too.

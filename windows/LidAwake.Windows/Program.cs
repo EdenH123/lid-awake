@@ -16,7 +16,9 @@ static class Program
         var machine = Settings.ForMachine();
         KeepAwake.MigrateSavedLid(settings, machine);
         var auth = new Auth(settings);
-        var tailnet = new Tailnet(settings);
+        // This PC's Tailscale name and Serve state live in machine.json (moved there once).
+        Tailnet.MoveToMachine(settings, machine);
+        var tailnet = new Tailnet(machine);
         var log = new AccessLog();
         KeepAwake.Log = log.Write;
         WlanReader.Log = log.Write;
@@ -65,9 +67,12 @@ static class Program
         // encoder. While watched (a phone on the socket, or the capture still running for a poll),
         // the lid screen keeps the display on.
         bool ScreenAllowed() => ScreenSwitch.IsOn(settings);
+        // The screen and the camera use the same encoders (and the same "a hardware one failed"
+        // memory, MfH264Encoder.HardwareFailed).
+        bool hardwareEncoder = settings.Get<string>("screenEncoder") != "software";
         var grabbers = new ScreenGrabbers { Note = text => log.Write("Screen: " + text) };
         using var feed = new ScreenFeed(grabbers.Open,
-            MfH264Encoder.Factory(allowHardware: settings.Get<string>("screenEncoder") != "software"),
+            MfH264Encoder.Factory(allowHardware: hardwareEncoder),
             note: text => log.Write("Screen: " + text));
         feed.WatchingChanged += ScreenWatch.Capturing;
         var status = new StatusInfo(readings, limits, heat, phoneApps, ScreenAllowed) { Screen = screen, Control = control };
@@ -83,7 +88,7 @@ static class Program
         // opens the camera: only a phone on the live socket with a ticket, while the owner's switch
         // is on. With the lid closed, a camera that can't open says so.
         ICameraPasskeys cameraPasskeys = new PasskeyCamera(auth.Passkeys);
-        IVideoEncoderFactory cameraEncoders = new MfCameraEncoders(allowHardware: settings.Get<string>("screenEncoder") != "software",
+        IVideoEncoderFactory cameraEncoders = new MfCameraEncoders(allowHardware: hardwareEncoder,
             note: log.Write);
         var cameraSwitch = new CameraSwitch(settings);
         status.CameraAllowed = () => cameraSwitch.Allowed;
@@ -180,7 +185,8 @@ sealed class TrayApp : ApplicationContext
     const string ControlTitle = "Allow control from phone";
     readonly ToolStripMenuItem controlItem = new(ControlTitle);
     // "Allow camera & microphone from phone", off by default; it needs the screen switch (Mac menu).
-    readonly ToolStripMenuItem cameraItem = new("Allow camera & microphone from phone");
+    const string CameraTitle = "Allow camera & microphone from phone";
+    readonly ToolStripMenuItem cameraItem = new(CameraTitle);
     readonly CameraSwitch? cameraSwitch;
     readonly CameraService? camera;
     // The battery and heat limits, every 15 seconds as on the Mac, on a thread-pool timer: the
@@ -380,8 +386,10 @@ sealed class TrayApp : ApplicationContext
     void ShowCamera()
     {
         if (cameraSwitch == null) return;
+        bool viewing = cameraSwitch.RemoteScreen;
         cameraItem.Checked = cameraSwitch.Allowed;
-        cameraItem.Enabled = cameraSwitch.RemoteScreen;
+        cameraItem.Enabled = viewing;
+        cameraItem.Text = viewing ? CameraTitle : CameraTitle + " (needs screen viewing)";
     }
 
     // The phone page's port was taken when Lid Awake started (Main).
@@ -564,13 +572,17 @@ sealed class TrayApp : ApplicationContext
 
     void ShowScreen() => screenItem.Checked = ScreenSwitch.IsOn(settings);
 
-    // Every live socket closes, and a button or modifier key the phone was holding is let go
-    // (CloseAll does that too; this also covers a POST /input drag with no socket).
+    // Every live socket closes, a button or modifier key the phone was holding is let go
+    // (CloseAll does that too; this also covers a POST /input drag with no socket), and the
+    // phone's "display off" is forgotten. Lid Awake off, the screen switch off, the session ending.
     void CloseSockets()
     {
         try { live?.CloseAll(); }
         catch (Exception) { }
         try { control?.ReleaseHeld(); }
+        catch (Exception) { }
+        // The phone's "display off" ends with it (without waking the display).
+        try { control?.ClearScreenOff(); }
         catch (Exception) { }
     }
 

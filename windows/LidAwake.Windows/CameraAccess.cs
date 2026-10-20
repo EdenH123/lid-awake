@@ -82,7 +82,7 @@ public sealed class CameraTickets
         {
             var t = now();
             foreach (var old in tickets.Where(kv => kv.Value.Expires <= t).Select(kv => kv.Key).ToList()) tickets.Remove(old);
-            var ticket = CameraAccess.Base64Url(RandomNumberGenerator.GetBytes(32));
+            var ticket = Passkeys.Base64Url(RandomNumberGenerator.GetBytes(32));
             if (tickets.Count < Max) tickets[ticket] = (Hash(sessionToken), t + Life);
             return ticket;
         }
@@ -137,29 +137,14 @@ public sealed class CameraAccess
         if (!allowed() || string.IsNullOrEmpty(sessionToken)) return failed;
         string? Field(string name) => body.TryGetValue(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         if (Field("id") is not { } id
-            || FromBase64Url(Field("clientData")) is not { } clientData
-            || FromBase64Url(Field("authenticatorData")) is not { } authData
-            || FromBase64Url(Field("signature")) is not { } signature)
+            || Passkeys.FromBase64Url(Field("clientData")) is not { } clientData
+            || Passkeys.FromBase64Url(Field("authenticatorData")) is not { } authData
+            || Passkeys.FromBase64Url(Field("signature")) is not { } signature)
             return failed;
         bool ok;
         try { ok = passkeys.VerifyCamera(id, clientData, authData, signature, host); }
         catch (Exception) { ok = false; }
         if (!ok) return failed;
         return new(200, JsonSerializer.Serialize(new { ticket = tickets.Issue(sessionToken) }), null);
-    }
-
-    // URL-safe base64 without padding (5.3).
-    public static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-    // URL-safe base64, padding optional. null: not base64url.
-    public static byte[]? FromBase64Url(string? text)
-    {
-        if (text == null) return null;
-        var s = text.TrimEnd('=');
-        if (s.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch == '-' || ch == '_'))) return null;
-        s = s.Replace('-', '+').Replace('_', '/');
-        s += (s.Length % 4) switch { 2 => "==", 3 => "=", 0 => "", _ => "!" };
-        try { return Convert.FromBase64String(s); }
-        catch (FormatException) { return null; }
     }
 }

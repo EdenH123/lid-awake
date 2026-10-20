@@ -118,7 +118,15 @@ public sealed class WebPush : IDisposable
     }
 
     // GET /push/key: the public key, 65 bytes uncompressed (04 || x || y), base64url.
-    public string PublicKey => Base64Url(Uncompressed(SigningKey.ExportParameters(false).Q));
+    public string PublicKey
+    {
+        get
+        {
+            ECParameters key;
+            lock (keyGate) key = SigningKey.ExportParameters(false);
+            return Passkeys.Base64Url(Uncompressed(key.Q));
+        }
+    }
 
     // ---- The phones ----
 
@@ -139,13 +147,13 @@ public sealed class WebPush : IDisposable
     public bool Subscribe(string? endpoint, string? p256dh, string? auth, IEnumerable<string>? off, string pageHost)
     {
         if (endpoint == null || PushUri(endpoint) == null || Encoding.UTF8.GetByteCount(endpoint) >= MaxEndpointBytes) return false;
-        if (FromBase64Url(p256dh) is not { Length: 65 } key || key[0] != 4 || !IsPoint(key)) return false;
-        if (FromBase64Url(auth) is not { Length: 16 } secret) return false;
+        if (Passkeys.FromBase64Url(p256dh) is not { Length: 65 } key || key[0] != 4 || !IsPoint(key)) return false;
+        if (Passkeys.FromBase64Url(auth) is not { Length: 16 } secret) return false;
         lock (gate)
         {
             if (IsContactHost(pageHost)) machine.Set(ContactName, "https://" + pageHost);
             var all = Stored().Where(s => s.Endpoint != endpoint).ToList();
-            all.Add(new Subscription(endpoint, Base64Url(key), Base64Url(secret), Kinds(off)));
+            all.Add(new Subscription(endpoint, Passkeys.Base64Url(key), Passkeys.Base64Url(secret), Kinds(off)));
             // A few phones at most; the oldest goes first.
             if (all.Count > MaxPhones) all = all.Skip(all.Count - MaxPhones).ToList();
             machine.Set(ListName, all);
@@ -244,7 +252,7 @@ public sealed class WebPush : IDisposable
     internal HttpRequestMessage? Request(Subscription target, byte[] payload)
     {
         if (PushUri(target.Endpoint) is not { } uri) return null;
-        if (FromBase64Url(target.P256dh) is not { Length: 65 } key || FromBase64Url(target.Auth) is not { Length: 16 } secret) return null;
+        if (Passkeys.FromBase64Url(target.P256dh) is not { Length: 65 } key || Passkeys.FromBase64Url(target.Auth) is not { Length: 16 } secret) return null;
         byte[] body;
         string jwt;
         try
@@ -327,17 +335,19 @@ public sealed class WebPush : IDisposable
     // signed with this PC's key, the signature as raw r || s (64 bytes).
     public string VapidToken(string audience)
     {
-        var header = Base64Url(Encoding.UTF8.GetBytes("{\"typ\":\"JWT\",\"alg\":\"ES256\"}"));
+        var header = Passkeys.Base64Url(Encoding.UTF8.GetBytes("{\"typ\":\"JWT\",\"alg\":\"ES256\"}"));
         var claims = new Dictionary<string, object>
         {
             ["aud"] = audience,
             ["exp"] = (now() + TokenLifetime).ToUnixTimeSeconds(),
             ["sub"] = Contact,
         };
-        var body = Base64Url(JsonSerializer.SerializeToUtf8Bytes(claims));
+        var body = Passkeys.Base64Url(JsonSerializer.SerializeToUtf8Bytes(claims));
         var signed = Encoding.ASCII.GetBytes(header + "." + body);
-        var signature = SigningKey.SignData(signed, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
-        return header + "." + body + "." + Base64Url(signature);
+        // One use of the key at a time: alerts are sent from several threads at once.
+        byte[] signature;
+        lock (keyGate) signature = SigningKey.SignData(signed, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        return header + "." + body + "." + Passkeys.Base64Url(signature);
     }
 
     // The remembered https://<page host>, or the Mac's placeholder.
@@ -351,19 +361,6 @@ public sealed class WebPush : IDisposable
     }
 
     // ---- Helpers ----
-
-    public static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-    // base64url (or plain base64), with or without padding. Null when it isn't.
-    public static byte[]? FromBase64Url(string? text)
-    {
-        if (string.IsNullOrEmpty(text) || text.Length > 4096) return null;
-        var s = text.TrimEnd('=').Replace('-', '+').Replace('_', '/');
-        if (s.Length % 4 == 1) return null;
-        s = s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=');
-        var bytes = new byte[s.Length * 3 / 4];
-        return Convert.TryFromBase64String(s, bytes, out var written) ? bytes[..written] : null;
-    }
 
     static ECParameters PublicParameters(byte[] uncompressed) => new()
     {

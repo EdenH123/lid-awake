@@ -79,10 +79,32 @@ public sealed class LiveServer : IDisposable
     // True after Start succeeded, until Stop or Dispose. Serve maps /live only while it is.
     public bool IsRunning => app != null;
 
-    // Phones watching right now, and a signal whenever that number changes (from the socket's
-    // threads). The lid-screen task keeps the display on while it is above 0.
-    public int Viewers { get { lock (gate) return peers.Count; } }
+    // Phones watching the screen right now (a phone whose camera is open watches the camera, not
+    // the screen: 7.7), and a signal whenever that number changes (from the socket's threads). The
+    // lid-screen task keeps the display on while it is above 0.
+    public int Viewers { get { lock (gate) return ScreenViewers(); } }
     public event Action<int>? ViewersChanged;
+
+    // Under gate.
+    int ScreenViewers() => peers.Values.Count(p => !p.CameraOn);
+
+    readonly object changedGate = new();
+    int reportedViewers;  // under changedGate
+
+    // One notification at a time, each with the count as it is then: sockets closing together
+    // (CloseAll) can't tell 0 and then a stale 1, so the last thing told is always the truth.
+    void Changed()
+    {
+        lock (changedGate)
+        {
+            int now;
+            lock (gate) now = ScreenViewers();
+            if (now == reportedViewers) return;
+            reportedViewers = now;
+            try { ViewersChanged?.Invoke(now); }
+            catch (Exception) { }
+        }
+    }
 
     public void Start()
     {
@@ -264,12 +286,11 @@ public sealed class LiveServer : IDisposable
 
     async Task Serve(Peer peer)
     {
-        int count;
-        lock (gate) { peers[peer.Id] = peer; count = peers.Count; }
+        lock (gate) peers[peer.Id] = peer;
         // Turned off (or the screen withdrawn) between the handshake and here: CloseAll may have
         // looked before this phone was listed, so it closes now rather than at the 2-second check.
         if (!Allowed()) peer.Abort();
-        Changed(count);
+        Changed();
         LogQuietly("Screen viewing started · " + peer.Device);
         var sender = Task.Run(() => SendLoop(peer));
         try
@@ -292,8 +313,8 @@ public sealed class LiveServer : IDisposable
             }
             // Under CameraGate: a camera switch-over can't subscribe this closed phone again.
             lock (peer.CameraGate) feed.Unsubscribe(peer.Id);
-            lock (gate) { peers.Remove(peer.Id); count = peers.Count; }
-            Changed(count);
+            lock (gate) peers.Remove(peer.Id);
+            Changed();
             LogQuietly("Screen viewing ended · " + peer.Device);
             // Don't leave a mouse button or a modifier held if the phone was mid-drag (7.6).
             if (peer.UsedInput) ReleaseInput();
@@ -313,6 +334,7 @@ public sealed class LiveServer : IDisposable
     // open, its screen stops (no screen picture or video is sent, and what waits of it is dropped)
     // so only one video uses the link (7.5); closed, the screen comes back, as JPEG until the page
     // asks for video again.
+    // A phone on its camera is no screen viewer, so the count is told again after a switch-over.
     void SyncCamera(Peer peer)
     {
         if (camera == null || peer.CameraSocket is not { } cs) return;
@@ -323,7 +345,8 @@ public sealed class LiveServer : IDisposable
             try { open = camera.IsOpen(cs); }
             catch (Exception) { open = false; }
             if (open == peer.CameraOn) return;
-            peer.CameraOn = open;
+            // Under gate, so the count of screen viewers never sees it half-way.
+            lock (gate) peer.CameraOn = open;
             if (open)
             {
                 feed.Unsubscribe(peer.Id);
@@ -337,6 +360,7 @@ public sealed class LiveServer : IDisposable
                 Subscribe(peer);
             }
         }
+        Changed();
     }
 
     // Camera video and sound (binary, 7.2): no confirmations, so never held back by the screen's
@@ -357,12 +381,6 @@ public sealed class LiveServer : IDisposable
     static void SendRaw(Peer peer, byte[] json)
     {
         if (peer.Enqueue(json, text: true, video: false) == Peer.Queued.Overflow) peer.Abort();
-    }
-
-    void Changed(int count)
-    {
-        try { ViewersChanged?.Invoke(count); }
-        catch (Exception) { }
     }
 
     void LogQuietly(string text)

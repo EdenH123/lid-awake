@@ -541,6 +541,11 @@ public sealed class RemoteControl : IInputSink
 
     public void ReleaseHeld() => injector.ReleaseHeld();
 
+    // Lid Awake turned off, or the screen switch went off: the phone's "display off" no longer
+    // stands (the next on starts afresh, and the lid screen may hold the display again). Nothing
+    // is woken: the display stays as it is.
+    public void ClearScreenOff() => SetScreenOff(false);
+
     // At start-up: a modifier key left marked as held is let go (main.swift does the same).
     public void ReleaseModifiers() => injector.ReleaseModifiers();
 

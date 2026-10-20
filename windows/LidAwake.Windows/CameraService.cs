@@ -102,8 +102,6 @@ public sealed class CameraService : IDisposable
     // The check every 2 seconds (switch off, 10 minutes, a camera that stopped sending).
     public void Start() => timer ??= new System.Threading.Timer(_ => Tick(), null, CheckEvery, CheckEvery);
 
-    public bool Watched { get { lock (gate) return viewers.Count > 0; } }
-
     public bool IsOpen(ICameraSocket socket) { lock (gate) return viewers.ContainsKey(socket); }
 
     // Running now (the webcam light is on).
@@ -505,8 +503,8 @@ public static class CameraWire
     }
 }
 
-// An ICameraSocket over a live socket's two ways of sending (text and binary), for the merge with
-// Task 22: new WireCameraSocket(token, device, text => queue it, bytes => queue it).
+// An ICameraSocket over a live socket's two ways of sending (text and binary): LiveServer makes
+// one per phone.
 public sealed class WireCameraSocket : ICameraSocket
 {
     readonly Action<string> sendText;

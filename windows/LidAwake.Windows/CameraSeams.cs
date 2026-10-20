@@ -1,8 +1,8 @@
 namespace LidAwake;
 
-// The three seams of ruling P3-8. The camera is built in parallel with the passkeys (Task 18) and
-// the live socket with its H.264 encoder (Task 22), so it only talks to them through these small
-// interfaces. The tests give fakes; the real ones are wired in Program at merge.
+// The camera's three seams: the passkeys, the H.264 encoder and the live socket. The camera only
+// talks to them through these small interfaces; the tests give fakes, and the real ones are
+// CameraWiring.cs (PasskeyCamera, MfCameraEncoders) and LiveServer (a WireCameraSocket per phone).
 
 // Task 18's passkeys, as the two camera routes need them (docs/API.md 5.4).
 public interface ICameraPasskeys

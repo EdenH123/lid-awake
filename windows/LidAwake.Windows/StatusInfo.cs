@@ -87,11 +87,10 @@ public sealed class NetMeter
 // all requests, because processor load and network speed are measured between two requests.
 public sealed class StatusInfo
 {
-    // Section 4. "limits" (POST /limits and the low-battery switch) and "history" (the graphs,
-    // recorded by Lid Awake itself) always; "heat" (the too-hot switch) only while a temperature
-    // source works, re-checked with each status. No /memory route yet, so "memory" is not listed.
-    // Grows as features land.
-    // "passkeys": Face ID / fingerprint sign-in (/passkey/*). "push": phone alerts (/push/*).
+    // Section 4. "limits" (POST /limits and the low-battery switch), "history" (the graphs,
+    // recorded by Lid Awake itself), "passkeys" (/passkey/*) and "push" (/push/*) always; "heat"
+    // (the too-hot switch) only while a temperature source works, re-checked with each status.
+    // FeatureList adds apps, control, screen and camera. No /memory route, so no "memory".
     public static readonly string[] Features = { "limits", "history", "passkeys", "push" };
     public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat", "passkeys", "push" };
 

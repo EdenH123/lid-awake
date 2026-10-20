@@ -183,7 +183,7 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 - Face ID or fingerprint sign-in. On your phone: the gear ⚙︎ → turn on **Face ID** (or fingerprint), then type your password once more. The laptop shows **Face ID or fingerprint added to Lid Awake** at the tray. To remove one, use the tray icon → **Face ID and fingerprint** → click the device. Setting a new phone password removes them all.
 - Open, switch to and quit programs from your phone. Right-click the Lid Awake icon, choose **Apps on phone…**, and tick the programs from the Start menu to show on the phone's Apps page. Programs that are open but not ticked show in the phone's dock.
 - Alerts on your phone: the laptop turned off (timer or safety limit), battery low, getting warm (on laptops that report a battery temperature), and each new sign-in. Turn them on in the app: gear ⚙︎ → **Alerts**. On an iPhone, the app must be on the Home Screen first.
-- Watching the screen live. Tick **Allow screen from phone** in the tray menu first (it starts off). Turning it off, or turning Lid Awake off, closes the picture on your phone at once.
+- Watching the screen live. Tick **Allow screen from phone** in the tray menu first (it starts off). Turning it off, or turning Lid Awake off, closes the picture on your phone at once. If the graphics card's video encoder fails, Lid Awake uses Windows' own instead, for the screen and the camera alike, until it starts again.
 - Using the phone as trackpad and keyboard, and locking the PC or turning its screen off from the phone. Turning on **Allow screen from phone** also allows control, until you change **Allow control from phone** in the tray menu yourself (as on the Mac): if you only want to watch, untick it. **Allow control from phone** is greyed out while screen viewing is off. Windows doesn't let any program control a window that runs as administrator, the "Do you want to allow…" prompt, or the lock screen, so do those at the PC.
 - Seeing and hearing the room through the laptop's camera and microphone, and talking through its speakers. Tick **Allow camera & microphone from phone** in the tray menu (it needs **Allow screen from phone**, and starts off), then tap the notch in the drawing on your phone (Face ID or fingerprint every time, so turn that on first). A plugged-in USB camera is used before the built-in one, and a phone connected to Windows as a camera (Phone Link) is never used. It closes by itself after 10 minutes. Many laptops switch the built-in camera off with the lid closed: open the lid, or plug in a USB camera. If Windows says no, turn on Settings → Privacy & security → Camera → **Let desktop apps access your camera** (and the same for the microphone).
 
@@ -201,6 +201,7 @@ What Lid Awake does for you: while someone watches the screen from the phone, it
 Don't rely on these on Windows. They work on the Mac only, for now.
 
 - Claude alerts on your phone (usage and sessions).
+- The memory window (tapping the memory reading to see what uses it).
 
 ### Update or remove it on Windows
 

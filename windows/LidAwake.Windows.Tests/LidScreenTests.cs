@@ -425,10 +425,12 @@ public class LidScreenTests : IDisposable
         screen.SetOn(true);
         ScreenWatch.SetWatching(true);
         Assert.True(hold.Holding);
-        ScreenWatch.SetViewers(0);
+        ScreenWatch.SetWatching(false);
         Assert.False(hold.Holding);
-        ScreenWatch.SetViewers(2);
+        ScreenWatch.LiveViewers(2);
         Assert.True(hold.Holding);
+        ScreenWatch.LiveViewers(0);
+        ScreenWatch.ResetSources();
     }
 
     [Fact]

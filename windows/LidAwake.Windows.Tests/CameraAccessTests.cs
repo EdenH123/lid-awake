@@ -161,17 +161,17 @@ public class CameraAccessUnitTests
     public void Base64UrlBothWays()
     {
         var bytes = Enumerable.Range(0, 64).Select(i => (byte)(i * 7)).ToArray();
-        var text = CameraAccess.Base64Url(bytes);
+        var text = Passkeys.Base64Url(bytes);
         Assert.DoesNotContain('+', text);
         Assert.DoesNotContain('/', text);
         Assert.DoesNotContain('=', text);
-        Assert.Equal(bytes, CameraAccess.FromBase64Url(text));
-        Assert.Equal(new byte[] { 0xFB, 0xFF }, CameraAccess.FromBase64Url("-_8"));
-        Assert.Equal(new byte[] { 0xFB, 0xFF }, CameraAccess.FromBase64Url("-_8="));
-        Assert.Null(CameraAccess.FromBase64Url("+/8"));
-        Assert.Null(CameraAccess.FromBase64Url("abcde"));
-        Assert.Null(CameraAccess.FromBase64Url(null));
-        Assert.Equal(Array.Empty<byte>(), CameraAccess.FromBase64Url(""));
+        Assert.Equal(bytes, Passkeys.FromBase64Url(text));
+        Assert.Equal(new byte[] { 0xFB, 0xFF }, Passkeys.FromBase64Url("-_8"));
+        Assert.Equal(new byte[] { 0xFB, 0xFF }, Passkeys.FromBase64Url("-_8="));
+        Assert.Null(Passkeys.FromBase64Url("+/8"));
+        Assert.Null(Passkeys.FromBase64Url("abcde"));
+        Assert.Null(Passkeys.FromBase64Url(null));
+        Assert.Equal(Array.Empty<byte>(), Passkeys.FromBase64Url(""));
     }
 
     [Fact]

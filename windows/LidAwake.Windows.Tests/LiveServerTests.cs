@@ -298,6 +298,28 @@ public class LiveServerTests
         lock (counts) Assert.Equal(new[] { 1, 0, 1, 0 }, counts);
     }
 
+    // Every socket's ending is told one at a time with the count as it is then, so many closing at
+    // once (CloseAll) can't leave a stale 1 as the last word (the display would stay held).
+    [Fact]
+    public async Task ManySocketsClosingTogetherEndAtZero()
+    {
+        await using var h = new LiveHarness(video: false);
+        var told = new List<int>();
+        h.Live.ViewersChanged += n => { lock (told) told.Add(n); };
+        for (int i = 0; i < LiveServer.MaxSockets; i++) Assert.Equal(101, (await h.Connect()).Status);
+        Assert.True(await Until(() => h.Live.Viewers == LiveServer.MaxSockets));
+        h.Live.CloseAll();
+        Assert.True(await Until(() => { lock (told) return h.Live.Viewers == 0 && told.Count > 0 && told[^1] == 0; }));
+        await Task.Delay(200);
+        lock (told)
+        {
+            Assert.Equal(0, told[^1]);
+            // Never the same number twice in a row, and never more than the sockets.
+            for (int i = 1; i < told.Count; i++) Assert.NotEqual(told[i - 1], told[i]);
+            Assert.All(told, n => Assert.InRange(n, 0, LiveServer.MaxSockets));
+        }
+    }
+
     [Fact]
     public async Task ASignedOutSessionsSocketCloses()
     {

@@ -311,6 +311,31 @@ public class CameraSocketTests
         Assert.False(camera.Capturing);
     }
 
+    // A phone watching the camera isn't watching the screen: it doesn't hold the display (7.7).
+    [Fact]
+    public async Task APhoneOnItsCameraIsNoScreenViewer()
+    {
+        using var camera = NewCamera();
+        await using var h = new LiveHarness(video: false, camera: camera);
+        var told = new List<int>();
+        h.Live.ViewersChanged += n => { lock (told) told.Add(n); };
+        var c = await OpenCamera(h);
+        Assert.True(await Until(() => camera.Capturing));
+        Assert.True(await Until(() => h.Live.Viewers == 0));
+        Assert.True(await Until(() => { lock (told) return told.SequenceEqual(new[] { 1, 0 }); }));
+        // A screen phone counts.
+        var screen = await h.Connect();
+        Assert.True(await Until(() => h.Live.Viewers == 1));
+        // The camera closes by itself: back to the screen, and counted again.
+        allowed = false;
+        camera.Tick();
+        h.Live.Housekeeping();
+        Assert.True(await Until(() => h.Live.Viewers == 2));
+        Assert.True(await Until(() => { lock (told) return told[^1] == 2; }));
+        Assert.False(c.Closed);
+        Assert.False(screen.Closed);
+    }
+
     [Fact]
     public async Task WhenTheCameraClosesByItselfTheScreenComesBack()
     {

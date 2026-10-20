@@ -1364,7 +1364,7 @@ public partial class WebServerTests : IDisposable
         Assert.Equal(200, r.Code);
         Assert.Equal("application/json", r.Header("Content-Type"));
         var key = Json(r).GetProperty("key").GetString()!;
-        var bytes = WebPush.FromBase64Url(key)!;
+        var bytes = Passkeys.FromBase64Url(key)!;
         Assert.Equal(65, bytes.Length);
         Assert.Equal(4, bytes[0]);
         Assert.DoesNotContain("=", key);

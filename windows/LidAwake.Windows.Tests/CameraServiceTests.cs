@@ -268,7 +268,7 @@ public sealed class CameraServiceTests : IDisposable
         camera.Tick();
         Assert.Equal("stopped " + CameraTexts.SwitchedOff, a.Sent[^1]);
         Assert.Equal("stopped The camera was turned off on the PC.", b.Sent[^1]);
-        Assert.False(camera.Watched);
+        Assert.False(camera.IsOpen(a) || camera.IsOpen(b));
         Assert.True(hardware.Opened.Single().Disposed);
         Assert.Contains("Camera and microphone closed · Android phone", LogLines());
     }
@@ -308,7 +308,7 @@ public sealed class CameraServiceTests : IDisposable
         var a = Watch("session-a");
         var b = Watch("session-b");
         camera.StopAll();
-        Assert.False(camera.Watched);
+        Assert.False(camera.IsOpen(a) || camera.IsOpen(b));
         Assert.False(camera.IsOpen(a));
         Assert.False(camera.IsOpen(b));
         Assert.True(hardware.Opened.Single().Disposed);

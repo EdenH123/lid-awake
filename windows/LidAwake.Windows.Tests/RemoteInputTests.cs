@@ -874,6 +874,26 @@ public class RemoteControlTests : IDisposable
         Assert.True(SpinWait.SpinUntil(() => power.Offs == 2, 5000));
     }
 
+    // Lid Awake off, or the screen switch off: the phone's display-off is forgotten, and nothing
+    // is woken or moved.
+    [Fact]
+    public void ClearingScreenOffWakesNothing()
+    {
+        var told = new List<bool>();
+        var c = new RemoteControl(settings, () => on, new InputInjector(fake), power, () => now, () => lid) { ScreenOffChanged = told.Add };
+        BothOn();
+        c.DisplayOff();
+        Assert.True(SpinWait.SpinUntil(() => power.Offs == 1, 5000));
+        Assert.True(c.ScreenOff);
+        c.ClearScreenOff();
+        Assert.False(c.ScreenOff);
+        Assert.Equal(new[] { true, false }, told);
+        Assert.Equal(0, power.Wakes);
+        Assert.Empty(fake.Calls);
+        c.ClearScreenOff();  // already clear: nothing more is told
+        Assert.Equal(2, told.Count);
+    }
+
     [Fact]
     public void TheSinkChecksTextLength()
     {

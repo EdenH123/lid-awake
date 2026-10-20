@@ -340,8 +340,6 @@ public static class ScreenWatch
         catch (Exception) { }
     }
 
-    public static void SetViewers(int count) => SetWatching(count > 0);
-
     // The screen's two sources, joined: phones on the live socket (LiveServer.ViewersChanged) and
     // the capture (ScreenFeed.WatchingChanged, which also runs for /screen.jpg and a little after
     // the last watcher). Watched while either says so, so one going quiet can't drop the hold

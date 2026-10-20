@@ -62,7 +62,11 @@ jobs:
           $settingsDir = Join-Path $env:APPDATA 'LidAwake'
           $settingsFile = Join-Path $settingsDir 'settings.json'
           $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          $settingsText = '{"tailnetHost":"ci-test.ts.net"}'
+          # A key the app never moves or rewrites (tailnetHost now moves to machine.json at start).
+          $settingsText = '{"ciMarker":"untouched"}'
+          $machineFile = Join-Path $dest 'machine.json'
+          # What is left of the install folder besides machine.json (kept with the settings).
+          function Get-LeftOver { @(Get-ChildItem -LiteralPath $dest -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'machine.json' }) }
           function Get-RunValue { (Get-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue).LidAwake }
           # The per-user Start menu shortcut; its target is read back the way Windows resolves it.
           $startLink = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Lid Awake.lnk'
@@ -155,9 +159,12 @@ jobs:
           Assert ((Get-LinkTarget) -eq $exe) 'the Start menu shortcut is still right after the update'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the update'
 
-          # Uninstall, keeping settings.
+          # Uninstall, keeping settings (this PC's machine.json, if the app made one, among them).
+          $machineExisted = Test-Path -LiteralPath $machineFile
           Invoke-Launcher $uninstallCmd @('-NoPause', '-KeepSettings')
-          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone'
+          Assert ((Get-LeftOver).Count -eq 0) 'the app is gone from the install folder (only machine.json may stay)'
+          Assert (-not (Test-Path -LiteralPath (Join-Path $dest 'LidAwake-access.log'))) 'the activity log is gone'
+          if ($machineExisted) { Assert (Test-Path -LiteralPath $machineFile) 'machine.json (phone alerts) kept by -KeepSettings' }
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone'
           Assert (-not (Test-Path -LiteralPath $startLink)) 'the Start menu shortcut is gone'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings kept by -KeepSettings'
@@ -169,7 +176,7 @@ jobs:
           Invoke-Script 'windows\install.ps1' @('-SkipTailscale', '-NoStart', '-NoPause')
           Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is installed again'
           Invoke-Script 'windows\uninstall.ps1' @('-NoPause', '-DeleteSettings')
-          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone (second time)'
+          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone, machine.json too (-DeleteSettings)'
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone (second time)'
           Assert (-not (Test-Path -LiteralPath $startLink)) 'the Start menu shortcut is gone (second time)'
           Assert (-not (Test-Path -LiteralPath $settingsDir)) 'settings deleted by -DeleteSettings'
@@ -183,7 +190,6 @@ jobs:
             Write-Host $text
             return [pscustomobject]@{ Code = $code; Text = $text }
           }
-          $machineFile = Join-Path $dest 'machine.json'
           $planGoneNote = '\[OK\] The power plan Lid Awake changed no longer exists; nothing to put back'
           $missingPlan = '00000000-1111-2222-3333-444444444444'
 
@@ -196,7 +202,9 @@ jobs:
             $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
             Assert ($r.Code -eq 0) 'uninstall succeeds when the saved power plan no longer exists'
             Assert ($r.Text -match $planGoneNote) 'uninstall says there is nothing to put back for a missing plan'
-            Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone (missing plan)'
+            Assert ((Get-LeftOver).Count -eq 0) 'only machine.json is left (missing plan)'
+            Assert ([IO.File]::ReadAllText($machineFile) -match '"savedLidAc"\s*:\s*null') 'the saved lid values are cleared in machine.json'
+            Remove-Item -LiteralPath $dest -Recurse -Force
 
             New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
             [IO.File]::WriteAllText($settingsFile, ('{"tailnetHost":"ci-test.ts.net","savedLidAc":1,"savedLidDc":2,"savedLidScheme":"' + $missingPlan + '"}'))

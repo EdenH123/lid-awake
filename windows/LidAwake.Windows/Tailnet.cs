@@ -14,6 +14,14 @@ public sealed class Tailnet
     // Set while Serve holds a mapping that Lid Awake added, so turning off (or the next start,
     // after a crash) removes only that, and leaves a Serve setup of the owner's own alone.
     public const string ServedKey = "servedByLidAwake";
+    public const string HostKey = "tailnetHost";
+    public const string OwnerKey = "tailnetOwner";
+
+    // This PC's Tailscale name and owner, and what Lid Awake added to its Serve setup, belong to
+    // this PC (machine.json), not to the roaming settings another PC of the same user would read.
+    // An older version kept them in settings.json: moved once, at start, like the saved lid values.
+    public static void MoveToMachine(Settings roaming, Settings machine) =>
+        roaming.MoveTo(machine, ServedKey, LiveServedKey, HostKey, OwnerKey);
 
     // How much of what Tailscale printed goes into the activity log.
     public const int MaxSaid = 300;
@@ -77,8 +85,8 @@ public sealed class Tailnet
         return r.Ok ? r.Output : null;
     }
 
-    public string? Host => settings.Get<string>("tailnetHost");
-    public string? Owner => settings.Get<string>("tailnetOwner");
+    public string? Host => settings.Get<string>(HostKey);
+    public string? Owner => settings.Get<string>(OwnerKey);
 
     // Saves the name and the owner together or not at all, like Tailnet.update on the Mac, so
     // a status without the owner never pairs a new name with an old owner.
@@ -103,8 +111,8 @@ public sealed class Tailnet
                 && me.TryGetProperty("LoginName", out var login) && login.ValueKind == JsonValueKind.String
                 && login.GetString() is { Length: > 0 } name)
             {
-                settings.Set("tailnetHost", dns.TrimEnd('.').ToLowerInvariant());
-                settings.Set("tailnetOwner", name.ToLowerInvariant());
+                settings.Set(HostKey, dns.TrimEnd('.').ToLowerInvariant());
+                settings.Set(OwnerKey, name.ToLowerInvariant());
             }
         }
         catch (Exception) { }
