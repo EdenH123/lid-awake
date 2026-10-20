@@ -294,7 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         passwordItem.target = self
         passwordItem.action = #selector(setPhonePassword)
         menu.addItem(passwordItem)
-        let setupItem = NSMenuItem(title: "Set up iPhone…", action: #selector(showSetup), keyEquivalent: "")
+        let setupItem = NSMenuItem(title: "Set up phone…", action: #selector(showSetup), keyEquivalent: "")
         setupItem.target = self
         menu.addItem(setupItem)
         let devicesItem = NSMenuItem(title: "Signed-in devices", action: nil, keyEquivalent: "")
@@ -863,6 +863,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let t = batteryTemperature() { s["batteryTemp"] = (t * 10).rounded() / 10 }
         s.merge(powerInfo()) { $1 }
         s.merge(SystemInfo.shared.snapshot()) { $1 }
+        s.merge(Platform.info) { $1 }
         return (try? JSONSerialization.data(withJSONObject: s)) ?? Data("{}".utf8)
     }
 

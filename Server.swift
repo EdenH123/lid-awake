@@ -397,10 +397,10 @@ final class StatusServer: @unchecked Sendable {
             return reply(c, "200 OK", "image/png", png)
         case "/sw.js":
             // Shows the Mac's alerts on the phone (also while the page is closed).
-            return reply(c, "200 OK", "text/javascript; charset=utf-8", Data(serviceWorkerJS.utf8))
+            guard let js = serviceWorkerJS else { return text(c, "404 Not Found", "Not found") }
+            return reply(c, "200 OK", "text/javascript; charset=utf-8", Data(js.utf8))
         case "/manifest.webmanifest":
-            let manifest = ##"{"name":"Lid Awake","short_name":"Lid Awake","start_url":"/","display":"standalone","background_color":"#000000","theme_color":"#000000","icons":[{"src":"/apple-touch-icon.png","sizes":"180x180","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}]}"##
-            return reply(c, "200 OK", "application/manifest+json", Data(manifest.utf8))
+            return reply(c, "200 OK", "application/manifest+json", webFile("manifest.webmanifest") ?? Data("{}".utf8))
         default:
             break
         }
@@ -488,7 +488,7 @@ final class StatusServer: @unchecked Sendable {
                   Passkeys.register(clientData: clientData, attestation: attestation, host: host, device: device)
             else { return text(c, "400 Bad Request", "Couldn't turn on Face ID. Try again.") }
             reply(c, "204 No Content", "text/plain", Data())
-            announce("Face ID added to Lid Awake", "On \(device == "Browser" ? "a browser" : "an \(device)"). If this wasn't you, remove it from the Lid Awake menu on your Mac.")
+            announce("Face ID or fingerprint added to Lid Awake", "On \(device == "Browser" ? "a browser" : "an \(device)"). If this wasn't you, remove it from the Lid Awake menu on your Mac.")
 
         // Camera: Face ID every time. A one-time challenge (only while the Mac menu allows the
         // camera), then the phone's signature buys a one-minute ticket that the live socket redeems.

@@ -92,11 +92,11 @@ struct SetupView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Set up Lid Awake").font(.title2.bold())
-                Text("A few things this Mac needs, then your iPhone.").foregroundStyle(.secondary)
+                Text("A few things this Mac needs, then your phone.").foregroundStyle(.secondary)
             }
 
             Row(done: model.tailscaleInstalled && model.signedIn, title: "Tailscale",
-                detail: !model.tailscaleInstalled ? "Install Tailscale and sign in. It's the private link between your iPhone and this Mac."
+                detail: !model.tailscaleInstalled ? "Install Tailscale and sign in. It's the private link between your phone and this Mac."
                     : model.signedIn ? "Signed in." : "Open Tailscale in the menu bar and sign in.") {
                 if !model.tailscaleInstalled { Button("Download Tailscale") { open("https://tailscale.com/download/mac") } }
                 else if !model.signedIn { Button("Open Tailscale") { NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Tailscale.app")) } }
@@ -110,7 +110,7 @@ struct SetupView: View {
                 detail: model.sleepRule ? "Allowed." : "Open “Install Lid Awake” in the Lid Awake folder; it asks for your Mac password once.") { EmptyView() }
             Row(done: model.hasPassword, title: "Phone password",
                 detail: model.hasPassword ? "Set. Change it from the Lid Awake menu."
-                    : "Your iPhone asks for it before showing anything. At least \(Auth.minPasswordLength) characters.") {
+                    : "Your phone asks for it before showing anything. At least \(Auth.minPasswordLength) characters.") {
                 if !model.hasPassword {
                     VStack(alignment: .leading, spacing: 6) {
                         SecureField("New password", text: $password).frame(width: 240)
@@ -128,19 +128,19 @@ struct SetupView: View {
                     .frame(width: 150, height: 150)
                     .opacity(model.ready ? 1 : 0.25)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("On your iPhone").font(.headline)
+                    Text("On your phone").font(.headline)
                     Step(n: 1, text: "Install Tailscale and sign in with the same account.")
                     Step(n: 2, text: model.awake ? "Lid Awake is on, so the page is open." : "Turn Lid Awake on: the page only opens while it's on.")
                     if !model.awake && model.ready { Button("Turn Lid Awake on", action: model.turnOn) }
-                    Step(n: 3, text: "Point the Camera at this code and open the link in Safari.")
-                    Step(n: 4, text: "Share → Add to Home Screen, then sign in with your password.")
+                    Step(n: 3, text: "Point the Camera at this code and open the link (Safari on iPhone, your browser on Android).")
+                    Step(n: 4, text: "Add it to the Home Screen (iPhone: Share → Add to Home Screen; Android: browser menu → Add to Home screen), then sign in with your password.")
                 }
             }
 
             Divider()
 
             Row(done: model.remoteScreen && model.screen && model.control, title: "See and control the screen (optional)",
-                detail: !model.remoteScreen ? "Lets your iPhone show this Mac's screen and use it as a trackpad."
+                detail: !model.remoteScreen ? "Lets your phone show this Mac's screen and use it as a trackpad."
                     : !model.screen ? "Allow Lid Awake in System Settings → Privacy & Security → Screen Recording."
                     : !model.control ? "Allow Lid Awake in System Settings → Privacy & Security → Accessibility."
                     : "Allowed. Turn it off any time in the Lid Awake menu.") {

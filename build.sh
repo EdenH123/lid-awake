@@ -20,6 +20,9 @@ cp "$TMP/LidAwake" "$APP/Contents/MacOS/LidAwake"
 rm -f "$APP/Contents/Resources/"*.swift "$APP/Contents/Resources/build.sh"
 # Photos for the phone's opening animation (served at /sky/…).
 cp "$SRC"/assets/sky-*.jpg "$APP/Contents/Resources/"
+# The phone page (shared with the Windows version).
+rm -rf "$APP/Contents/Resources/web"
+cp -R "$SRC/web" "$APP/Contents/Resources/web"
 codesign --force --options runtime --entitlements "$SRC/LidAwake.entitlements" --sign "$CERT" --identifier local.lidawake "$APP"
 codesign --verify --strict "$APP"
 rm -rf "$TMP"
