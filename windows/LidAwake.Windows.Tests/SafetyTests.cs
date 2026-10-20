@@ -335,7 +335,7 @@ public class SafetyTests : IDisposable
     }
 
     [Fact]
-    public void ARequestDuringARunIsRunAfterItWithItsReadCarried()
+    public async Task ARequestDuringARunIsRunAfterItWithItsReadCarried()
     {
         using var inRun = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
@@ -355,7 +355,7 @@ public class SafetyTests : IDisposable
         checks.Request(false);
         lock (runs) Assert.Single(runs);
         release.Set();
-        Assert.True(first.Wait(TimeSpan.FromSeconds(10)));
+        await first.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(new[] { false, true }, runs);
         Assert.Equal(0, overlapped);
     }
@@ -584,7 +584,7 @@ public class SafetyTests : IDisposable
     {
         var limits = new Limits(settings);
         var s = Run(new StatusInfo(new FakeReadings { PowerNow = OnBattery(50) }, limits, ReadOnce(NoTemperature)).Build(true));
-        Assert.Equal(new[] { "limits" }, Features(s));
+        Assert.Equal(new[] { "push", "limits" }, Features(s));
         Assert.False(s.TryGetProperty("batteryTemp", out _));
         // The stored switch is still sent; the page hides the heat row without "heat".
         Assert.True(s.GetProperty("heatGuard").GetBoolean());
@@ -599,7 +599,7 @@ public class SafetyTests : IDisposable
     public void StatusWithABatteryTemperatureListsHeatAndSendsBatteryTempWithOneDecimal()
     {
         var s = Run(new StatusInfo(new FakeReadings { PowerNow = OnBattery(50) }, new Limits(settings), ReadOnce(new TemperatureReading(36.66, 71.0))).Build(true));
-        Assert.Equal(new[] { "limits", "heat" }, Features(s));
+        Assert.Equal(new[] { "push", "limits", "heat" }, Features(s));
         Assert.Equal(36.7, s.GetProperty("batteryTemp").GetDouble());
         Assert.Equal(JsonValueKind.Number, s.GetProperty("batteryTemp").ValueKind);
         StatusInfoTests.AssertEveryKeyWithItsKind(s);
@@ -609,7 +609,7 @@ public class SafetyTests : IDisposable
     public void AThermalZoneAloneListsHeatButIsNeverSentAsBatteryTemp()
     {
         var s = Run(new StatusInfo(new FakeReadings { PowerNow = OnBattery(50) }, new Limits(settings), ReadOnce(Zone(55.0))).Build(true));
-        Assert.Equal(new[] { "limits", "heat" }, Features(s));
+        Assert.Equal(new[] { "push", "limits", "heat" }, Features(s));
         Assert.False(s.TryGetProperty("batteryTemp", out _));
         StatusInfoTests.AssertEveryKeyWithItsKind(s);
     }
@@ -647,17 +647,17 @@ public class SafetyTests : IDisposable
         var heat = new HeatSensor(() => value);
         var info = new StatusInfo(new FakeReadings(), new Limits(settings), heat);
         // Before the first read: no temperature yet.
-        Assert.Equal(new[] { "limits" }, Features(Run(info.Build(true))));
+        Assert.Equal(new[] { "push", "limits" }, Features(Run(info.Build(true))));
         heat.Refresh(TimeSpan.Zero);
-        Assert.Equal(new[] { "limits", "heat" }, Features(Run(info.Build(true))));
+        Assert.Equal(new[] { "push", "limits", "heat" }, Features(Run(info.Build(true))));
         value = NoTemperature;
         heat.Refresh(TimeSpan.Zero);
         heat.Refresh(TimeSpan.Zero);
         // Two misses: still kept.
-        Assert.Equal(new[] { "limits", "heat" }, Features(Run(info.Build(true))));
+        Assert.Equal(new[] { "push", "limits", "heat" }, Features(Run(info.Build(true))));
         heat.Refresh(TimeSpan.Zero);
         var s = Run(info.Build(true));
-        Assert.Equal(new[] { "limits" }, Features(s));
+        Assert.Equal(new[] { "push", "limits" }, Features(s));
         Assert.False(s.TryGetProperty("batteryTemp", out _));
     }
 
@@ -723,8 +723,8 @@ public class SafetyTests : IDisposable
         // CTL_CODE(DeviceType, Function, Method, Access) = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method,
         // with FILE_DEVICE_BATTERY = 0x29, FILE_READ_ACCESS = 1, METHOD_BUFFERED = 0.
         static uint CtlCode(uint function) => (0x29u << 16) | (1u << 14) | (function << 2) | 0u;
-        Assert.Equal(CtlCode(0x10), BatteryTemperature.IoctlBatteryQueryTag);
-        Assert.Equal(CtlCode(0x11), BatteryTemperature.IoctlBatteryQueryInformation);
+        Assert.Equal(BatteryTemperature.IoctlBatteryQueryTag, CtlCode(0x10));
+        Assert.Equal(BatteryTemperature.IoctlBatteryQueryInformation, CtlCode(0x11));
         Assert.Equal(0x294040u, BatteryTemperature.IoctlBatteryQueryTag);
         Assert.Equal(0x294044u, BatteryTemperature.IoctlBatteryQueryInformation);
     }

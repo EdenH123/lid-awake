@@ -65,11 +65,11 @@ public sealed class WebPush : IDisposable
     {
         this.machine = machine;
         this.now = now ?? (() => DateTimeOffset.UtcNow);
-        // One client for every alert, with the Mac's 8-second limit.
-        http = new HttpClient(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, ConnectTimeout = SendTimeout })
-        {
-            Timeout = SendTimeout,
-        };
+        // One client for every alert, with the Mac's 8-second limit. A handler passed in stays the caller's.
+        http = handler == null
+            ? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, ConnectTimeout = SendTimeout })
+            : new HttpClient(handler, disposeHandler: false);
+        http.Timeout = SendTimeout;
     }
 
     public void Dispose()
