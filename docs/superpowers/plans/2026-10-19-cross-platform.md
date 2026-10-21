@@ -634,6 +634,59 @@ Goal of this phase: on a Windows laptop, a tray app that keeps the PC awake with
 
 Requires on the Windows PC: Windows 10 1903+ or 11, .NET 8 SDK (to build), Tailscale for Windows.
 
+### Phase 2 execution notes (added 2026-10-19)
+
+- **Builds and tests run on GitHub Actions** (`windows-latest`), not on the Mac: `.github/workflows/windows.yml` (Task 7b). It runs only for pushes to `claude/windows-phase-2` that touch `windows/`, `web/` or the workflow, plus a manual run button; 15-minute timeout; telemetry off. When Phase 2 is finished it is disabled with `gh workflow disable windows.yml`.
+- **"Verify by hand" steps** that need a real Windows laptop (tray icon, closing the lid, real battery, phones over Tailscale) are collected into one checklist for the owner at the end instead of being done per task.
+- **Where a by-hand step can be automated on the CI machine, it becomes a test:** KeepAwake's `powercfg` lid values (Task 9: set to 0 when on, restored when off), and the web server end to end on 127.0.0.1:8787 (Task 11: page + CSP, static files, loopback rules, POST header rule, password login → cookie → `/status`).
+
+### Task 7b: Windows build on GitHub Actions
+
+**Files:**
+- Create: `.github/workflows/windows.yml`
+
+- [ ] **Step 1: Write the workflow**
+
+```yaml
+# Builds and tests the Windows version of Lid Awake on a Windows machine at GitHub.
+# Only for the Windows branch; turned off (gh workflow disable windows.yml) when not needed.
+name: Windows
+on:
+  push:
+    branches: [claude/windows-phase-2]
+    paths: ["windows/**", "web/**", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build
+        run: dotnet build windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release
+      - name: Test
+        if: hashFiles('windows/LidAwake.Windows.Tests/*.csproj') != ''
+        run: dotnet test windows/LidAwake.Windows.Tests/LidAwake.Windows.Tests.csproj -c Release --logger "console;verbosity=normal"
+```
+
+- [ ] **Step 2: Commit** (pushed together with Task 8, the first time there is something to build)
+
+```bash
+git add .github/workflows/windows.yml
+git commit -m "Windows: build and test on GitHub Actions"
+```
+
 ### Task 8: Windows project skeleton and tray icon
 
 **Files:**
@@ -1599,6 +1652,33 @@ git commit -m "README: install on Windows"
 ```
 
 **Phase 2 done: Windows + iPhone and Windows + Samsung work for the essentials.**
+
+---
+
+### Task 16: Phase 2 follow-ups (from the reviews)
+
+Each part is its own dispatch and review. Build and tests run on GitHub Actions only.
+
+**16a. Safer state on Windows**
+- **Phone link.** Clear `servedByLidAwake` only after `tailscale serve --https=443 off` succeeded or `serve status` shows no mapping for our port. A failed removal is retried at the next start, turn-off and minute check. Do the same in `windows/uninstall.ps1`.
+- **Saved lid values are machine state.** Move `savedLidAc`/`savedLidDc` out of the roaming `%APPDATA%\LidAwake\settings.json` into `%LOCALAPPDATA%\LidAwake\machine.json`. Move old values on first start. Also save the power plan they came from (`powercfg /getactivescheme`) and restore into that plan, not `SCHEME_CURRENT`. `uninstall.ps1` reads the new file and, for older installs, the old one.
+- **Activity log.** If rolling to `.old` fails, still append the line. `Write` never throws, and tray calls can't crash the UI thread.
+- **Start menu shortcut.** `install.ps1` adds "Lid Awake" to the Start menu (per user), and `uninstall.ps1` removes it. CI asserts both.
+
+**16b. Wi-Fi signal on Windows.** Read the connected Wi-Fi's signal through the Native Wifi API: `WlanOpenHandle`, `WlanEnumInterfaces`, `WlanQueryInterface(wlan_intf_opcode_current_connection)` → `wlanSignalQuality` 0–100. Convert it to an approximate dBm for `/status` `net.rssi` (`dBm = quality/2 - 100`). Send `net.wifi` (the SSID) where the API gives it. If anything fails, leave both out, as today. Remove the page's Windows-only "Connected without bars" rule only if `rssi` is now always present when on Wi-Fi; otherwise keep it as the fallback.
+
+**16c. API doc precision.**
+- docs/API.md: the 5th wrong password already answers 429.
+- The §6.4 safe-default column, and `batteryTemp` comes from `batteryTemperature()`.
+- The `/memory` `top[].id` rule.
+- Method-agnostic static/loopback/off paths.
+- `/push/settings` without `off` clears the list.
+- `/input` text length counts grapheme clusters.
+- The video timestamp epoch is arbitrary.
+- Video allows up to 6 unconfirmed frames (JPEG 2).
+- `/focus-app` matches any running app with a bundle URL.
+- The Windows log path.
+
 
 ---
 

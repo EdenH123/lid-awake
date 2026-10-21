@@ -1,0 +1,4 @@
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+# The phone page is hashed for its Content-Security-Policy as the browser sees it; keep it LF on every checkout.
+web/** text eol=lf

@@ -257,6 +257,9 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .scale i { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
     background: #fff; box-shadow: 0 0 0 2px var(--card), 0 1px 3px rgba(0,0,0,.3); transition: left .5s ease; }
   /* Tapping Battery or Temperature opens the last hours as a graph (a sheet, like a Weather detail). */
+  /* A tile or row the computer can't open (no history, no memory window) stays as a plain reading. */
+  .no-tap { pointer-events: none; }
+  .no-tap .tile-chev, .no-tap .row-chev, .no-tap .tick-pad { display: none; }
   .tile.tappable { position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .2s ease, opacity .2s ease; }
   .tile.tappable:active { transform: scale(.97); opacity: .85; }
   .tile-chev { width: 7px !important; height: 12px !important; margin-left: auto; stroke-width: 2.2 !important; color: var(--faint); }
@@ -358,6 +361,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .claude-head { display: flex; align-items: center; gap: 6px; }
   /* Apple's logo beside the Mac title: the system font draws it on iPhone, in the title's own color. */
   .mac-head { display: flex; align-items: center; gap: 6px; }
+  [data-computer="windows"] .apple-logo { display: none; }  /* the logo is Apple's, not on a PC */
   .apple-logo { font-family: -apple-system, system-ui; font-size: 15px; line-height: 1; text-transform: none; margin-top: -2px; }
   .claude-spark { position: relative; flex: none; width: 36px; height: 36px; margin: -10px -9px -10px -11px; padding: 10px;
     border: 0; background: none; -webkit-tap-highlight-color: transparent; }
@@ -1051,7 +1055,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   <section class="gate" id="gate" hidden>
     <div class="icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
     <h2 id="gateTitle">Connecting…</h2>
-    <p id="gateText">Reaching your Mac.</p>
+    <p id="gateText">Reaching your <span data-w="computer">Mac</span>.</p>
     <form id="loginForm" hidden>
       <button type="button" class="faceid-btn" id="faceIdBtn" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M7 21H5a2 2 0 0 1-2-2v-2M17 21h2a2 2 0 0 0 2-2v-2M9 9v1.5M15 9v1.5M12 9v4.5h-1M9.5 16.5a4 4 0 0 0 5 0"/></svg><span>Sign in with <span data-w="unlock">Face ID</span></span></button>
       <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
@@ -1132,7 +1136,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     </div>
 
     <div class="section">
-      <div class="section-head mac-head"><span class="apple-logo" aria-hidden="true">&#xF8FF;</span>Mac</div>
+      <div class="section-head mac-head"><span class="apple-logo" aria-hidden="true">&#xF8FF;</span><span data-w="computer">Mac</span></div>
       <div class="list health-list">
         <div class="row tappable" id="cpuRow" role="button" tabindex="0" aria-label="Processor, show the last hours"><span class="title">Processor</span><div class="meter"><div id="cpuBar" style="width:0"></div></div><span class="value" id="cpuValue">—</span><svg class="row-chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5"/></svg></div>
         <div class="row tappable" id="memRow" role="button" tabindex="0" aria-label="Memory, show what's using it"><span class="title">Memory</span><div class="meter"><div id="memBar" style="width:0"></div></div><span class="value" id="memValue">—</span><svg class="row-chev" viewBox="0 0 8 14" aria-hidden="true"><path d="M1.5 1.5 6.5 7l-5 5.5"/></svg></div>
@@ -1167,17 +1171,17 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="flip-clock" id="flipClock" aria-hidden="true"></div>
     <div class="apps-empty" id="appsEmpty" hidden>
       <h2>No apps yet</h2>
-      <p>On your Mac, click the Lid Awake icon in the menu bar, then choose Apps on phone → Add apps…</p>
+      <p>On your <span data-w="computer">Mac</span>, click the Lid Awake icon in <span data-w="menuBar">the menu bar</span>, then choose Apps on phone → Add apps…</p>
     </div>
     <div class="glass-tips" id="appsHelp" hidden>
-      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V6a2 2 0 0 1 4 0v5"/><path d="M13 9.5a2 2 0 0 1 4 .5v3a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4.2-2.3L4 13a1.6 1.6 0 0 1 2.6-1.8L9 14"/></svg></span><span>Tap<small>Opens the app on your Mac</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V6a2 2 0 0 1 4 0v5"/><path d="M13 9.5a2 2 0 0 1 4 .5v3a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4.2-2.3L4 13a1.6 1.6 0 0 1 2.6-1.8L9 14"/></svg></span><span>Tap<small>Opens the app on your <span data-w="computer">Mac</span></small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/></svg></span><span>Slide up<small>Opens it and shows it on Screen</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Rearrange your apps, or quit an open one</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.6" class="fill"/><circle cx="12" cy="12" r="8.5" opacity=".35"/></svg></span><span>Dot<small>The app is already open</small></span></div>
-      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 12h16M4 17h8"/><circle cx="17" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg></span><span>Change this list<small>Lid Awake menu on your Mac → Apps on phone</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 12h16M4 17h8"/><circle cx="17" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg></span><span>Change this list<small>Lid Awake menu on your <span data-w="computer">Mac</span> → Apps on phone</small></span></div>
     </div>
     <div class="section-foot" id="appsFoot" hidden>Drag an app to move it. Tap × to quit an open app. Tap Done when you're finished.</div>
-    <div class="mac-dock" id="macDock" role="toolbar" aria-label="Other apps open on your Mac" hidden></div>
+    <div class="mac-dock" id="macDock" role="toolbar" data-w-label="Other apps open on your {computer}" hidden></div>
     <div class="opened" id="openedBar" hidden><span id="openedText"></span></div>
   </div>
 
@@ -1190,8 +1194,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="alert-row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, low battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
       <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
       <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span><span class="title">Claude usage<small>Over 90% of a limit</small></span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch" aria-label="Claude usage"></button></div>
-      <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10.5h8"/></svg></span><span class="title">Claude sessions<small>Finished, or waiting for you, while you're away from the Mac</small></span><button type="button" class="mini-switch" data-alert="claudeSession" role="switch" aria-label="Claude sessions"></button></div>
-      <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Mac warm<small>Battery at 37°C</small></span><button type="button" class="mini-switch" data-alert="warm" role="switch" aria-label="Mac warm"></button></div>
+      <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10.5h8"/></svg></span><span class="title">Claude sessions<small>Finished, or waiting for you, while you're away from the <span data-w="computer">Mac</span></small></span><button type="button" class="mini-switch" data-alert="claudeSession" role="switch" aria-label="Claude sessions"></button></div>
+      <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title"><span data-w="computer">Mac</span> warm<small>Battery at 37°C</small></span><button type="button" class="mini-switch" data-alert="warm" role="switch" data-w-label="{computer} warm"></button></div>
       <p class="alerts-note" id="alertsFoot" hidden></p>
     </section>
 
@@ -1204,28 +1208,28 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <div class="row"><span class="set-icon gray"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><button type="button" class="row-link start danger" id="lockNowBtn">Lock this page now</button></div>
       </div>
       <div class="section-foot" id="faceIdError" hidden></div>
-      <div class="section-foot">You stay signed in on this <span data-w="phone">iPhone</span> for 7 days. Adding <span data-w="unlock">Face ID</span> asks for your password. Change the password from the Lid Awake menu on your Mac.</div>
+      <div class="section-foot">You stay signed in on this <span data-w="phone">iPhone</span> for 7 days.<span data-feature="passkeys"> Adding <span data-w="unlock">Face ID</span> asks for your password.</span> Change the password from the Lid Awake menu on your <span data-w="computer">Mac</span>.</div>
     </div>
 
     <div class="section" id="devicesSection" hidden>
       <div class="section-head">Signed-in devices</div>
       <div class="list" id="devicesList"></div>
-      <div class="section-foot">Sign out anything you don't recognize. Your <span data-w="phone">iPhone</span> gets an alert whenever someone signs in with the password or adds <span data-w="unlock">Face ID</span>.</div>
+      <div class="section-foot">Sign out anything you don't recognize. Your <span data-w="phone">iPhone</span> gets an alert whenever someone signs in with the password<span data-feature="passkeys"> or adds <span data-w="unlock">Face ID</span></span>.</div>
     </div>
 
     <div class="section" id="activitySection" hidden>
       <div class="section-head">Recent activity</div>
       <div class="list activity-list" id="activityList"></div>
-      <div class="section-foot">The full log is on your Mac: Lid Awake menu → Signed-in devices → Show activity log.</div>
+      <div class="section-foot">The full log is on your <span data-w="computer">Mac</span>: <span data-w="logPath">Lid Awake menu → Signed-in devices → Show activity log</span>.</div>
     </div>
 
-    <div class="section">
+    <div class="section" data-feature="limits">
       <div class="section-head">Safety limits</div>
       <section class="alerts-card limits-card">
         <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Low battery<small id="batteryLimitText">Turns off below 10% on battery</small></span><button type="button" class="mini-switch" data-limit="battery" role="switch" aria-label="Turn off at low battery"></button></div>
-        <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the Mac overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
+        <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the <span data-w="computer">Mac</span> overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
       </section>
-      <div class="section-foot">Lid Awake turns itself off so your Mac can sleep safely. These are the same switches as in the Mac menu.</div>
+      <div class="section-foot">Lid Awake turns itself off so your <span data-w="computer">Mac</span> can sleep safely. These are the same switches as in the <span data-w="computer">Mac</span> menu.</div>
     </div>
 
     <div class="section">
@@ -1266,15 +1270,15 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="notice" id="camNotice" hidden></div>
     <div class="macbook">
       <div class="lid">
-        <div class="screen-wrap" id="screenWrap"><img id="screenImg" alt="Mac screen"><canvas id="screenCanvas" hidden aria-label="Mac screen"></canvas></div>
-        <div class="screen-off" id="screenOffOverlay" hidden><span>Your Mac's screen is off</span><button type="button" id="wakeBtn">Wake screen</button></div>
+        <div class="screen-wrap" id="screenWrap"><img id="screenImg" data-w-alt="{computer} screen"><canvas id="screenCanvas" hidden data-w-label="{computer} screen"></canvas></div>
+        <div class="screen-off" id="screenOffOverlay" hidden><span>Your <span data-w="computer">Mac</span>'s screen is off</span><button type="button" id="wakeBtn">Wake screen</button></div>
         <div class="screen-off" id="pausedOverlay" hidden><span>Paused to save data and battery</span><button type="button" id="resumeBtn">Continue</button></div>
-        <button type="button" class="cam-notch" id="camNotch" aria-label="Mac camera" aria-pressed="false"><i></i></button>
+        <button type="button" class="cam-notch" id="camNotch" data-w-label="{computer} camera" aria-pressed="false"><i></i></button>
         <div class="cam-view" id="camView" hidden>
-          <canvas id="camCanvas" hidden aria-label="Mac camera"></canvas>
+          <canvas id="camCanvas" hidden data-w-label="{computer} camera"></canvas>
           <div class="cam-msg" id="camMsg" hidden></div>
           <div class="cam-bar"><span class="cam-live"><i></i>Camera<span id="camLeft"></span></span>
-            <span class="cam-buttons"><button type="button" id="camTalk" aria-label="Hold to talk through the Mac's speakers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+            <span class="cam-buttons"><button type="button" id="camTalk" data-w-label="Hold to talk through the {computer}'s speakers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
             <button type="button" id="camMute" aria-label="Mute"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/></svg></button></span></div>
         </div>
       </div>
@@ -1299,12 +1303,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="qs-caption" id="qsCaption"></div>
     </div>
     <div class="glass-tips" id="helpPanel" hidden>
-      <div class="tips-head">On the Mac screen</div>
+      <div class="tips-head">On the <span data-w="computer">Mac</span> screen</div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11V6a2 2 0 0 1 4 0v5"/><path d="M13 9.5a2 2 0 0 1 4 .5v3a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4.2-2.3L4 13a1.6 1.6 0 0 1 2.6-1.8L9 14"/></svg></span><span>Tap<small>Click · tap twice to double-click</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></span><span>Hold<small>Right-click</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></span><span>Drag<small>Scroll</small></span></div>
       <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10V4h6M20 14v6h-6M4 4l6 6M20 20l-6-6"/></svg></span><span>Pinch<small>Zoom in on this phone only</small></span></div>
-      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the Mac to see and hear its camera (tap again for the screen). Hold the mic button to talk through the Mac's speakers. <span data-w="Unlock">Face ID</span> each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
+      <div class="tip"><span class="tip-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="13" height="10" rx="2.5"/><path d="M16 11l5-3v8l-5-3"/></svg></span><span>Camera<small>Tap the notch at the top of the <span data-w="computer">Mac</span> to see and hear its camera (tap again for the screen). Hold the mic button to talk through the <span data-w="computer">Mac</span>'s speakers. <span data-w="Unlock">Face ID</span> each time; closes after 10 minutes. Needs the lid open or a USB camera</small></span></div>
       <div class="tips-head">Trackpad</div>
       <div class="tip"><span class="tip-icon txt">1</span><span>1 finger<small>Move · tap to click · tap twice, then hold and slide to drag</small></span></div>
       <div class="tip"><span class="tip-icon txt">2</span><span>2 fingers<small>Slide to scroll · tap to right-click</small></span></div>
@@ -1319,8 +1323,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         <button type="button" class="tool" id="qualityBtn" aria-expanded="false" aria-label="Picture quality: Balanced"><span class="hd">SD</span></button>
         <button type="button" class="tool" id="kbBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg><span class="label" id="kbLabel">Type</span></button>
         <button type="button" class="tool" id="keysBtn" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><text x="12" y="17" text-anchor="middle" font-size="13.5" fill="currentColor" stroke="none" font-family="-apple-system, system-ui, sans-serif">⌘</text></svg><span class="label">Keys</span></button>
-        <button type="button" class="tool icon" id="lockMacBtn" aria-label="Lock Mac"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
-        <button type="button" class="tool icon" id="screenOffBtn" aria-label="Turn the Mac's screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
+        <button type="button" class="tool icon" id="lockMacBtn" data-w-label="Lock {computer}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+        <button type="button" class="tool icon" id="screenOffBtn" data-w-label="Turn the {computer}'s screen off"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M9 8l6 6"/></svg></button>
       </div>
       <div class="trackpad" id="trackpad">Trackpad<div class="scroll-strip" id="scrollStrip" aria-hidden="true"></div></div>
     </div>
@@ -1328,7 +1332,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="sheet-head"><span>Keys</span><button type="button" id="keysDone">Done</button></div>
       <div class="keyboard" id="keyPanel">
       <form class="typebar" id="typeForm">
-        <input id="typeInput" placeholder="Type on your Mac…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+        <input id="typeInput" data-w-placeholder="Type on your {computer}…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
         <button>Send</button>
       </form>
       <div class="keys">
@@ -1378,7 +1382,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   </div>
 </div>
 <div class="sheet-shade" id="histShade" hidden></div>
-<section class="hist-sheet" id="histSheet" role="dialog" aria-label="History" aria-hidden="true">
+<section class="hist-sheet" id="histSheet" data-feature="history" role="dialog" aria-label="History" aria-hidden="true">
   <div class="sheet-head" id="histHead"><span id="histTitle"></span><button type="button" id="histDone">Done</button></div>
   <div class="hist-body" id="histBody">
     <div class="segmented" id="histRange" role="radiogroup" aria-label="Time range">
@@ -1402,7 +1406,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section-foot" id="histFoot"></div>
   </div>
 </section>
-<section class="hist-sheet" id="memSheet" role="dialog" aria-label="Memory" aria-hidden="true">
+<section class="hist-sheet" id="memSheet" data-feature="memory" role="dialog" aria-label="Memory" aria-hidden="true">
   <div class="sheet-head" id="memHead"><span>Memory</span><button type="button" id="memDone">Done</button></div>
   <div class="hist-body">
     <div class="card mem-graph-card">
@@ -1425,10 +1429,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="card tile mem-tile"><div class="tile-head">Overflow to disk</div><div class="tile-value" id="memSwapNum">—</div></div>
     </div>
     <div class="section" id="memAppsSection" hidden><div class="section-head">Using the most</div><div class="list mem-apps" id="memApps"></div></div>
-    <div class="section-foot">Pressure shows how hard your Mac is working to find room. Green is fine even when memory looks full: macOS keeps recent files in spare memory and hands it back the moment an app needs it. Overflow to disk is memory moved to storage when room ran out.</div>
+    <div class="section-foot">Pressure shows how hard your <span data-w="computer">Mac</span> is working to find room. Green is fine even when memory looks full: macOS keeps recent files in spare memory and hands it back the moment an app needs it. Overflow to disk is memory moved to storage when room ran out.</div>
   </div>
 </section>
-<input class="live-input" id="liveInput" aria-label="Type directly on your Mac"
+<input class="live-input" id="liveInput" data-w-label="Type directly on your {computer}"
        autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="go">
 <script>
   const $ = id => document.getElementById(id);
@@ -1463,37 +1467,79 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   };
   const PHONE_WORDS = ALL_PHONE_WORDS[PHONE];
   const COMPUTER_WORDS = {
-    mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option" },
-    windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt" },
+    mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option", menuBar: "the menu bar",
+               logPath: "Lid Awake menu → Signed-in devices → Show activity log" },
+    windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt", menuBar: "the tray by the clock (it may be under the ^ arrow)",
+               logPath: "the Lid Awake icon by the clock → Show activity log" },
   };
   let COMPUTER = "mac", FEATURES = null;  // FEATURES null = not known yet: show everything
   try { COMPUTER = localStorage.getItem("computer") === "windows" ? "windows" : "mac"; } catch (e) {}
   const word = key => key in PHONE_WORDS ? PHONE_WORDS[key] : COMPUTER_WORDS[COMPUTER][key];
   const can = feature => !FEATURES || FEATURES.includes(feature);
-  // Texts from the Mac name "Face ID"; on other phones they say that phone's own word. Capital at a sentence start.
-  const localize = text => PHONE === "ios" ? text : String(text)
-    .replace(/(^|[.!?]\s)Face ID/g, (_, lead) => lead + word("Unlock")).replace(/Face ID/g, word("unlock"));
+  // Texts from the Mac name "Face ID" and "Mac"; other phones say their own word, and a PC says "PC"
+  // (whole word only). Capital at a sentence start. Unchanged for an iPhone with a Mac.
+  const localize = text => {
+    if (PHONE === "ios" && COMPUTER === "mac") return text;
+    let t = String(text);
+    if (PHONE !== "ios") t = t.replace(/(^|[.!?]\s)Face ID/g, (_, lead) => lead + word("Unlock")).replace(/Face ID/g, word("unlock"));
+    if (COMPUTER !== "mac") t = t.replace(/\bMac\b/g, word("computer"));
+    return t;
+  };
   // Fills every <span data-w="key"> and relabels the modifier keys. Safe to call again.
   function applyDevice() {
     document.documentElement.dataset.phone = PHONE;
     document.documentElement.dataset.computer = COMPUTER;
     document.querySelectorAll("[data-w]").forEach(el => { el.textContent = word(el.dataset.w); });
-    document.querySelectorAll("[data-w-placeholder]").forEach(el => {
-      el.placeholder = el.dataset.wPlaceholder.replace(/\{(\w+)\}/g, (_, k) => word(k));
-    });
+    for (const [from, to] of [["data-w-placeholder", "placeholder"], ["data-w-label", "aria-label"], ["data-w-alt", "alt"]]) {
+      document.querySelectorAll(`[${from}]`).forEach(el => {
+        el.setAttribute(to, el.getAttribute(from).replace(/\{(\w+)\}/g, (_, k) => word(k)));
+      });
+    }
     document.querySelectorAll('[data-mod="cmd"]').forEach(b => { b.textContent = word("cmdKey"); b.setAttribute("aria-label", word("cmdName")); });
     document.querySelectorAll('[data-mod="alt"]').forEach(b => { b.textContent = word("altKey"); b.setAttribute("aria-label", word("altName")); });
   }
   // From each status: switch computer if it changed, and keep its feature list.
   function learnDevice(status) {
-    const os = status.os === "windows" ? "windows" : "mac";
+    learnComputer(status.os);
     FEATURES = Array.isArray(status.features) ? status.features : null;
-    if (os !== COMPUTER) {
-      COMPUTER = os;
-      try { localStorage.setItem("computer", os); } catch (e) {}
-      applyDevice();
-    }
+    applyFeatures();
   }
+  // Which computer this is, from /status or (before any sign-in) from /auth: remembered, and the
+  // words follow. Features come only from /status.
+  function learnComputer(value) {
+    const os = value === "windows" ? "windows" : "mac";
+    if (os === COMPUTER) return;
+    COMPUTER = os;
+    try { localStorage.setItem("computer", os); } catch (e) {}
+    applyDevice();
+  }
+  // Parts of the page this computer can't do (yet) are hidden, and never call their requests (each
+  // request's function also checks can() first). Safe to call again on every status.
+  function applyFeatures() {
+    const tabs = [...document.querySelectorAll(".tabs [data-tab]")];
+    tabs.forEach(b => { b.hidden = b.dataset.tab !== "status" && !can(b.dataset.tab); });
+    document.querySelector(".tabbar").hidden = tabs.filter(b => !b.hidden).length < 2;  // one page needs no bar
+    const shownTabs = tabs.filter(b => !b.hidden).map(b => b.dataset.tab).join();
+    const tabsChanged = shownTabs !== lastTabs;
+    lastTabs = shownTabs;
+    $("alertsSection").hidden = !can("push");
+    $("camNotch").hidden = !can("camera");
+    renderFaceIDRow();
+    if (!can("passkeys")) $("faceIdOffer").hidden = true;
+    document.querySelectorAll("[data-feature]").forEach(el => { el.hidden = !can(el.dataset.feature); });
+    // Readings stay; only the tap that opens a window or graph goes.
+    for (const [id, feature] of [["batteryTile", "history"], ["tempTile", "history"], ["cpuRow", "history"], ["memRow", "memory"]]) {
+      const el = $(id), on = can(feature);
+      el.classList.toggle("no-tap", !on);
+      // The label says what a tap does ("show the last hours"); with no tap it is dropped so the plain text is read.
+      if (el.dataset.tapLabel === undefined) el.dataset.tapLabel = el.getAttribute("aria-label") || "";
+      if (on) { el.setAttribute("role", "button"); el.setAttribute("tabindex", "0"); el.setAttribute("aria-label", el.dataset.tapLabel); }
+      else { el.removeAttribute("role"); el.removeAttribute("tabindex"); el.removeAttribute("aria-label"); }
+    }
+    if (currentTab !== "status" && currentTab !== "settings" && !can(currentTab)) showTab("status");
+    else if (tabsChanged) movePill(false);  // the pill's place moves when a tab goes
+  }
+  let lastTabs = "status,screen,apps";
   applyDevice();
   let data = null, fetchedAt = 0, lastOk = 0;
   const TAB_TITLES = { screen: "Screen", apps: "Apps", settings: "Settings" };
@@ -1551,7 +1597,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const stale = !lastOk || ago > 10;
     const loading = $("main").classList.contains("waiting") && $("gate").hidden && performance.now() < 15000;
     $("live").classList.toggle("stale", stale && !loading);
-    $("liveText").textContent = !lastOk ? (loading ? "Connecting…" : "Can't reach Mac") : stale ? `Last seen ${ago}s ago` : "Live";
+    $("liveText").textContent = !lastOk ? (loading ? "Connecting…" : `Can't reach ${word("computer")}`) : stale ? `Last seen ${ago}s ago` : "Live";
     $("pageTitle").textContent = TAB_TITLES[currentTab] || greeting();
     $("settingsBtn").hidden = currentTab !== "status" || $("lockBtn").hidden;
     $("appsHelpBtn").hidden = currentTab !== "apps" || $("lockBtn").hidden || !$("appsEmpty").hidden;
@@ -1565,7 +1611,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("awakeSwitch").classList.toggle("on", on);
     $("awakeSwitch").setAttribute("aria-checked", on);
     $("awakeSwitch").disabled = !on;
-    $("stateLabel").textContent = on ? "Your Mac keeps running with the lid closed." : "Your Mac sleeps when the lid closes.";
+    $("stateLabel").textContent = on ? `Your ${word("computer")} keeps running with the lid closed.` : `Your ${word("computer")} sleeps when the lid closes.`;
     $("state").textContent = on ? "On" : "Off";
     const left = data.timerRemaining != null ? data.timerRemaining - (Date.now() - fetchedAt) / 1000 : null;
     $("stateSub").textContent = !on ? "" : left != null && left > 0 ? `Turns off in ${fmtCountdown(left)}` : "Stays on until you turn it off";
@@ -1623,7 +1669,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       document.querySelector('[data-limit="heat"]').setAttribute("aria-checked", !!data.heatGuard);
     }
     $("batteryLimitText").textContent = `Turns off below ${data.batteryLimit}% on battery`;
-    $("heatLimitText").textContent = `Turns off above ${data.maxBatteryTemp}°C or if the Mac overheats`;
+    $("heatLimitText").textContent = `Turns off above ${data.maxBatteryTemp}°C or if the ${word("computer")} overheats`;
     const thermalText = { nominal: "Normal", fair: "Warm", serious: "Hot", critical: "Critical" }[data.thermalState] || "—";
     $("thermal").textContent = thermalText;
     $("thermal").className = "value " + (data.thermalState === "serious" || data.thermalState === "critical" ? "bad" : data.thermalState === "fair" ? "warn" : "");
@@ -1633,8 +1679,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const viewOnly = currentTab === "screen" && (noPermission || controlOff);
     $("hint").hidden = !viewOnly;
     $("hint").textContent = !viewOnly ? ""
-      : controlOff ? "View only. To click and type from here, tick “Allow control from phone” in the Lid Awake menu on your Mac."
-      : "View only. To control, allow Lid Awake in System Settings → Privacy & Security → Accessibility on your Mac.";
+      : controlOff ? `View only. To click and type from here, tick “Allow control from phone” in the Lid Awake menu on your ${word("computer")}.`
+      : `View only. To control, allow Lid Awake in System Settings → Privacy & Security → Accessibility on your ${word("computer")}.`;
   }
 
   // ---------- Mac health and network ----------
@@ -1676,12 +1722,14 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
     // Signal: 4 bars ≥ −55 dBm, 3 ≥ −65, 2 ≥ −75, otherwise 1.
     const rssi = net.rssi;
+    // A PC that is online but doesn't report Wi-Fi signal (no rssi) is connected, just without bars.
+    const noSignal = COMPUTER === "windows" && net.wired === false && rssi == null;
     const bars = net.wired ? 4 : rssi == null ? 0 : rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
     [...$("wifiBars").children].forEach((r, i) => r.classList.toggle("on", i < bars));
     $("netKind").textContent = net.wired ? "Ethernet" : "Wi-Fi";
-    $("wifiName").textContent = net.wired ? "Connected" : rssi == null ? "Not connected"
+    $("wifiName").textContent = net.wired || noSignal ? "Connected" : rssi == null ? "Not connected"
       : net.wifi || ["", "Weak", "Fair", "Good", "Excellent"][bars] + " signal";
-    $("wifiBars").style.display = net.wired ? "none" : "";
+    $("wifiBars").style.display = net.wired || noSignal ? "none" : "";
     $("netDown").textContent = fmtRate(net.down);
     $("netUp").textContent = fmtRate(net.up);
     $("netPing").textContent = pingMs == null ? "—" : Math.round(pingMs) + " ms";
@@ -1699,6 +1747,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       // Over Tailscale the link disappears while lid-awake is off, so this is the usual "off" view.
       auth = { unreachable: true };
     }
+    // So even the sign-in and "off" screens use the computer's own word.
+    if (auth.os) learnComputer(auth.os);
     // "On" is remembered on this phone; if the Mac has no Face ID sign-ins any more (removed from
     // the Mac menu, or a new password), forget it so Settings offers "Set up" again.
     if (auth.faceID === false && faceIDState() === "on") { setFaceIDState(""); renderFaceIDRow(); }
@@ -1727,11 +1777,11 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       $("gate").hidden = false;
       $("loginForm").hidden = true;
       $("live").classList.add("stale");
-      $("liveText").textContent = auth.off ? "Off" : "Can't reach Mac";
-      $("gateTitle").textContent = auth.off ? "Lid Awake is off" : "Can't reach your Mac";
+      $("liveText").textContent = auth.off ? "Off" : `Can't reach ${word("computer")}`;
+      $("gateTitle").textContent = auth.off ? "Lid Awake is off" : `Can't reach your ${word("computer")}`;
       $("gateText").textContent = auth.off
-        ? "This page only works while “Stay awake with lid closed” is on. Turn it on from the Lid Awake menu on your Mac."
-        : "Lid Awake is off, or your Mac is asleep or offline. This page only works while “Stay awake with lid closed” is on.";
+        ? `This page only works while “Stay awake with lid closed” is on. Turn it on from the Lid Awake menu on your ${word("computer")}.`
+        : `Lid Awake is off, or your ${word("computer")} is asleep or offline. This page only works while “Stay awake with lid closed” is on.`;
       gateTimer = setTimeout(checkAuth, 3000);
       return;
     }
@@ -1754,12 +1804,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("liveText").textContent = "Locked";
     if (auth.hasPassword) {
       $("gateTitle").textContent = "Locked";
-      $("faceIdBtn").hidden = !(auth.faceID && faceIDPossible());
+      $("faceIdBtn").hidden = !(auth.faceID && faceIDPossible() && can("passkeys"));
       $("gateText").textContent = $("faceIdBtn").hidden ? "Enter your Lid Awake password." : `Use ${word("unlock")}, or enter your Lid Awake password.`;
       $("loginForm").hidden = false;
     } else {
       $("gateTitle").textContent = "Set a password first";
-      $("gateText").textContent = "On your Mac, click the Lid Awake icon in the menu bar and choose “Set phone password…”. This page will continue by itself.";
+      $("gateText").textContent = `On your ${word("computer")}, click the Lid Awake icon in ${word("menuBar")} and choose “Set phone password…”. This page will continue by itself.`;
       $("loginForm").hidden = true;
       gateTimer = setTimeout(checkAuth, 3000);
     }
@@ -1790,7 +1840,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         $("password").select();
       }
     } catch (err) {
-      $("loginError").textContent = "Can't reach your Mac.";
+      $("loginError").textContent = `Can't reach your ${word("computer")}.`;
     }
     $("unlockBtn").disabled = false;
   });
@@ -1804,6 +1854,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function setFaceIDState(v) { try { localStorage.setItem("faceid", v); } catch (e) {} }
 
   async function faceIDLogin() {
+    if (!can("passkeys")) return;
     $("loginError").textContent = "";
     try {
       const o = await (await fetch("passkey/login-options", { cache: "no-store" })).json();
@@ -1839,6 +1890,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
 
   async function faceIDSetup() {
+    if (!can("passkeys")) return;
     const pw = recentPassword || $("faceIdPassword").value;
     faceIDError("");
     if (!pw) {
@@ -1982,12 +2034,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // After a password sign-in, offer it once (and keep a "Set up" row in settings if declined).
   function offerFaceID() {
     renderFaceIDRow();
-    if (!faceIDPossible() || faceIDState() === "on") return;
+    if (!can("passkeys") || !faceIDPossible() || faceIDState() === "on") return;
     if (faceIDState() !== "declined") $("faceIdOffer").hidden = false;
   }
   function renderFaceIDRow() {
     const on = faceIDState() === "on";
-    $("faceIdRow").hidden = !faceIDPossible();
+    $("faceIdRow").hidden = !faceIDPossible() || !can("passkeys");
     $("faceIdState").hidden = !on;
     $("faceIdRowBtn").hidden = on;
   }
@@ -1995,6 +2047,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   async function syncFaceID() {
     try {
       const auth = await (await fetch("auth", { cache: "no-store" })).json();
+      if (auth.os) learnComputer(auth.os);
       if (auth.faceID === false && faceIDState() === "on") setFaceIDState("");
     } catch (e) {}
     renderFaceIDRow();
@@ -2060,7 +2113,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const rtt = performance.now() - sentAt;
       pingMs = pingMs == null ? rtt : pingMs * 0.7 + rtt * 0.3;
       data = await res.json();
-      learnDevice(data);
+      // A mistake in showing the features is not a network blip: log it and carry on.
+      try { learnDevice(data); } catch (e) { console.error("learnDevice failed", e); }
       fetchedAt = Date.now();
       lastOk = fetchedAt;
     } catch (e) {
@@ -2087,6 +2141,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function showTab(name, swiped) {
     if (settleSwipe) settleSwipe();  // a tap on the tab bar while a swipe is still settling
     else if (swipe && swipe.live) { clearSwipePeer(); swipe = null; document.body.classList.remove("swiping"); }
+    if ((name === "screen" || name === "apps") && !can(name)) name = "status";  // a page this computer lacks
     const changed = currentTab !== name;
     currentTab = name;
     tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === (name === "settings" ? "status" : name)));
@@ -2126,11 +2181,11 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // sliding in beside it, and the tab-bar pill follows too. Up and down stays page scrolling.
   // What already uses the finger keeps it: sliders, the dock, the tool row, and on the Screen tab
   // the picture, trackpad and tools (there, swipe from the phone's edge or the title instead).
-  const TAB_ORDER = ["status", "screen", "apps"];
+  const tabOrder = () => ["status", "screen", "apps"].filter(t => t === "status" || can(t));
   const SWIPE_EASE = "cubic-bezier(.25,1,.5,1)";
   let swipe = null, settleSwipe = null;
   function swipeAllowed(e) {
-    if (!unlocked || $("app").hidden || !TAB_ORDER.includes(currentTab)) return false;  // Settings has its Back button
+    if (!unlocked || $("app").hidden || !tabOrder().includes(currentTab)) return false;  // Settings has its Back button
     const body = document.body.classList;
     if (body.contains("landscape-full") || body.contains("apps-full") || editingApps || drag) return false;
     if (document.querySelector(".key-sheet.open, .hist-sheet.open, .dock-shade, .app-zoom")) return false;
@@ -2154,7 +2209,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     s.dir = dir;
     const titles = document.querySelector(".titles"), cur = $("tab-" + currentTab);
     s.movers = [[titles, 0], ...[...cur.children].map(el => [el, 0])];
-    s.peer = TAB_ORDER[TAB_ORDER.indexOf(currentTab) + dir];
+    s.peer = tabOrder()[tabOrder().indexOf(currentTab) + dir];
     if (!s.peer) return;  // nothing further this way: the page just stretches
     const sc = $("scroller"), page = $("tab-" + s.peer);
     const tallNow = sc.scrollHeight, curHeight = cur.offsetHeight;
@@ -2286,7 +2341,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   {
     const bar = document.querySelector(".tabbar");
     let slide = null;
-    const nearest = x => [...tabButtons].reduce((a, b) =>
+    const shown = () => [...tabButtons].filter(b => !b.hidden);
+    const nearest = x => shown().reduce((a, b) =>
       Math.abs(b.offsetLeft - x) < Math.abs(a.offsetLeft - x) ? b : a);
     bar.addEventListener("pointerdown", e => {
       if (!e.isPrimary || e.button > 0) return;
@@ -2298,7 +2354,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const dx = e.clientX - slide.x0;
       if (!slide.live && Math.abs(dx) < 8) return;
       if (!slide.live) { slide.live = true; bar.classList.add("dragging", "no-anim"); }
-      const first = tabButtons[0].offsetLeft, last = tabButtons[tabButtons.length - 1].offsetLeft;
+      const first = shown()[0].offsetLeft, last = shown()[shown().length - 1].offsetLeft;
       // Past either end the pill only gives a little, more slowly the further the finger goes.
       const want = slide.from + dx, past = want < first ? want - first : want > last ? want - last : 0;
       const x = slide.x = Math.max(first, Math.min(last, want)) + Math.sign(past) * 8 * (1 - 1 / (1 + Math.abs(past) / 40));
@@ -2344,7 +2400,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   // ----- Live stream: one WebSocket, frames pushed by the Mac -----
   let ws = null, wsFailures = 0, wsRetryAt = 0;
-  let camOn = false;  // watching the Mac's camera: the screen's socket stays closed meanwhile
+  // Watching the Mac's camera: the screen's socket stays closed meanwhile.
+  let camOn = false;
   let quality = "balanced";
   try { quality = localStorage.getItem("quality") || "balanced"; } catch (e) {}
   const QUALITY_BADGE = { max: "MAX", sharp: "HD", balanced: "SD", fast: "LOW" };
@@ -2353,7 +2410,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const Q_ORDER = ["max", "sharp", "balanced", "fast"];
   const Q_LAST = Q_ORDER.length - 1;
   const Q_CAPTION = {
-    max: "The Mac's full sharpness, best when you zoom in. Uses the most data.",
+    get max() { return `The ${word("computer")}'s full sharpness, best when you zoom in. Uses the most data.`; },
     sharp: "Clearest text, up to 20 frames a second.",
     balanced: "Clear and smooth, for everyday use.",
     fast: "Smoothest and lightest on data, for mobile networks.",
@@ -2532,7 +2589,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ video: false, why: videoProblem }));
   }
 
-  function watching() { return unlocked && currentTab === "screen" && !document.hidden && !streamPaused && !camOn; }
+  function watching() { return can("screen") && unlocked && currentTab === "screen" && !document.hidden && !streamPaused && !camOn; }
 
   // ----- Pause when nobody is using it -----
   // The page keeps the iPhone awake, so an untouched Screen tab would stream forever. After 3
@@ -2567,7 +2624,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   // Opens the socket; after 3 failed tries falls back to long-polling and retries the socket every 30 s.
   function startFrames() {
-    if (!watching()) { stopLive(); return; }
+    if (!can("screen") || !watching()) { stopLive(); return; }
     if (ws || framesRunning) return;
     if (wsFailures >= 3 && Date.now() < wsRetryAt) { startPolling(); return; }
     let opened = false;
@@ -2606,7 +2663,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
 
   // Fallback: the Mac holds each request until the screen changes (up to 2 s).
   async function startPolling() {
-    if (framesRunning) return;
+    if (!can("screen") || framesRunning) return;
     framesRunning = true;
     while (watching() && !ws) {
       if (Date.now() >= wsRetryAt) { framesRunning = false; startFrames(); return; }
@@ -2626,7 +2683,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
           wait = 2000;
         }
       } catch (e) {
-        setScreenMsg("Can't reach your Mac.");
+        setScreenMsg(`Can't reach your ${word("computer")}.`);
         frameId = 0;
         wait = 2000;
       }
@@ -2670,7 +2727,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
 
   async function openCamera() {
-    if (camOn || camOpening) return;
+    if (!can("camera") || camOn || camOpening) return;
     camOpening = true;
     showCamNotice("");
     setViewButtons("camera");
@@ -2716,7 +2773,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if ($("camView").hidden || currentTab !== "screen" || document.hidden) return closeCamera();
     camOn = true;
     stopLive();
-    setCamMsg("Starting the Mac's camera…");
+    setCamMsg(`Starting the ${word("computer")}'s camera…`);
     camStartedAt = Date.now();
     showCamTime();
     camClock = setInterval(showCamTime, 1000);
@@ -2733,7 +2790,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       if (m.error) setCamMsg(localize(m.error));
       if (m.cameraStopped) closeCamera(localize(m.cameraStopped));
     };
-    socket.onclose = () => { if (camWS === socket) closeCamera("The camera closed: the connection to your Mac dropped."); };
+    socket.onclose = () => { if (camWS === socket) closeCamera(`The camera closed: the connection to your ${word("computer")} dropped.`); };
   }
 
   function closeCamera(message) {
@@ -2922,6 +2979,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     pumpInput();
   }
   async function pumpInput() {
+    if (!can("control")) { inputQueue.length = 0; return; }
     if (inputBusy) return;
     inputBusy = true;
     while (inputQueue.length) {
@@ -3347,6 +3405,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     $("screenOffOverlay").hidden = !(recentlyOff || (data && data.screenOff && !recentlyWoken));
   }
   function power(action) {
+    if (!can("control")) return Promise.resolve();
     return fetch("power", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-LidAwake": "1" },
@@ -3354,22 +3413,22 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     }).then(async res => {
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok && res.status !== 204) setScreenMsg(localize(await res.text()));
-    }).catch(() => setScreenMsg("Can't reach your Mac."));
+    }).catch(() => setScreenMsg(`Can't reach your ${word("computer")}.`));
   }
   $("lockMacBtn").addEventListener("click", async () => {
-    if (!await ask({ icon: "lock", title: "Lock your Mac?", ok: "Lock", tint: "--blue",
-      text: "To unlock it from here, tap Type directly, type your Mac password and press Return." })) return;
+    if (!await ask({ icon: "lock", title: `Lock your ${word("computer")}?`, ok: "Lock", tint: "--blue",
+      text: `To unlock it from here, tap Type directly, type your ${word("computer")} password and press Return.` })) return;
     power("lock");
   });
   $("screenOffBtn").addEventListener("click", async () => {
     if (data && data.lidClosed) {
       // A screen turned off behind a closed lid can only come back by opening the lid.
       await ask({ icon: "screenOff", title: "The lid is closed", ok: "OK", cancel: null, tint: "--blue",
-        text: "Turning the screen off now couldn't be undone from your phone until you open the lid. While the lid is closed, your Mac keeps the screen at the lowest brightness instead." });
+        text: `Turning the screen off now couldn't be undone from your phone until you open the lid. While the lid is closed, your ${word("computer")} keeps the screen at the lowest brightness instead.` });
       return;
     }
     if (!await ask({ icon: "screenOff", title: "Turn off the screen?", ok: "Turn off",
-      text: "Your Mac may lock too. Tap “Wake screen” to turn it back on." })) return;
+      text: `Your ${word("computer")} may lock too. Tap “Wake screen” to turn it back on.` })) return;
     screenOffAt = Date.now(); wakeAt = 0;
     showScreenOff();
     power("displayoff");
@@ -3488,8 +3547,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   $("awakeSwitch").addEventListener("click", async () => {
     if (!data || !data.lidAwake) return;
     tick();
-    const ok = await ask({ icon: "moon", title: "Let your Mac sleep?", ok: "Turn off", cancel: "Keep awake",
-      text: "Lid Awake turns off and this page closes until you turn it back on at the Mac." });
+    const ok = await ask({ icon: "moon", title: `Let your ${word("computer")} sleep?`, ok: "Turn off", cancel: "Keep awake",
+      text: `Lid Awake turns off and this page closes until you turn it back on at the ${word("computer")}.` });
     if (!ok) return;
     $("awakeSwitch").disabled = true;
     try {
@@ -3541,6 +3600,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The grid is rebuilt only when the list changes, so icons aren't downloaded again.
   let appsKey = null, openedTimer = null;
   function renderApps() {
+    if (!can("apps")) return;
     const apps = data.apps || [];
     const key = apps.map(a => a.id).join();
     if (key !== appsKey && !editingApps) {
@@ -3601,6 +3661,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The dock: other apps open on the Mac. A tap brings one to the front, like the Mac's Dock.
   let dockKey = "";
   function renderDock() {
+    if (!can("apps")) return;
     const others = data.otherApps || [];
     const key = others.map(a => a.id).join();
     if (key !== dockKey) {
@@ -3689,6 +3750,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   function closeDockMenu() { document.querySelectorAll(".dock-menu, .dock-shade").forEach(n => n.remove()); }
 
   async function focusApp(app, button, action = "focus") {
+    if (!can("apps")) return;
     if (action === "focus") tick();
     let message = { focus: `Switched to ${app.name}`, hide: `Hid ${app.name}`, quit: `Asked ${app.name} to quit` }[action];
     try {
@@ -3699,7 +3761,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) message = localize(await res.text());
-    } catch (e) { message = "Can't reach your Mac."; }
+    } catch (e) { message = `Can't reach your ${word("computer")}.`; }
     if (action === "focus" && message.startsWith("Switched")) {
       button.classList.remove("launched");
       void button.offsetWidth;
@@ -3710,6 +3772,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
 
   async function openApp(app, button) {
+    if (!can("apps")) return;
     tick();
     button.classList.add("opening");
     let message = `Opened ${app.name}`;
@@ -3721,7 +3784,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) message = localize(await res.text());
-    } catch (e) { message = "Can't reach your Mac."; }
+    } catch (e) { message = `Can't reach your ${word("computer")}.`; }
     setTimeout(() => button.classList.remove("opening"), 400);
     if (message.startsWith("Opened")) {
       button.classList.remove("launched");
@@ -3835,7 +3898,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
         if (up > 8 && up > side) {
           // Following the finger upward: the icon lifts a little and grows.
           clearTimeout(appHoldTimer);
-          if (!app.classList.contains("lifting")) new Image().src = bigIcon(app);
+          if (can("apps") && !app.classList.contains("lifting")) new Image().src = bigIcon(app);
           app.classList.add("lifting");
           img.style.transform = `translateY(${-Math.min(up, 60) * 0.5}px) scale(${1 + Math.min(up, 60) / 300})`;
           if (up > 44) { stop(); slideOpen(app); }
@@ -3859,6 +3922,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The sharper icon for the big zoom, fetched as soon as the finger starts to slide.
   const bigIcon = button => "app-icon.png?size=512&id=" + encodeURIComponent(button.dataset.id);
   function slideOpen(button) {
+    if (!can("apps")) return;
     const app = (data.apps || []).find(a => a.id === button.dataset.id);
     if (!app) return;
     slideOpened = true;
@@ -3876,6 +3940,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // The zoom shared by the grid and the dock: the icon floats to the middle and grows (drawn at its
   // final size from the sharper icon), then the Screen tab appears and the icon fades.
   function zoomIntoScreen(img, big, done) {
+    if (!can("apps")) return;
     const r = img.getBoundingClientRect();
     const size = Math.min(innerWidth * 0.86, 360);
     const zoom = document.createElement("div");
@@ -3941,6 +4006,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   appGrid.addEventListener("pointerup", endDrag);
   appGrid.addEventListener("pointercancel", endDrag);
   async function quitApp(button) {
+    if (!can("apps")) return;
     const app = (data.apps || []).find(a => a.id === button.dataset.id);
     if (!app) return;
     button.classList.remove("running");
@@ -3953,12 +4019,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       });
       if (res.status === 401 || res.status === 423) return locked();
       if (!res.ok) message = localize(await res.text());
-    } catch (e) { message = "Can't reach your Mac."; }
+    } catch (e) { message = `Can't reach your ${word("computer")}.`; }
     showOpened(message);
     // Apps can take a moment to close (or stop to ask about saving), so check again shortly.
     setTimeout(poll, 1200);
   }
   async function saveAppOrder() {
+    if (!can("apps")) return;
     const ids = [...appGrid.children].map(el => el.dataset.id);
     appsKey = ids.join();
     // Match the last status too, so nothing redraws the old order before the next update.
@@ -4094,6 +4161,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!res.ok) throw new Error(localize(await res.text()));
   }
   async function subscribeAlerts() {
+    if (!can("push")) return false;
     if (await Notification.requestPermission() !== "granted") return false;
     const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
     await navigator.serviceWorker.ready;
@@ -4104,6 +4172,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   }
   function saveAlertsOff(off) { try { localStorage.setItem("alertsOff", JSON.stringify(off)); } catch (e) {} }
   document.querySelectorAll("[data-alert]").forEach(b => b.addEventListener("click", async () => {
+    if (!can("push")) return;
     if (!pushPossible() || (PHONE === "ios" && !standalone())) return renderAlerts();
     tick();
     const kind = b.dataset.alert, wasOn = b.getAttribute("aria-checked") === "true";
@@ -4137,6 +4206,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // ---------- Safety limits (same as the Mac menu) ----------
   let limitSaving = false;
   document.querySelectorAll("[data-limit]").forEach(b => b.addEventListener("click", async () => {
+    if (!can("limits")) return;
     const on = b.getAttribute("aria-checked") !== "true";
     b.setAttribute("aria-checked", on);
     tick();
@@ -4211,7 +4281,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       const gap = pts[i][0] - pts[i - 1][0];
       if (gap <= 300) continue;
       events.push([pts[i][0], "Woke up", "var(--blue)"]);
-      events.push([pts[i - 1][0], `Mac slept for ${spokenMinutes(gap)}`, "var(--gray)"]);
+      events.push([pts[i - 1][0], `${word("computer")} slept for ${spokenMinutes(gap)}`, "var(--gray)"]);
     }
     return events;
   }
@@ -4221,7 +4291,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const HISTORY = {
     temp: {
       title: "Temperature", url: "temp-history", chartLabel: "Battery temperature graph",
-      foot: "Each bar runs from the lowest to the highest reading in its slot. Battery temperature, from the log your Mac keeps itself (about one reading a minute).",
+      get foot() { return `Each bar runs from the lowest to the highest reading in its slot. Battery temperature, from the log your ${word("computer")} keeps itself (about one reading a minute).`; },
       live: () => data && data.batteryTemp != null ? data.batteryTemp : null,
       fmt: v => v.toFixed(1) + "°",
       range: (lo, hi) => lo.toFixed(1) === hi.toFixed(1) ? hi.toFixed(1) + "°" : `${lo.toFixed(1)}–${hi.toFixed(1)}°`,
@@ -4255,7 +4325,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     },
     battery: {
       title: "Battery", url: "battery-history", chartLabel: "Battery charge graph",
-      foot: "Each bar runs from the lowest to the highest charge in its slot; green behind the bars means plugged in. From the log your Mac keeps itself (about one reading a minute).",
+      get foot() { return `Each bar runs from the lowest to the highest charge in its slot; green behind the bars means plugged in. From the log your ${word("computer")} keeps itself (about one reading a minute).`; },
       live: () => data && data.battery != null ? data.battery : null,
       fmt: v => Math.round(v) + "%",
       range: (lo, hi) => Math.round(lo) === Math.round(hi) ? Math.round(hi) + "%" : `${Math.round(lo)}–${Math.round(hi)}%`,
@@ -4279,7 +4349,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     },
     cpu: {
       title: "Processor", url: "cpu-history", chartLabel: "Processor use graph, split by app", stacked: true,
-      foot: "Each bar is the average processor use in its slot, split by app. From the log your Mac keeps itself.",
+      get foot() { return `Each bar is the average processor use in its slot, split by app. From the log your ${word("computer")} keeps itself.`; },
       live: () => data && data.mac && data.mac.cpu != null ? data.mac.cpu : null,
       fmt: v => Math.round(v) + "%",
       range: (lo, hi) => (hi < 1 ? "<1" : Math.round(hi)) + "%",
@@ -4296,6 +4366,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     return el;
   }
   async function loadHistory(kind = histKind) {
+    if (!can("history")) return;
     const h = histData[kind];
     try {
       const res = await fetchWithin(8000, HISTORY[kind].url + "?hours=24", { cache: "no-store" });
@@ -4309,6 +4380,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     if (!scrubbing && kind === histKind) renderHistory();  // a finger on the graph keeps its reading
   }
   function setHistoryOpen(open, kind) {
+    if (open && !can("history")) return;
     const sheet = $("histSheet"), shade = $("histShade");
     sheet.style.removeProperty("--drag");
     sheet.setAttribute("aria-hidden", !open);
@@ -4448,7 +4520,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     histCpu = { d, range, rangeCovered, top3, colors: d ? cpuColors(d, top3) : new Map(), pct };
     const empty = $("histEmpty"), hasData = bins.some(b => b.count);
     empty.hidden = hasData;
-    empty.textContent = h.failed ? "Couldn't load the history from your Mac." : !d ? "Loading…" : "No readings for this time yet.";
+    empty.textContent = h.failed ? `Couldn't load the history from your ${word("computer")}.` : !d ? "Loading…" : "No readings for this time yet.";
     showCpuApps(null);
     if (!hasData) return;
 
@@ -4485,6 +4557,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const RANGE_WORDS = { 1: "last hour", 6: "last 6 hours", 24: "last 24 hours" };
   const cpuIcons = new Map();  // app key → promise of a blob URL (or null)
   function cpuIcon(key) {
+    if (!can("history")) return Promise.resolve(null);
     if (!cpuIcons.has(key)) cpuIcons.set(key, fetchWithin(8000, "cpu-icon?key=" + encodeURIComponent(key))
       .then(r => r.ok ? r.blob() : null).then(b => b && URL.createObjectURL(b)).catch(() => null)
       .then(url => { if (!url) cpuIcons.delete(key); return url; }));
@@ -4552,7 +4625,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const pts = (h.points || []).filter(p => p[0] >= from);
     const empty = $("histEmpty");
     empty.hidden = pts.length > 1;
-    empty.textContent = h.failed ? "Couldn't load the history from your Mac." : !h.points ? "Loading…" : "No readings for this time yet.";
+    empty.textContent = h.failed ? `Couldn't load the history from your ${word("computer")}.` : !h.points ? "Loading…" : "No readings for this time yet.";
     let hi = pts[0], lo = pts[0];
     for (const p of pts) { if (p[1] > hi[1]) hi = p; if (p[1] < lo[1]) lo = p; }
     renderHistoryStory(pts, hi, lo);
@@ -4686,6 +4759,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const memRows = new Map();
   const memGB = b => b == null ? "—" : (b / GiB < 10 ? (b / GiB).toFixed(1) : Math.round(b / GiB)) + " GB";
   function setMemoryOpen(open) {
+    if (open && !can("memory")) return;
     const sheet = $("memSheet"), shade = $("histShade");
     sheet.style.removeProperty("--drag");
     sheet.setAttribute("aria-hidden", !open);
@@ -4712,6 +4786,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     loadMemory();
   }
   async function loadMemory() {
+    if (!can("memory")) return;
     try {
       const res = await fetchWithin(4000, "memory", { cache: "no-store" });
       if (!res.ok) throw new Error(res.status);
@@ -4723,7 +4798,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       renderMemory(m);
     } catch (e) {
       if (!memTimer) return;
-      $("memNote").textContent = "Can't reach the Mac";
+      $("memNote").textContent = `Can't reach the ${word("computer")}`;
       $("memNote").hidden = false;
     }
   }
@@ -4742,13 +4817,13 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const row = document.createElement("div");
     row.className = "row";
     let icon;
-    if (a.id) {
+    if (a.id && can("apps")) {
       icon = document.createElement("img");
       icon.src = "app-icon.png?id=" + encodeURIComponent(a.id);
       icon.alt = "";
       icon.addEventListener("error", () => { const blank = document.createElement("span"); blank.className = "mem-icon blank"; icon.replaceWith(blank); });
     } else icon = document.createElement("span");
-    icon.className = a.id ? "mem-icon" : "mem-icon blank";
+    icon.className = a.id && can("apps") ? "mem-icon" : "mem-icon blank";
     const title = document.createElement("div");
     title.className = "title";
     title.append(a.name, document.createElement("i"));

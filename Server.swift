@@ -361,7 +361,7 @@ final class StatusServer: @unchecked Sendable {
             // signing in here would hand the session to every other local web server.
             if req.path == "/" { return page(c, host) }
             if req.path == "/auth" {
-                let info: [String: Any] = ["loopback": true, "url": Tailnet.host.map { "https://\($0)/" } ?? ""]
+                let info: [String: Any] = ["loopback": true, "url": Tailnet.host.map { "https://\($0)/" } ?? "", "os": Platform.os]
                 return reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: info)) ?? Data())
             }
             if !isStatic { return text(c, "403 Forbidden", "Open Lid Awake at its Tailscale address.") }
@@ -410,7 +410,9 @@ final class StatusServer: @unchecked Sendable {
         if !awake() {
             switch req.path {
             case "/": return page(c, host)
-            case "/auth": return reply(c, "200 OK", "application/json", Data(#"{"off":true}"#.utf8))
+            case "/auth":
+                let info: [String: Any] = ["off": true, "os": Platform.os]
+                return reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: info)) ?? Data())
             default: return text(c, "423 Locked", "Lid Awake is off on your Mac.")
             }
         }
@@ -434,7 +436,7 @@ final class StatusServer: @unchecked Sendable {
 
         case ("GET", "/auth"):
             let info: [String: Any] = ["hasPassword": Auth.hasPassword, "loggedIn": Auth.isValid(token),
-                                       "faceID": Passkeys.count > 0]
+                                       "faceID": Passkeys.count > 0, "os": Platform.os]
             reply(c, "200 OK", "application/json", (try? JSONSerialization.data(withJSONObject: info)) ?? Data())
 
         case ("POST", "/login"):
