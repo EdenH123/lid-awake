@@ -11,7 +11,7 @@ using Xunit;
 // cookie headers are set by hand, the way Tailscale Serve and the phone would send them.
 // The tests are in one class: each one starts its own server, with its own settings folder.
 [Collection("WebServer")]
-public class WebServerTests : IDisposable
+public partial class WebServerTests : IDisposable
 {
     const string TailHost = "pc.example.ts.net";
     const string Owner = "owner@example.com";
@@ -37,6 +37,12 @@ public class WebServerTests : IDisposable
     readonly AccessLog accessLog;
     readonly List<int> timerSets = new();
     AutoOff? realTimer;  // set by a test that wants /timer to change a real timer
+    readonly List<(string Name, bool On)> limitSets = new();
+    Limits? realLimits;  // set by a test that wants /limits to change the real switches
+    // Phone alerts: the real WebPush, posting to a fake push service. Sign-ins are announced to the
+    // phones as security alerts, as Program does.
+    readonly FakePushService pushService = new();
+    readonly WebPush push;
 
     public WebServerTests()
     {
@@ -47,10 +53,14 @@ public class WebServerTests : IDisposable
         settings.Set("tailnetOwner", Owner);
         auth = new Auth(settings, iterations: 1000);
         port = FreePort();
+        push = new WebPush(Settings.ForMachine(Path.Combine(folder, "machine")), pushService);
         accessLog = new AccessLog(Path.Combine(folder, "logs"));
         server = new WebServer(auth, new Tailnet(settings, _ => null), () => on, () => statusAnswer(),
-            () => turnOffCalls++, (title, body) => announced.Add((title, body)), port, site,
-            accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); });
+            () => turnOffCalls++, (title, body) => { announced.Add((title, body)); _ = push.SendSecurity(title, body); }, port, site,
+            accessLog, minutes => { lock (timerSets) timerSets.Add(minutes); realTimer?.Set(minutes); },
+            setLimit: (name, value) => { lock (limitSets) limitSets.Add((name, value)); realLimits?.Set(name, value); },
+            push: push);
+        WireApps();
         server.Start();
         http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
         {
@@ -62,6 +72,7 @@ public class WebServerTests : IDisposable
     {
         http.Dispose();
         server.Dispose();
+        push.Dispose();
         try { Directory.Delete(folder, true); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -158,6 +169,8 @@ public class WebServerTests : IDisposable
         }
         Assert.Contains("connect-src 'self' wss://pc.example.ts.net", csp);
         Assert.DoesNotContain("<!--SPLASH-->", r.Body);
+        // Filled with the launch-screen links, the file around them unchanged (tests/page_check.js).
+        Assert.Equal(raw.Replace("<!--SPLASH-->", Splash.LinkTags), r.Body);
         Assert.Contains("<script>", r.Body);
     }
 
@@ -195,13 +208,18 @@ public class WebServerTests : IDisposable
         Assert.Equal(404, evil.Code);
         Assert.Equal("Not found", evil.Body);
 
-        // Launch screens are optional on Windows (section 3), and never need a session.
-        foreach (var path in new[] { "/splash/x.png", "/splash/1179x2556.png" })
+        // Launch screens (section 3), only for the listed sizes, and never needing a session.
+        foreach (var path in new[] { "/splash/x.png", "/splash/1179x2557.png", "/splash/1179x2556.jpg" })
         {
             var splash = await Send("GET", path);
             Assert.Equal(404, splash.Code);
             Assert.Equal("Not found", splash.Body);
         }
+        var launch = await Send("GET", "/splash/1179x2556.png");
+        Assert.Equal(200, launch.Code);
+        Assert.Equal("image/png", launch.Header("Content-Type"));
+        Assert.Equal("no-store", launch.Header("Cache-Control"));
+        Assert.Equal(Splash.Png("/splash/1179x2556.png"), launch.Bytes);
 
         foreach (var path in new[] { "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png" })
         {
@@ -689,7 +707,7 @@ public class WebServerTests : IDisposable
         var unknown = await Send("GET", "/nope", cookie: cookie);
         Assert.Equal(404, unknown.Code);
         Assert.Equal("Not found", unknown.Body);
-        // A route that is not built yet: 404 after the session check, like any route that does not exist.
+        // A route this server wasn't given (no MemoryInfo here): 404 after the session check, like any route that does not exist.
         Assert.Equal(404, (await Send("GET", "/memory", cookie: cookie)).Code);
         Assert.Equal(401, (await Send("GET", "/memory")).Code);
         Assert.Equal(401, (await Send("GET", "/sessions")).Code);
@@ -698,8 +716,9 @@ public class WebServerTests : IDisposable
         Assert.Equal(404, (await Send("GET", "/sessions/signout", cookie: cookie)).Code);
         Assert.Equal(404, (await Send("POST", "/activity", lid: true, cookie: cookie)).Code);
         Assert.Equal(404, (await Send("GET", "/timer", cookie: cookie)).Code);
-        Assert.Equal(404, (await Send("GET", "/passkey/login-options", cookie: cookie)).Code);
-        Assert.Equal(401, (await Send("GET", "/passkey/login-options")).Code);
+        Assert.Equal(404, (await Send("POST", "/passkey/login-options", lid: true, cookie: cookie)).Code);
+        Assert.Equal(404, (await Send("GET", "/passkey/login")).Code);
+        Assert.Equal(401, (await Send("GET", "/passkey/register-options")).Code);
         Assert.False(unknown.Has("Server"));
     }
 
@@ -1184,5 +1203,274 @@ public class WebServerTests : IDisposable
         var cookie = await SignIn();
         Assert.Equal(400, (await Post("/timer", cookie, "{\"minutes\":61}")).Code);
         Assert.Equal(60, timer.Minutes);
+    }
+
+    // ---- Task 17: POST /limits (docs/API.md 5.2) and the switches in /status ----
+
+    [Theory]
+    [InlineData("battery", true)]
+    [InlineData("battery", false)]
+    [InlineData("heat", true)]
+    [InlineData("heat", false)]
+    public async Task EachLimitIsSetWith204(string name, bool value)
+    {
+        var cookie = await SignIn();
+        var r = await Post("/limits", cookie, $"{{\"name\":\"{name}\",\"on\":{(value ? "true" : "false")}}}");
+        Assert.Equal(204, r.Code);
+        Assert.Equal("", r.Body);
+        Assert.Equal(new[] { (name, value) }, limitSets);
+    }
+
+    [Theory]
+    [InlineData("{\"name\":\"battery\"}")]
+    [InlineData("{\"on\":true}")]
+    [InlineData("{\"name\":\"Battery\",\"on\":true}")]
+    [InlineData("{\"name\":\"heat \",\"on\":false}")]
+    [InlineData("{\"name\":\"cpu\",\"on\":true}")]
+    [InlineData("{\"name\":\"\",\"on\":true}")]
+    [InlineData("{\"name\":null,\"on\":true}")]
+    [InlineData("{\"name\":[\"battery\"],\"on\":true}")]
+    [InlineData("{\"name\":1,\"on\":true}")]
+    [InlineData("{\"name\":\"battery\",\"on\":1}")]
+    [InlineData("{\"name\":\"battery\",\"on\":0}")]
+    [InlineData("{\"name\":\"battery\",\"on\":\"true\"}")]
+    [InlineData("{\"name\":\"battery\",\"on\":null}")]
+    [InlineData("{\"name\":\"heat\",\"on\":[true]}")]
+    [InlineData("{\"name\":\"heat\",\"value\":true}")]
+    [InlineData("{}")]
+    [InlineData("not json")]
+    [InlineData("[\"battery\",true]")]
+    [InlineData("true")]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task AnyOtherLimitBodyIs400UnknownLimit(string? json)
+    {
+        var cookie = await SignIn();
+        var r = await Post("/limits", cookie, json);
+        Assert.Equal(400, r.Code);
+        Assert.Equal("Unknown limit.", r.Body);
+        Assert.Equal("text/plain; charset=utf-8", r.Header("Content-Type"));
+        Assert.Empty(limitSets);
+    }
+
+    [Fact]
+    public async Task LimitsNeedsASessionTheHeaderAndIsClosedWhileOff()
+    {
+        var cookie = await SignIn();
+        var anonymous = await Post("/limits", "", "{\"name\":\"battery\",\"on\":false}");
+        Assert.Equal(401, anonymous.Code);
+        Assert.Equal("Locked", anonymous.Body);
+        var noHeader = await Send("POST", "/limits", cookie: cookie, json: "{\"name\":\"battery\",\"on\":false}");
+        Assert.Equal(403, noHeader.Code);
+        Assert.Equal("Forbidden", noHeader.Body);
+        // The header check comes before the body is looked at.
+        Assert.Equal(403, (await Send("POST", "/limits", cookie: cookie, json: "{}")).Code);
+        Assert.Equal(403, (await Send("POST", "/limits", cookie: cookie, lid: true, fetchSite: "cross-site", json: "{\"name\":\"heat\",\"on\":false}")).Code);
+        // Only POST.
+        Assert.Equal(404, (await Send("GET", "/limits", cookie: cookie)).Code);
+        on = false;
+        var off = await Post("/limits", cookie, "{\"name\":\"battery\",\"on\":false}");
+        Assert.Equal(423, off.Code);
+        Assert.Equal(OffText, off.Body);
+        Assert.Empty(limitSets);
+    }
+
+    // The page posts a switch, then asks /status: the answer must already show it. `heat` is
+    // accepted on a PC with no temperature, because the setting is stored.
+    [Fact]
+    public async Task ALimitChangedOverHttpShowsInTheNextStatusAndIsStored()
+    {
+        realLimits = new Limits(settings);
+        var info = new StatusInfo(new FakeReadings(), realLimits, new HeatSensor(() => TemperatureReading.None));
+        statusAnswer = () => info.Build(true);
+        var cookie = await SignIn();
+
+        var before = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.True(before.GetProperty("batteryGuard").GetBoolean());
+        Assert.True(before.GetProperty("heatGuard").GetBoolean());
+
+        Assert.Equal(204, (await Post("/limits", cookie, "{\"name\":\"battery\",\"on\":false}")).Code);
+        var after = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.False(after.GetProperty("batteryGuard").GetBoolean());
+        Assert.True(after.GetProperty("heatGuard").GetBoolean());
+        StatusInfoTests.AssertEveryKeyWithItsKind(after);
+
+        Assert.Equal(204, (await Post("/limits", cookie, "{\"name\":\"heat\",\"on\":false}")).Code);
+        var noHeat = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.False(noHeat.GetProperty("heatGuard").GetBoolean());
+        Assert.DoesNotContain("heat", noHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()));
+
+        // Stored, so a restart keeps them.
+        Assert.False(settings.Get<bool?>("batteryGuard"));
+        Assert.False(settings.Get<bool?>("heatGuard"));
+        var again = new Limits(settings);
+        Assert.False(again.BatteryGuard);
+        Assert.False(again.HeatGuard);
+
+        Assert.Equal(204, (await Post("/limits", cookie, "{\"name\":\"battery\",\"on\":true}")).Code);
+        Assert.True(Json(await Send("GET", "/status", cookie: cookie)).GetProperty("batteryGuard").GetBoolean());
+    }
+
+    [Fact]
+    public async Task StatusOverHttpListsHeatAndBatteryTempOnlyWithATemperature()
+    {
+        var source = TemperatureReading.None;
+        var heat = new HeatSensor(() => source);
+        var info = new StatusInfo(new FakeReadings { PowerNow = new PowerReading(0, 1, 80, 7200) }, new Limits(settings), heat);
+        statusAnswer = () => info.Build(true);
+        var cookie = await SignIn();
+
+        heat.Refresh(TimeSpan.Zero);
+        var noTemperature = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push" }, noTemperature.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.False(noTemperature.TryGetProperty("batteryTemp", out _));
+
+        // Only a thermal zone: the heat switch shows, but batteryTemp is the battery's alone.
+        source = new TemperatureReading(null, 55.0);
+        heat.Refresh(TimeSpan.Zero);
+        var zoneOnly = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(new[] { "limits", "history", "heat", "memory", "passkeys", "push" }, zoneOnly.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.False(zoneOnly.TryGetProperty("batteryTemp", out _));
+
+        source = new TemperatureReading(36.66, 55.0);
+        heat.Refresh(TimeSpan.Zero);
+        var withHeat = Json(await Send("GET", "/status", cookie: cookie));
+        Assert.Equal(new[] { "limits", "history", "heat", "memory", "passkeys", "push" }, withHeat.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.Equal(36.7, withHeat.GetProperty("batteryTemp").GetDouble());
+        StatusInfoTests.AssertEveryKeyWithItsKind(withHeat);
+    }
+
+    // ---- 5.5 push ----
+
+    const string PushEndpoint = "https://web.push.apple.com/QGphone";
+
+    static string Subscription(FakePhone phone, string endpoint = PushEndpoint, string off = "[\"warm\"]") =>
+        $"{{\"endpoint\":\"{endpoint}\",\"expirationTime\":null,\"keys\":{{\"p256dh\":\"{phone.P256dh}\",\"auth\":\"{phone.AuthText}\"}},\"off\":{off}}}";
+
+    Task<Reply> PostPush(string path, string cookie, string json) => Send("POST", path, lid: true, cookie: cookie, json: json);
+
+    [Fact]
+    public async Task PushRoutesNeedASessionAndThePostHeader()
+    {
+        using var phone = new FakePhone();
+        Assert.Equal(401, (await Send("GET", "/push/key")).Code);
+        Assert.Equal(401, (await Send("POST", "/push/subscribe", lid: true, json: Subscription(phone))).Code);
+        var cookie = await SignIn();
+        Assert.Equal(403, (await Send("POST", "/push/subscribe", cookie: cookie, json: Subscription(phone))).Code);
+        Assert.Equal(403, (await Send("POST", "/push/settings", cookie: cookie, json: "{}")).Code);
+        Assert.Equal(404, (await Send("POST", "/push/key", lid: true, cookie: cookie)).Code);
+        Assert.Equal(404, (await Send("GET", "/push/subscribe", cookie: cookie)).Code);
+        Assert.Empty(push.Phones);
+    }
+
+    [Fact]
+    public async Task PushKeyIsTheSame65ByteKeyEveryTime()
+    {
+        var cookie = await SignIn();
+        var r = await Send("GET", "/push/key", cookie: cookie);
+        Assert.Equal(200, r.Code);
+        Assert.Equal("application/json", r.Header("Content-Type"));
+        var key = Json(r).GetProperty("key").GetString()!;
+        var bytes = Passkeys.FromBase64Url(key)!;
+        Assert.Equal(65, bytes.Length);
+        Assert.Equal(4, bytes[0]);
+        Assert.DoesNotContain("=", key);
+        Assert.Equal(key, Json(await Send("GET", "/push/key", cookie: cookie)).GetProperty("key").GetString());
+        Assert.Equal(push.PublicKey, key);
+    }
+
+    [Fact]
+    public async Task PushSubscribeStoresThePhoneAndRemembersThePageAsTheContact()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        var r = await PostPush("/push/subscribe", cookie, Subscription(phone, off: "[\"warm\",\"bogus\",\"security\"]"));
+        Assert.Equal(204, r.Code);
+        Assert.Empty(r.Bytes);
+        var stored = Assert.Single(push.Phones);
+        Assert.Equal(PushEndpoint, stored.Endpoint);
+        Assert.Equal(phone.P256dh, stored.P256dh);
+        Assert.Equal(phone.AuthText, stored.Auth);
+        Assert.Equal(new[] { "warm", "security" }, stored.Off);
+        Assert.Equal("https://" + TailHost, push.Contact);
+
+        // The same endpoint again replaces it; an `off` with anything but strings counts as none.
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone, off: "[\"warm\", 3]"))).Code);
+        Assert.Empty(Assert.Single(push.Phones).Off);
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone, off: "\"warm\""))).Code);
+        Assert.Empty(Assert.Single(push.Phones).Off);
+    }
+
+    [Fact]
+    public async Task PushSubscribeRefusesAnythingButARealSubscription()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        foreach (var body in new[]
+        {
+            Subscription(phone, endpoint: "https://evil.example/push"),
+            Subscription(phone, endpoint: "http://web.push.apple.com/x"),
+            Subscription(phone, endpoint: "https://web.push.apple.com:8443/x"),
+            $"{{\"endpoint\":\"{PushEndpoint}\",\"keys\":{{\"p256dh\":\"{phone.P256dh}\"}}}}",
+            $"{{\"endpoint\":\"{PushEndpoint}\",\"keys\":{{\"p256dh\":\"AAAA\",\"auth\":\"{phone.AuthText}\"}}}}",
+            $"{{\"endpoint\":\"{PushEndpoint}\",\"keys\":\"nope\"}}",
+            $"{{\"keys\":{{\"p256dh\":\"{phone.P256dh}\",\"auth\":\"{phone.AuthText}\"}}}}",
+            "{}",
+            "not json",
+            "[1,2]",
+        })
+        {
+            var r = await PostPush("/push/subscribe", cookie, body);
+            Assert.Equal(400, r.Code);
+            Assert.Equal("Couldn't turn on alerts.", r.Body);
+        }
+        Assert.Empty(push.Phones);
+    }
+
+    [Fact]
+    public async Task PushSettingsChangesOrRemovesAPhone()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone))).Code);
+
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\",\"off\":[\"lowBattery\",\"nope\",\"turnedOff\"]}}")).Code);
+        Assert.Equal(new[] { "lowBattery", "turnedOff" }, Assert.Single(push.Phones).Off);
+        // Neither enabled:false nor a list: every alert back on.
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\"}}")).Code);
+        Assert.Empty(Assert.Single(push.Phones).Off);
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\",\"enabled\":true,\"off\":[\"warm\"]}}")).Code);
+        Assert.Equal(new[] { "warm" }, Assert.Single(push.Phones).Off);
+        // An unknown endpoint is ignored.
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, "{\"endpoint\":\"https://web.push.apple.com/other\",\"enabled\":false}")).Code);
+        Assert.Single(push.Phones);
+
+        var missing = await PostPush("/push/settings", cookie, "{\"off\":[]}");
+        Assert.Equal(400, missing.Code);
+        Assert.Equal("Missing phone.", missing.Body);
+        Assert.Equal(400, (await PostPush("/push/settings", cookie, "{\"endpoint\":5}")).Code);
+
+        Assert.Equal(204, (await PostPush("/push/settings", cookie, $"{{\"endpoint\":\"{PushEndpoint}\",\"enabled\":false}}")).Code);
+        Assert.Empty(push.Phones);
+    }
+
+    [Fact]
+    public async Task ANewSignInIsASecurityAlertEvenForAPhoneThatTurnedEverythingOff()
+    {
+        using var phone = new FakePhone();
+        var cookie = await SignIn();
+        var everything = "[\"turnedOff\",\"lowBattery\",\"claudeUsage\",\"claudeSession\",\"warm\",\"security\"]";
+        Assert.Equal(204, (await PostPush("/push/subscribe", cookie, Subscription(phone, off: everything))).Code);
+        Assert.Empty(pushService.Seen);
+
+        await SignIn(ua: IPhone);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (pushService.Seen.Count == 0 && DateTime.UtcNow < deadline) await Task.Delay(50);
+        var seen = Assert.Single(pushService.Seen);
+        Assert.Equal(PushEndpoint, seen.Uri);
+        var alert = JsonDocument.Parse(PushReceiver.Decrypt(seen.Body, phone.Key, phone.Auth).Text).RootElement;
+        Assert.Equal("New sign-in to Lid Awake", alert.GetProperty("title").GetString());
+        Assert.Equal("With the password, on an iPhone.", alert.GetProperty("body").GetString());
+        Assert.Equal("security", alert.GetProperty("tag").GetString());
     }
 }

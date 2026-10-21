@@ -4,9 +4,10 @@ import Foundation
 // iPhone alerts for Claude Code sessions on this Mac: "Claude finished" when a session is done
 // replying, and "Claude needs you" when it asks for permission or waits for an answer.
 //
-// Claude Code runs a tiny hook (claude-event.sh, installed in ~/.claude/hooks) that drops each
-// event as a file into ~/Library/Application Support/LidAwake/claude-events; this picks them up,
-// so nothing new listens on the network. Alerts only go out while the owner is away from the Mac
+// Claude Code runs a tiny hook (lidawake-claude-event.sh in ~/.claude/hooks, put there by
+// tools/claude/setup.py, which the installer offers) that drops each event as a file into
+// ~/Library/Application Support/LidAwake/claude-events; this picks them up, so nothing new
+// listens on the network. Alerts only go out while the owner is away from the Mac
 // (no keyboard or mouse for 2 minutes, or the lid closed), at most one every 20 s per session.
 enum ClaudeAlerts {
     static let folder = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/LidAwake/claude-events")

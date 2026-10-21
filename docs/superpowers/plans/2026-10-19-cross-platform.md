@@ -1682,9 +1682,232 @@ Each part is its own dispatch and review. Build and tests run on GitHub Actions 
 
 ---
 
-# Phase 3 — Windows feature parity (separate plans)
+# Phase 3 — Windows feature parity
 
-Write one plan per row, in this order (each adds its name to `StatusInfo.Features`, so the page shows that part automatically):
+Branch `claude/windows-phase-3`, stacked on `claude/windows-phase-2`. Each task adds its feature name to the Windows `/status` `features` list, so the page shows that part automatically. Built and tested on GitHub Actions. Every task ends with a checklist of what the owner must try on a real laptop.
+
+### Task 17: Safety limits on Windows (battery and heat)
+
+**Contract:** docs/API.md `POST /limits`, `/status` §6.1 `batteryGuard`/`heatGuard`/`batteryLimit`/`maxBatteryTemp`, §6.4 `batteryTemp`. Mac reference: main.swift `safetyStop`, `safetyStopAlertReason`, the 15 s check, the menu items "Turn off below 10% battery" and "Turn off if battery is hotter than 40°C", and the defaults (both on).
+
+**Feature split (ruling P3-1):**
+- `"limits"` covers the battery limit and `POST /limits`.
+- A new feature `"heat"` covers the heat limit. The Mac sends both.
+- Windows always sends `"limits"`. It sends `"heat"` only while a temperature source works, re-checked with each status.
+- The page hides the heat row without `"heat"`, and hides both rows without `"limits"` (as today).
+- docs/API.md §4 gets the new name.
+
+**Windows behaviour:**
+- **Battery.** On battery (GetSystemPowerStatus) and below `batteryLimit` (10) percent:
+  - turn off;
+  - refuse a turn-on with a tray balloon saying why;
+  - log it.
+- **Heat temperature source, in order:**
+  1. The battery's own temperature: `IOCTL_BATTERY_QUERY_INFORMATION` with `BatteryTemperature`, in tenths of a kelvin. Find the battery device through SetupAPI with `GUID_DEVCLASS_BATTERY`.
+  2. ACPI thermal zones through WMI `root\WMI` `MSAcpi_ThermalZoneTemperature`. This often needs admin; access denied counts as "unavailable".
+- **No source.** `heat` is not in features, `heatGuard` is still the stored setting, and `batteryTemp` is omitted.
+- **Source present.** At or above `maxBatteryTemp` (40 °C): turn off and refuse a turn-on. `batteryTemp` is sent.
+- **Check rate.** Every 15 s while on, off the UI thread, as on the Mac.
+- **Tray.** Two checkable items with the Mac's wording. The heat item is greyed out with "(no temperature on this PC)" when there's no source. They are stored in roaming settings and default to on.
+- **`POST /limits`.** Same answers as the Mac; it applies at once. Sent from the phone, `heat` is accepted even without a source, because the setting is stored.
+- **`/status`.** Sends the real `batteryGuard`/`heatGuard`, which replaces Ruling P2-12's `false`. `thermalState` stays `"unknown"`.
+- **Activity log line.** For example `Turned off: battery below 10%`.
+- **README.** Replace "no low-battery or too-hot shutoff on Windows" with the real behaviour, and say that the heat limit appears only if the laptop reports a temperature.
+
+**Tests:**
+- Fake readings for the guard logic: both limits, refusal of a turn-on, guards off, heat with no source.
+- Parsing for the battery IOCTL temperature (tenths of a kelvin to °C) and the WMI value (tenths of a kelvin).
+- Real-machine calls never throw and return null or a sane value.
+- `/limits` end to end.
+- `/status` fields.
+
+**Owner checklist:**
+- Unplug at 11% and watch it turn off at 9%.
+- Check whether the tray's heat item is available.
+- Toggle both from the phone.
+
+
+
+### Parallel group A (Tasks 18–20)
+
+These three run at the same time. Each runs in its own worktree on its own branch off `claude/windows-phase-3`: `claude/windows-phase-3-passkeys`, `-push` and `-history`. The controller merges them back one by one and resolves the shared spots: the `features` list, the WebServer route switch, the tray, README and API.md.
+
+**Shared rules:**
+- Each adds its feature name to the Windows `features` list only.
+- Each touches the shared files minimally, by adding, not reshaping.
+- Each new route goes in the authenticated section unless API.md says it's public.
+- Never break the Mac.
+- CI runs on every `claude/windows-phase-3*` branch.
+
+### Task 18: Face ID / fingerprint sign-in on Windows (passkeys)
+
+**Contract:** docs/API.md `/passkey/login-options`, `/passkey/login`, `/passkey/register-options`, `/passkey/register`, `GET /auth` `faceID`, `/sessions` `faceID`. Mac reference: Passkeys.swift and its tests in tests/passkeys/main.swift (port the test vectors), plus Server.swift's passkey cases.
+
+**Windows:**
+- A C# port of Passkeys.swift (WebAuthn, ES256 only): challenges (purpose, 2-minute life, cap), clientDataJSON checks (type, challenge, origin `https://<tailnet host>`), authenticatorData (rpIdHash, UP+UV flags, counter rule incl. 0/0), COSE EC2 P-256 key parsing, `04||x||y` storage, at most 20 keys, never replace an id.
+- Signature verification with `ECDsa` (P-256, SHA-256, DER signature → `DSASignatureFormat.Rfc3279DerSequence`).
+- Sessions created by passkey count as `faceID` in /sessions.
+- A new password removes all passkeys.
+- Register needs the password (shares the lockout).
+- The sign-in announcement says "with Face ID or fingerprint".
+- Feature `"passkeys"`.
+
+**Tests:** the ported Mac vectors; tampered clientData, rpId, flags and signature; counter rules; caps; the routes end to end with a software-generated P-256 key acting as the phone.
+
+### Task 19: Phone alerts on Windows (Web Push)
+
+**Contract:** docs/API.md `/push/key`, `/push/subscribe`, `/push/settings`, and the alert kinds. Mac reference: WebPush.swift (RFC 8291 aes128gcm, RFC 8292 VAPID ES256 JWT, allowed push hosts, 10 phones, per-phone `off` list), tests/webpush (decrypt.js), and the main.swift `WebPush.send` call sites.
+
+**Windows:**
+- A C# port with `ECDiffieHellman` P-256, HKDF (`System.Security.Cryptography.HKDF`), `AesGcm`, and an ES256 JWT. The VAPID key lives in machine.json.
+- Sending goes over HttpClient with a timeout, never blocks the UI, and drops subscriptions the push service answers 404/410 for.
+- Kinds Windows sends:
+  - `security`: sign-ins and passkey changes;
+  - `turnedOff`: why, and how long it was on;
+  - `lowBattery`: the Mac's thresholds and wording, with "PC" for "Mac";
+  - `warm`: only when a battery temperature exists.
+- `claudeUsage` and `claudeSession` aren't sent on Windows.
+- A new password removes all subscriptions.
+- Feature `"push"`.
+
+**Tests:** encrypt with C#, then decrypt with an independent receiver implementation in the test (the RFC 8291 test vector if available); the JWT's shape and signature; the allowed-host rules; 404/410 pruning with a fake HttpMessageHandler; the routes end to end.
+
+### Task 20: History graphs on Windows
+
+Windows has no readable power log, so Lid Awake records its own samples (ruling P3-4).
+
+**Contract:** docs/API.md `/temp-history`, `/battery-history`, `/cpu-history` and `/cpu-icon`. Match the shapes exactly. Mac reference: PowerHistory.swift.
+
+**Windows:**
+- A sampler records battery %, charging and battery temperature (if any) every minute, and overall CPU %. It runs only while the app runs.
+- Samples go to `%LOCALAPPDATA%\LidAwake\history.json`, keeping 48 h, written atomically and rolled.
+- The routes take the same `hours` clamp as the Mac.
+- `/cpu-history` sends overall CPU only, plus whatever per-app shape the page tolerates as empty. Check the page.
+- `/cpu-icon` answers 404.
+- Feature `"history"`.
+- README: on Windows the graphs only cover the time Lid Awake has been running.
+
+**Tests:** sampling with fakes; trimming at 48 h; atomic write; the route shapes against the API.md examples; empty history.
+
+### Parallel group B (Tasks 21–22, alongside group A)
+
+Each task gets its own worktree and branch off `claude/windows-phase-3`: `claude/windows-phase-3-apps` and `claude/windows-phase-3-screen`. The shared rules are the same as group A.
+
+### Task 21: Apps on Windows (open, switch, quit)
+
+**Contract:** docs/API.md `/app-icon.png`, `/open-app`, `/focus-app`, `/quit-app`, `/apps-order`, and the `/status` `apps`/`otherApps` shapes (§6.3). Mac reference: PhoneApps.swift, the Server.swift cases, and the main.swift menu "Apps on phone".
+
+**Windows:**
+- **Owner's picks.** The owner picks apps in the tray: "Apps on phone…" opens a small checklist of Start menu apps, from the shortcuts in both the user and all-users Start Menu Programs folders. Each shortcut is resolved to its target `.exe` with IShellLink, or with WScript.Shell COM.
+- **Storage and ids.** The list is stored in roaming settings. Ids are a hash of the target path, as on the Mac. The phone only ever sends an id, never a path.
+- **`apps`.** The picked apps, with a running flag from Process by exe path.
+- **`otherApps`.** Running apps that have a visible main window and aren't in the list.
+- **Icons.** `Icon.ExtractAssociatedIcon` → PNG, cached by id.
+- **Open, focus, quit.**
+  - Open uses `Process.Start` with UseShellExecute.
+  - Focus uses `SetForegroundWindow`, with `ShowWindow(SW_RESTORE)` if minimized. Allow for Windows' foreground lock: use `AllowSetForegroundWindow`/`AttachThreadInput` or minimize-restore, and document what you use.
+  - Quit uses `CloseMainWindow`, never Kill, and returns the Mac's 409 when the app doesn't close.
+- **Feature `"apps"`.**
+
+**Tests:** the id hashing; the lists with fake process and shortcut sources; the routes end to end (404 for an unknown id, the 409 path); and a guarantee that a path is never accepted from the phone.
+
+### Task 22: Screen viewing on Windows (H.264 video, with JPEG fallback)
+
+**Owner's choice:** both in one task, like the Mac. That means H.264 video through the hardware encoder when one is available, and JPEG frames otherwise. This supersedes ruling P3-5.
+
+**Contract:** docs/API.md `/screen.jpg` and §7, the live socket on port 8788:
+- the handshake checks;
+- the setup message `{"video": {"codec","description","width","height"}}`;
+- the video frame `[1|2][Int64 µs big-endian][AVCC]`, where 1 is a keyframe;
+- the JPEG frame;
+- the quality messages and presets;
+- keyframe requests;
+- flow control: video at most 6 unconfirmed with backlog < 4, JPEG at most 2 unconfirmed;
+- `ping`/`pong`;
+- the 8-socket cap.
+
+`/live` is mapped by Tailscale Serve (§9). Mac reference: LiveServer.swift, FrameStream.swift, VideoEncoder.swift, and ScreenControl.swift for capture only.
+
+**Windows:**
+- **Capture.** DXGI Desktop Duplication (IDXGIOutputDuplication) of the primary output. It only delivers frames when the screen changes. Fall back to GDI BitBlt when duplication isn't available. Capture only while someone watches, and stop a few seconds after the last viewer leaves.
+- **H.264.**
+  - Use the Media Foundation H.264 encoder MFT, preferring hardware (`MFTEnumEx` with `MFT_ENUM_FLAG_HARDWARE`) and falling back to Microsoft's software encoder.
+  - Input is NV12, converted from BGRA.
+  - Tune for latency, as on the Mac: low-latency mode (`CODECAPI_AVLowLatencyMode`), no B-frames, CBR at the preset's bit rate, and keyframes only on request (`CODECAPI_AVEncVideoForceKeyFrame`).
+  - Convert Annex B output to AVCC (4-byte lengths). Build the avcC `description` from SPS/PPS, and the codec string `avc1.PPCCLL`, as VideoEncoder.swift emits.
+  - Wrapper library: allowed. Vortice.Windows (Vortice.MediaFoundation, Vortice.Direct3D11, Vortice.DXGI) or raw COM interop. Pin an exact published version at least two weeks old.
+- **JPEG fallback.** When no H.264 encoder can be created (Windows Server CI machines may lack Media Foundation), the same socket sends JPEG frames with the Mac's JPEG presets. `/screen.jpg` always works.
+- **Quality presets.** max, sharp, balanced and fast, with the size, bit rate and JPEG quality from FrameStream.swift / VideoEncoder.swift.
+- **Socket.** Kestrel WebSockets on 127.0.0.1:8788, with the Mac's handshake rules (Host, Origin, session cookie, on, screen allowed). Serve maps `/live`.
+- **Owner switch.** "Allow screen from phone" in the tray, off by default. `/status` reports `remoteScreen`, `screenPermission: true` and `screenWidth`.
+- **Not yet.** Input and camera messages are ignored; those come in later tasks.
+- **Feature.** `"screen"`.
+
+**Tests:**
+- handshake refusals;
+- a test client gets a setup message and frames (video if the runner has an encoder, otherwise JPEG; report which), acks them, and is held to the flow-control limits;
+- Annex B → AVCC, avcC and codec-string building, with fixed SPS/PPS bytes;
+- the socket cap;
+- `/screen.jpg` long poll;
+- capture starting and stopping with viewers;
+- when the runner has an encoder: the encoded stream starts with a keyframe carrying SPS/PPS, and a forced keyframe arrives on request.
+
+### Task 23: Trackpad and keyboard control on Windows (parallel with 22)
+
+**Contract:** docs/API.md `POST /input`, `POST /power`, §8 (all input commands, clamps, key names, `char` US-layout map, `mods`, the modifier table per computer: `cmd` → Ctrl on Windows), and §7.6 (input over the socket, 240/s cap). Mac reference: ScreenControl.swift `RemoteInput` (keyCodes, charKeyCodes, maxText, perform), and the Server.swift `/input` and `/power` cases.
+
+**Windows:**
+- An `InputInjector` uses `SendInput`:
+  - mouse: relative move with MOUSEEVENTF_MOVE, kept on the primary screen; down, up, click at fractions of the primary screen (MOUSEEVENTF_ABSOLUTE with 0..65535); right click; count 1..3;
+  - scroll: `MOUSEEVENTF_WHEEL`/`HWHEEL` with the pixel → wheel-delta conversion stated;
+  - text: KEYEVENTF_UNICODE per UTF-16 unit, with surrogate pairs;
+  - key: virtual-key codes for the named keys; `char` → US-layout scan codes or VKs so shortcuts work in any layout; mods held around the key or click.
+- **Lock:** `LockWorkStation`. **displayoff:** `SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)`. **wake:** a tiny mouse nudge or `SetThreadExecutionState(ES_DISPLAY_REQUIRED)`.
+- **Owner switches:** "Allow control from phone" in the tray, off by default, stored as `remoteControl`. It requires the screen switch `remoteScreen`, which Task 22 adds; coordinate by reading the same roaming setting key `remoteScreen`, and the controller reconciles at merge. Answers use the API.md texts with "PC" wording (`localize` handles Mac → PC on the page).
+- **Wiring:** `POST /input` and `POST /power` go in WebServer now. Socket input is connected when this merges with Task 22, behind a small `IInputSink` the socket can call.
+- Every accepted input wakes the screen.
+- **Feature:** `"control"`.
+
+**Tests:** every command's mapping to SendInput structs, through a fake sender (clamps, non-finite → 0, key and char tables, mods order, text with emoji); `/input` and `/power` end to end (204, 400, 403 rules, 413 at 2001 graphemes, with 2000 graphemes of emoji accepted); the rate cap.
+
+### Task 24: Lid closed: the screen on Windows (parallel)
+
+**Contract:** docs/API.md §6 `lidClosed`, `displayAsleep`, `screenOff`, and §7.7 (keeping the screen available). Mac reference: LidScreen.swift, plus how FrameStream.swift reports `lidClosed`.
+
+**What Windows allows (ruling P3-6):** On most laptops, closing the lid turns the built-in panel off at the hardware or driver level. An ordinary app can't override that, and virtual-monitor drivers are out of scope. This task does what Windows allows and reports the rest honestly:
+- **Lid state.** Use `RegisterPowerSettingNotification(GUID_LIDSWITCH_STATE_CHANGE)` on a hidden window. `/status` `lidClosed` comes from it, so the phone's drawing shows the lid. Also send `displayAsleep`, from `GUID_CONSOLE_DISPLAY_STATE` (0 off, 1 on, 2 dimmed).
+- **Display timeout.** While someone watches the screen from the phone, hold `ES_DISPLAY_REQUIRED` so the display doesn't time out. Release it when nobody watches. This coordinates with the screen task via a small `IScreenWatchers` or a callback; at merge, the controller wires it to the live socket's viewer count.
+- **Brightness.** With the lid closed while on: save the brightness and set the lowest level through WMI `root\WMI` `WmiMonitorBrightness` / `WmiMonitorBrightnessMethods.WmiSetBrightness`. Restore it when the lid opens or Lid Awake turns off. Keep the saved value in machine.json, so a crash restores it at the next start. If WMI refuses or there's no internal panel, do nothing and log it once.
+- **Panel off with the lid closed.** When the display state reports off while the lid is closed and someone watches, `/status` says so (`displayAsleep` true), and the README explains it: Windows switches the panel off with the lid closed on many laptops. Open the lid a little, or use an external monitor, to keep the picture. The page already draws the computer dark.
+
+**Tests:** fakes for the lid and display notifications → `/status`; save, lower and restore brightness, including crash recovery from machine.json; ES_DISPLAY_REQUIRED held only while watched (through a fake); WMI failure → no change, one log line.
+
+### Task 25: Camera and microphone on Windows (parallel; wired at merge with 18 and 22)
+
+**Contract:** docs/API.md `POST /camera/options`, `POST /camera/unlock`, §7.2 (the camera setup message, camera video `[3|4][Int64 µs][AVCC]`, sound `[5][UInt32 rate][mu-law]`, `cameraError`/`cameraStopped`), §7.5 (ticket flow, 10-minute close, talk-back limits), and §7.3 (`camera`, `cameraKey`, `talk` messages). Mac reference: CameraStream.swift, the camera parts of LiveServer.swift, and the Server.swift camera routes.
+
+**Ruling P3-8:** this task is built in parallel with Task 18 (passkeys) and Task 22 (the live socket and H.264 encoder). It doesn't depend on their code. It defines small seams, and the controller wires them at merge:
+- `ICameraPasskeys`: create a `camera`-purpose challenge, and verify an assertion with the same checks as login. This is the Task 18 Passkeys port.
+- `IVideoEncoderFactory`: create an H.264 encoder for a given size and bit rate, plus an AVCC/avcC/codec-string helper. This is the Task 22 encoder.
+- `ICameraSocket`: send setup, video, sound, `cameraError`/`cameraStopped`, and receive `camera`/`cameraKey`/`talk`. This is the Task 22 LiveServer.
+- In this task, test fakes implement all three.
+
+**Windows:**
+- **Camera capture.** Media Foundation source reader on the video capture device. Prefer an external USB camera over the built-in one, as the Mac does; use 1280×720 when available. Frames are NV12 or converted, and capture starts only while the camera socket is open, so the webcam light is only on then.
+- **Microphone.** Capture through the Media Foundation audio source (or WASAPI), resampled to 16 kHz mono. Use the first channel and μ-law encode, in chunks of about 0.1 s (`rate/10` samples), exactly as the Mac's `addSound`.
+- **Talk-back.** Decode μ-law to 16 kHz PCM and play it on the default output (WASAPI or MF media session). Play chunks back to back, and drop them when more than about 1 s behind. Accept at most 4000 bytes per message. Ignore them silently unless the camera is open and allowed.
+- **Tickets.** One-time, bound to the session that asked, with a short life as on the Mac.
+- **Ten-minute close.** After 10 minutes the camera closes with the exact `cameraStopped` text.
+- **Owner switch.** "Allow camera & microphone from phone" in the tray, off by default, stored as `cameraFromPhone`. It needs `remoteScreen`. Turning it off stops the camera with the switch-off `cameraStopped` text.
+- **`/status`.** `cameraAllowed` = remoteScreen && cameraFromPhone.
+- **Routes.** `/camera/options` and `/camera/unlock` use the API.md answers (Windows wording through `localize`), going through `ICameraPasskeys`.
+- **Activity log.** "Camera opened from the phone" / "Camera closed".
+- **Lid closed.** If no camera can be opened with the lid closed, send the Mac's lid-closed `cameraError` wording adapted to the PC.
+- **Feature.** `"camera"`.
+
+**Tests:** μ-law encode/decode against the G.711 table; chunk timing and size; talk-back limits and drop-behind; ticket single-use and session binding; the 10-minute close with an injectable clock; the switch-off stop; the routes with a fake `ICameraPasskeys`; a camera socket flow with a fake `ICameraSocket` (setup → frames → `cameraKey` → stop); device choice (external preferred) with a fake device list. Real-device tests must not fail on CI, which has no camera; report what the runner had.
+
+Remaining Phase 3 features, one task each, in this order:
 
 | Feature | Mac source to port | Windows technology |
 |---|---|---|

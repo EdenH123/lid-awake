@@ -180,7 +180,7 @@ Answered before the "off" check and before sign-in, to any caller that passes st
 | `/apple-touch-icon.png`, `/apple-touch-icon-precomposed.png` | 180x180 app icon | `image/png` |
 | `/icon-512.png` | 512x512 app icon | `image/png` |
 | `/sky/sunrise.jpg`, `/sky/day.jpg`, `/sky/sunset.jpg`, `/sky/night.jpg` | the opening-animation photos (`assets/sky-*.jpg`). Any other name: `404` `Not found` | `image/jpeg` |
-| `/splash/<w>x<h>.png` | iPhone launch screens, only for the sizes `Splash.swift` lists (pixels = points x scale). Optional: Windows may answer `404` `Not found` | `image/png` |
+| `/splash/<w>x<h>.png` | iPhone launch screens, only for the sizes `Splash.swift` lists (pixels = points x scale): a closed laptop on black, where the page's opening animation starts. Any other size: `404` `Not found`. Windows draws the same sizes and colours (`Splash.cs`, System.Drawing) and keeps each in memory after the first request | `image/png` |
 
 The page and its service worker, manifest and icons are needed by iOS before any sign-in, so they never require a session.
 
@@ -203,14 +203,23 @@ The service worker (`web/sw.js`) shows push alerts, keeps a copy of `/` so the h
 | `memory` | `/memory` |
 | `screen` | `/screen.jpg`, the live socket and its screen frames |
 | `control` | `/input`, `/power`, input messages on the live socket |
-| `limits` | `/limits`, and the low-battery and too-hot safety switches (`batteryGuard`, `heatGuard`) |
+| `limits` | `/limits`, and the low-battery safety switch (`batteryGuard`) |
+| `heat` | the too-hot safety switch (`heatGuard`): the computer can read a temperature to protect against. Sent only while it can |
+| `claude` | Windows only: the PC reads Claude plan usage (`claude` in `/status`, 6.3) and sends the `claudeUsage` and `claudeSession` alerts (5.5). The Mac does both without listing it |
 
-The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits"]`.
+The Mac sends: `["screen","control","camera","apps","history","memory","push","passkeys","limits","heat"]`.
+
+Windows sends `"limits"`, `"history"`, `"memory"` (section 5.8), `"passkeys"` (section 5.3), `"push"`, `"apps"`, `"control"` (`POST /input`, `POST /power` and input on the live socket; see 5.10 and 7.6), `"screen"`, `"camera"` and `"claude"` always, in that order, and `"heat"` (after `"history"`, before `"memory"`) only while a temperature source works, re-checked with each status. It reads the temperature every round and keeps two readings apart: the battery and the PC's thermal zones (see 6.4 and `POST /limits` for the sources). Either one is enough for `"heat"`.
+
+Windows also sends `"screen"`: `/screen.jpg` and the live socket, with the Mac's handshake, messages and flow control. It captures with DXGI Desktop Duplication (GDI when that fails) and sends H.264 from Media Foundation's encoder (the graphics card's when it works, else Microsoft's software one), or JPEG when there is no encoder. The screen and the camera share that choice: once a graphics card's encoder fails (for either), both use the software one until Lid Awake restarts (`MfH264Encoder.HardwareFailed`), and `"screenEncoder": "software"` in `settings.json` skips the graphics card's for both. `screenPermission` is always `true` (Windows asks no permission), and `remoteScreen` is the tray's "Allow screen from phone" switch (off until the owner turns it on, setting `remoteScreen`). Its sentences say PC: `Waking the PC's screen… This usually takes a few seconds.` and `Screen access is off. Turn on “Allow screen from phone” in the Lid Awake menu on your PC.` Input on the socket goes to the same control as `POST /input` (7.6), and camera messages to the camera (7.5). `{"video":…}` changes and `{"videoRestart":…}` count toward the socket's 240 messages a second, like input (each forces a keyframe), and past it they are dropped silently. A long poll whose `after` is not the latest id (also one from before a restart) gets the latest picture at once.
+
+Windows sends `"camera"` (after `"screen"`) only in a build where the camera is connected to its passkeys, its H.264 encoder and the live socket, which the app always is; without them the camera routes answer `404` `Not found`. `/camera/options` hands out challenges with the purpose "camera", and `/camera/unlock` accepts only those: a sign-in challenge never opens the camera, and a camera challenge never signs in. The ticket is bound to the request's session (the first valid token in its cookies), and the live socket picks its session the same way.
 
 Dependencies on the Mac side:
 
 - `camera` needs `passkeys` (the camera asks for a passkey every time) and `screen` (the live socket and the owner's screen switch).
 - `control` needs `screen`.
+- `heat` needs `limits` (its switch is posted to `/limits`).
 
 A route for a feature the computer does not implement should answer the default `404` `Not found`.
 
@@ -227,6 +236,8 @@ A route for a feature the computer does not implement should answer the default 
 | `memory` | the memory window: the memory reading stays but no longer opens |
 | `control` | clicking, typing, and the lock / screen-off buttons send nothing |
 | `limits` | the Safety limits section (the page never posts `/limits`) |
+| `heat` | the Too hot row in Safety limits, with its sub-text (the page never posts `/limits` with `heat`) |
+| `claude` | the Claude usage and Claude sessions rows in Alerts, on Windows only (a Mac always shows them) |
 
 With only the Status page left, the tab bar goes too.
 
@@ -376,6 +387,8 @@ Body: `{"name": "battery" | "heat", "on": true | false}`.
 
 The limits the switches control, checked every 15 seconds while on: `battery` turns Lid Awake off when running on battery below `batteryLimit` percent; `heat` turns it off when the battery is at or above `maxBatteryTemp` degrees, or the system thermal state is `serious` or `critical`. Both can also stop a turn-on request.
 
+**Windows.** The same answers, and the switch applies at once (it is stored in the roaming settings as `batteryGuard` / `heatGuard`, both on by default). `heat` is accepted even on a PC with no temperature source, because the setting is stored; the page hides that row there anyway (no `"heat"` in `features`). The battery limit uses `GetSystemPowerStatus` (on battery and below `batteryLimit`). Windows has no system thermal state, so the heat limit uses two readings, checked in this order: the battery at or above `maxBatteryTemp` (40 °C), worded like the Mac (`Battery is too hot (41.2°C).`), then the PC itself, its hottest zone at or above the zone limit (`Your PC is too hot (92.0°C).`), then Windows holding the processor to 50% or less (`PercentPassiveLimit`) on two reads in a row, the Mac's `critical` (`Your PC is too hot (Windows is slowing it down to cool it).`, `PC too hot (slowed down by Windows)` in the log). The zone limit is 90 °C for the board around the processor (the ACPI thermal zones, the counters and a maker's board, chassis, ambient, skin, memory or chipset sensors), where 40 to 60 °C is normal; a maker's sensor on the processor die itself (cpu, core, package, gpu, "internal") is used only on a PC with no board-type sensor, with a 100 °C limit. Zones are never sent as `batteryTemp`. A zone turns Lid Awake off, or refuses a turn-on, only once it has been at or above its limit on two reads in a row and has been seen at two different values since Lid Awake started, so a value that never moves can't trip it; and a zone whose value hasn't changed for 30 minutes while the processor load moved by 25 points or more is not a real sensor: it is left out until its value changes (the activity log says once, for example `The thermal zone counters have said 27.9°C for 30 minutes while the processor load changed: not used`). The battery's turn-off needs no such check, and the low-battery limit is decided before the temperatures are read, so a slow sensor never delays it. The sources: the battery's own sensor (`IOCTL_BATTERY_QUERY_INFORMATION`, `BatteryTemperature`), the ACPI thermal zones (`MSAcpi_ThermalZoneTemperature`, admin only on most PCs) and the Thermal Zone Information performance counters (readable by any user; one reading at most every 10 seconds, shared with `thermalState`). Whenever the battery or the ACPI zones have nothing, the laptop makers' own WMI sensors, the first that gives a reading: HP's BIOS sensors (`root\HP\InstrumentedBIOS` `HP_BIOSNumericSensor`, then `root\WMI` `HPBIOS_BIOSNumericSensor`; on HP business PCs, nothing to install), then Dell's (`root\dcim\sysman` `DCIM_NumericSensor`, only with Dell Command | Monitor installed). Only their temperature sensors count (`SensorType` 2, in degrees C, F or K, `CurrentReading` times 10 to the `UnitModifier`; the raw fillers 0, -1, 0x7FFF, 0xFFFF, 0xFFFFFFFF and the 32-bit extremes are no reading). A maker's sensor labelled for the battery (the words "batt" or "battery", but not a charger, IC, FET, circuit, PMIC, VR or regulator) fills the battery when Windows has none (40 °C, sent as `batteryTemp`); a maker's board-type sensor is preferred over the counters for the zone. A source that isn't on the PC (no namespace or class, access refused, or no temperature sensor in it), the ACPI zones included, or that failed three times in a row, is asked again after 10 minutes. Each WMI query gets 3 seconds, and the makers' together about 6 per round. The activity log says once which sources are used (`Temperature from HP BIOS sensors`, `Temperature from the battery's own sensor and the thermal zone counters`). Lenovo and ASUS have no documented sensor that can be read without their own software or admin rights, and `Win32_TemperatureProbe` is not used (Windows' values there are static), so those PCs only report a temperature through Windows' own sources. Only obvious garbage counts as no reading: a raw 0, 0xFFFF or 0xFFFFFFFF, or a value outside -40 to 150 °C, so real overheating above 100 °C is not hidden. A source that stops answering keeps its last good value through two failed reads and loses it at the third (about 45 seconds while on). The check runs every 15 seconds while on, off the UI thread; a limit reached turns Lid Awake off with a tray balloon and an activity log line (`Turned off: battery below 10%`, `Turned off: battery too hot (41.2°C)`, `Turned off: PC too hot (92.0°C)`), and a turn-on from the tray is refused with a balloon (`Not turned on: …` in the log).
+
 #### `POST /timer`
 
 Body: `{"minutes": <integer>}`, one of `0, 15, 30, 60, 120, 240, 480`. `0` means never.
@@ -389,7 +402,7 @@ Body: `{"minutes": <integer>}`, one of `0, 15, 30, 60, 120, 240, 480`. `0` means
 
 `200` JSON. Fields are in section 6.
 
-Optional query `wl`: text the page sends about its own wake-lock state (for example `held on status`). The Mac keeps letters, digits, spaces and `:()-`, cuts it at 60 characters, and writes a log line when it changes for that caller. An agent may ignore it.
+Optional query `wl`: text the page sends about its own wake-lock state (for example `held on status`). The Mac keeps letters, digits, spaces and `:()-`, cuts it at 60 characters, and writes a log line when it changes for that caller. Windows does the same, as `phone stay-awake: <state>` in `%LOCALAPPDATA%\LidAwake\LidAwake-diagnostics.log` (the caller is told apart by `X-Forwarded-For`, which is not written). An agent may ignore it.
 
 The page asks every 3 seconds, with an 8-second timeout. If 8 seconds pass with no good answer after it has had one, it shows "Can't reach Mac".
 
@@ -449,6 +462,17 @@ Checks: Host ends in `.ts.net`; `clientData` has `type == "webauthn.create"`, th
 On success the Mac announces it like a sign-in: title `Face ID or fingerprint added to Lid Awake`, body `On an iPhone. If this wasn't you, remove it from the Lid Awake menu on your Mac.` (`On a browser.` if the device name is `Browser`).
 
 The owner removes a passkey in the computer's own app (no HTTP route).
+
+**Windows.** The same four routes, checks and answers (`Passkeys.cs`, a port of `Passkeys.swift`), and it does not announce passkey sign-ins either. A few things differ:
+
+- The registration body ends `... remove it from the Lid Awake menu on your PC.`
+- Keys are stored in the roaming `settings.json` under `passkeys`, next to the password hash and the sessions. The session of a passkey sign-in records `faceid:<credential id>`. A passkey belongs to the name it was made for (the `rpId`, this PC's `<pc>.ts.net`): on another PC of the same Windows user, which reads the same roaming file, those keys are listed but can't sign in there.
+- The owner removes a key from the tray menu: **Face ID and fingerprint**, then the key. This also signs out the devices that used that key.
+- It is a little stricter than the Mac, which no real phone should notice:
+  - a credential id must be 1 to 1023 bytes;
+  - the public key must be a point on the P-256 curve when it is added;
+  - a CBOR map, or `clientData`, that gives the same key twice is refused.
+- The challenge is compared with every stored challenge in constant time (`FixedTimeEquals`), not looked up, and so is the rp hash.
 
 ### 5.4 `camera`
 
@@ -526,11 +550,26 @@ Body: `{"endpoint": "...", "enabled": false}` or `{"endpoint": "...", "off": ["w
 
 Sending (Mac behaviour): payload JSON `{"title": "...", "body": "...", "tag": "<kind>"}`, encrypted with RFC 8291 (`aes128gcm`), signed with VAPID (RFC 8292, ES256, JWT valid 12 hours, `aud` = the push service origin, `sub` = the remembered contact), posted with headers `TTL: 86400` and `Urgency: high`, 8-second timeout, no redirects. A `404` or `410` from the push service removes that phone.
 
+**Windows.** The same routes, checks, encryption and headers. The VAPID key (PKCS#8, as `pushKey`), the phones (`pushSubscriptions`) and the contact (`pushContact`) are kept in `%LOCALAPPDATA%\LidAwake\machine.json`, not the roaming settings, because a subscription only works with the key it was made for. Sending runs off the tray's thread and never blocks it. Windows sends all six kinds, worded like the Mac with "PC" for "Mac":
+
+| Kind | Sent when (Windows) | Title, body |
+|---|---|---|
+| `turnedOff` | the timer ended, or a safety limit turned Lid Awake off. Sent first; Lid Awake turns off when the phones have answered (at most 8 seconds). Not sent for a turn-off from the tray, the phone, Quit or Windows signing out | `Lid Awake turned off`, `Timer finished after 2 h 5 min. Your PC can sleep now.` (or `Battery reached 9%`, `Battery got too hot (41.2°C)`, `Your PC got too hot (92.0°C)` in place of `Timer finished`) |
+| `lowBattery` | on battery at 20% or below (once; re-arms when plugged in or above 25%). Nothing when Windows can't tell whether it is plugged in | `PC battery at 20%`, `About 1 h 30 min left. Plug in to keep it running.` (the first sentence only when Windows estimates the time left) |
+| `warm` | the battery's temperature (its own sensor, or a maker's sensor labelled for the battery; see `POST /limits`) within 3 degrees of `maxBatteryTemp` (once; re-arms below 5 degrees under it). Never from a thermal zone: a PC without a battery temperature never sends it | `PC is getting warm`, `Battery at 37.0°C. Lid Awake turns off at 40°C.` (the second sentence only while the heat switch is on) |
+| `claudeUsage` | Claude plan usage at 90% or more in a limit window with a reset time still ahead, once per window (remembered as `claudeAlerted.fiveHour` / `claudeAlerted.sevenDay` = that window's `resetsAt`, rounded to the minute so the status line's and `/usage`'s times count as the same window, in the roaming settings). Checked with the early warnings, so only while on | `Claude usage at 92%`, `5-hour limit, resets at 15:10 (in 1 h 40 min).` or `Weekly limit, resets Fri at 22:59 (in 82 h 59 min).` (the time in the PC's own format) |
+| `claudeSession` | a Claude Code session finishes or needs the owner, while the owner is away from the PC (no keyboard or mouse for 2 minutes, `GetLastInputInfo`, or the lid closed), at most one per session every 20 seconds. Sent whether Lid Awake is on or off. Needs Claude Code's hooks (6.3, "Claude Code's settings") | `Claude finished` (`lid-awake: <start of the last reply>`, or `lid-awake is done.`), `Claude needs your OK`, `Claude needs you`, `Claude is waiting for you` (`lid-awake: <Claude Code's message>`) |
+| `security` | a new password sign-in, or a passkey added (Face ID or fingerprint) | `New sign-in to Lid Awake`, `With the password, on an iPhone.` (as in `POST /login`), or `Face ID or fingerprint added to Lid Awake` (as in `POST /passkey/register`) |
+
+The early warnings (with `claudeUsage`) are checked with the safety limits, every 15 seconds while on. A new password set at the PC removes every phone.
+
 ### 5.6 `apps`
 
 The list of apps comes from the owner, set in the computer's own app. There is no route to add or remove apps. The phone only ever sends an **id**, never a path. An id is opaque: the Mac uses the first 6 bytes of SHA-256 of the app's path as 12 hex characters. Another agent may use any stable, URL-safe string.
 
 "On the list" means the owner chose it. "Open" means running now.
+
+**Windows.** The owner picks the apps in the tray (**Apps on phone…**): a checklist of the programs in the user's and the all-users Start menu, each resolved from its `.lnk` to its `.exe` (shortcuts to anything else, and uninstallers, are left out). The list is stored in the roaming settings. The id is the first 6 bytes of SHA-256 of the exe's full path in lower case, as 12 hex characters. `running` is true while a process of that exe runs. `otherApps` are the other running programs with an ordinary visible window (not Lid Awake itself, not shell hosts such as `ApplicationFrameHost.exe`). `/app-icon.png` is the exe's icon drawn at 256 or 512 px. `open` starts the exe, or brings it forward if it already has a window. `focus` restores a minimized window and brings it to the front: Windows' foreground lock can refuse that to a background program, so it calls `AllowSetForegroundWindow`, then `SetForegroundWindow`, then (if still not in front) attaches its input to the foreground window's thread (`AttachThreadInput`), and last minimizes and restores the window. `hide` minimizes. `quit` only sends the close request (`CloseMainWindow`, like the window's X button; the program may ask to save) and never kills a process. A listed app that is not running, or is running with no window to ask (a tray-only program), answers `409` with the same text, `That app isn't open.`. The activity log records opens, fronts, hides and quits. These routes do not wake the display. A program whose shortcut starts a launcher (an updater that then starts the real exe) is listed by the launcher's path, so it shows as not running.
 
 #### `GET /app-icon.png`
 
@@ -541,7 +580,7 @@ Query: `id` (required), `size` (optional integer; `512` or more gives 512, anyth
 | `200` `image/png`, square 256x256 or 512x512 | the id is on the list, or names any app that is running now. The Mac matches every running app that has a bundle location (`NSRunningApplication.bundleURL`), not only the windowed apps in `otherApps` |
 | `404` `No such app.` | otherwise |
 
-The page also uses this route for icons of the top apps in `/memory` (via their `id`). Such an app is on the list or open in nearly every case; when it is neither the answer is `404` and the page keeps the blank icon.
+The page also uses this route for icons of the top apps in `/memory` (via their `id`). Such an app is on the list or open in nearly every case; when it is neither the answer is `404` and the page keeps the blank icon. On Windows the route also answers for the programs of the last three `/memory` answers (5.8), so a background program gets its icon too.
 
 #### `POST /open-app`
 
@@ -587,6 +626,12 @@ All three history routes take an optional `hours` query (a number). It is clampe
 
 The Mac reads macOS's own power log (`/private/var/db/powerlog/Library/BatteryLife/CurrentPowerlog.PLSQL`, read only). Lid Awake records nothing itself. The format is Apple's and undocumented, so on any problem the Mac answers empty lists.
 
+**Windows records its own history.** Windows has no readable power log, so Lid Awake samples the PC once a minute, only while the app runs, and keeps 48 hours in `%LOCALAPPDATA%\LidAwake\history.json` (compact rows, trimmed and replaced atomically: a temp file of each write's own, flushed to disk, then renamed; a file that can't be read, or is over 16 MB, starts empty). The file is written at most every 5 minutes, when the battery backfill adds rows, and when Lid Awake stops, signs out or shuts down; the routes read the rows from memory, so they are always current. The graphs therefore only cover the time Lid Awake has been running on that PC, and a PC that slept shows gaps (the page draws them as sleep). `/battery-history` has points only on a PC with a battery. `/temp-history` has points only from the battery's temperature (its own sensor, or a maker's sensor labelled for the battery; not the thermal zones). `/cpu-history` has the PC's overall processor use and the programs that used it (see below).
+
+**Windows battery backfill.** On a PC with a battery, Lid Awake reads Windows' battery report (`powercfg /batteryreport /xml`, no administrator needed) when it starts and then at most once a day, and adds the battery levels of its `RecentUsage` entries (one at each sleep, wake, plug-in and so on, with the charge and whether it was on AC) for the times `history.json` has no row: only the last 48 hours, none in the future, none within 90 seconds of a measured row and none at the second of a row already there (so two report entries a few seconds apart are both kept, and running it again adds nothing). `/battery-history` sends them like any other point (charging is "on AC and the next entry has more charge"); in the file they carry a mark, so they are not taken for readings of Lid Awake's own. Temperature and processor use can't be filled in. A PC with no battery never runs the report.
+
+**Windows `history.json`, version 2.** `{"v": 2, "apps": {"key": [name, kind, exe|null, color|null]}, "samples": [row, ...]}`. A row is `[t, percent|null, plugged 0/1, charging 0/1, temp|null, cpu|null, span]`, then optionally `{"key": processor-seconds, ...}` (or `null`), then optionally flags (`1`: backfilled from the battery report). Version 1 files (7 numbers a row, no `apps`) load as they are, with no programs listed. A program no row names any more is dropped from `apps`. An `exe` that is not on a local drive (`C:\...\x.exe`: no network share `\\server\...`, no device path `\\.\` or `\\?\`) is dropped when the file is read, and that program counts as `other`.
+
 #### `GET /temp-history`
 
 ```json
@@ -617,13 +662,15 @@ The Mac reads macOS's own power log (`/private/var/db/powerlog/Library/BatteryLi
 | `apps[]` | who used processor time. `key` unique string, `name` shown text, `kind` is `app`, `macos` or `other`, `color` optional `#rrggbb` (the page uses grey if absent) |
 | `intervals[]` | `[start, end, perApp, other]`: Unix seconds start and end, an object from **index into `apps` (as a string)** to processor-seconds in that stretch, and processor-seconds not listed. Rounded to 0.01 |
 
+**Windows** measures each stretch itself (about one minute each, none across a sleep): the PC's processor-seconds are percent busy x `cores` x seconds of the stretch, and the programs' share comes from the processor time of every process (`NtQuerySystemInformation`, all processes, no administrator), compared with the snapshot a minute before and added up by exe. A program is listed with the Mac's rule (at least 0.2 s or 0.5% of the stretch), at most 8 a stretch, and `other` is the rest. Programs are `kind: "app"` with `key` the exe's id from section 5.6 (12 hex characters, never a path), `name` its file description (else the exe's name) and `color` from its icon. Windows' own processes are `kind: "other"`, never `macos`: `other.core` "Windows core" (System, Registry, Memory Compression), `other.screen` "Screen & windows" (dwm.exe), `other.windows` "Windows (other)" (anything else in the Windows folder), and `other.<name>` for a process whose exe Windows won't name. Programs' seconds never add up to more than the stretch (they are scaled down when the two measurements disagree). Rows recorded before per-app history (version 1) are `[start, end, {}, other]`.
+
 The page needs both `apps` and `intervals` to be arrays; otherwise it shows the graph as failed. The Mac folds apps under 0.5% of a stretch and under 0.2 seconds into `other`.
 
 `kind` drives the row's icon in the "who used it" list: `app` fetches the icon from `/cpu-icon` (falling back to a square in `color`), `macos` draws a colored square with the Apple logo character, anything else is a plain colored square. A Windows agent should use `app` for real programs and `other` for system jobs (`macos` would show the Apple logo).
 
 #### `GET /cpu-icon`
 
-Query: `key` (an `apps[].key` with `kind: "app"` from a recent `/cpu-history`). `200` `image/png` (256x256), or `404` `No such app.` Only keys seen in the processor history are allowed, so the page cannot fetch any app's icon.
+Query: `key` (an `apps[].key` with `kind: "app"` from a recent `/cpu-history`). `200` `image/png` (256x256), or `404` `No such app.` Only keys seen in the processor history are allowed, so the page cannot fetch any app's icon. Windows answers only for a `kind: "app"` key that `history.json` still names, from that exe's icon (kept, at most 64); a path, a system entry or any other key gets `404` `No such app.`
 
 ### 5.8 `memory`
 
@@ -650,7 +697,21 @@ Read fresh on every call. The page asks every 2 seconds while the Memory window 
 | `top` | list | up to 5 programs using the most. Each `{name, bytes, id?}`. `id` is present for every entry that is an app bundle (its path ends in `.app`), whether or not the owner listed it, and is the same hash of the path as in section 5.6; entries that are not part of an app (a `node` server, say) have none, and the page draws a blank icon. The page fetches `/app-icon.png?id=` for it, which answers `404` when that app is neither on the list nor open (for example a process whose app the system does not list as running), and the icon stays blank |
 | `otherPrograms` | integer bytes | memory of everything readable that is not in `top` |
 
-The page draws a line of `used / total` over the last 2 minutes and shows a row "macOS & system" for the part of `used` not explained by `top` and `otherPrograms` (its label is still Mac wording).
+The page draws a line of `used / total` over the last 2 minutes and shows a row for the part of `used` not explained by `top` and `otherPrograms`: "macOS & system" with the Apple logo on a Mac, "Windows & system" without it on a PC (`word("systemPart")`).
+
+**Windows** answers the same shape:
+
+| Field | Windows source |
+|---|---|
+| `total`, `used` | `GlobalMemoryStatusEx`: installed memory Windows can use, and that minus what is available |
+| `free`, `cached` | performance counters `Free & Zero Page List Bytes` and the three `Standby Cache * Bytes` (the standby list: files kept in spare memory). With one counter missing, the other is what is left of available memory; with both missing, `free` is all of it and `cached` 0 |
+| `app` | every process's private working set except Windows' kernel processes (System, Registry, Memory Compression, Secure System), as the Mac leaves compressed memory out; at most `used` |
+| `wired` | not sent (the page doesn't use it) |
+| `compressed` | the working set of the "Memory Compression" process (left out when there is none) |
+| `swapUsed` | the page files' use (`SystemPageFileInformation`), else 0 |
+| `pressure` | committed memory as a percent of the commit limit, both from `GlobalMemoryStatusEx` (`ullTotalPageFile` is the limit, minus `ullAvailPageFile` is what is committed) |
+| `level` | `critical` when Windows' low-memory signal is on (`QueryMemoryResourceNotification`), 90% of the commit limit is committed, or under 3% of memory is available; `warn` from 75% of the commit limit or under 10% available; else `normal` |
+| `top`, `otherPrograms` | private working sets from one `NtQuerySystemInformation` snapshot (every process, no administrator), added up by exe (Chrome's many processes are one entry). `name` is the exe's file description, else its name; when two entries would have the same name (the page keys its rows by name), each is shown by its exe's file name, and one still taken gets ` (2)`, ` (3)`. Every entry has `id` (the exe's id from 5.6). Windows' own processes (no exe Windows will name, or one in the Windows folder) are in neither, so they count toward "Windows & system". `/app-icon.png` answers for these too: after the Apps list and the open programs (5.6), it looks the `id` up among the entries of the last three `/memory` answers (the exe comes from the process table, never from the phone; at most 32 icons are kept, none over 1 MB). Any other id is still `404` |
 
 ### 5.9 `screen`
 
@@ -707,6 +768,8 @@ Success `204`. Any other `action`: `400` `Bad request`.
 
 Feature note: only `lock` needs the control switch; `displayoff` and `wake` need just the screen switch. All three are in the `control` feature.
 
+**Windows.** The same routes, checks (in the same order) and answers, with "PC" for "Mac": `View only: control from the phone is off in the Lid Awake menu on your PC.` The owner's switch is the tray item **Allow control from phone**, stored in the roaming settings as `remoteControl`; it needs the screen switch (`remoteScreen`), and while `remoteControl` was never set it follows the screen switch, as on the Mac (both are off to start with). `/status` sends `remoteControl` = screen switch and control switch, and `controlPermission` `true`: `SendInput` needs no permission for windows at Lid Awake's own integrity level. Windows itself drops input aimed at a window of a program running as administrator (UIPI), and no program can type into or click the UAC prompt's secure desktop or the lock screen; Lid Awake sends nothing at all while the input desktop is not the user's own. The command runs before the `204`. `lock` is `LockWorkStation` (log `PC locked from the phone · <device>`). `displayoff` answers the same `409` (the sentence names no computer) while the lid is closed, using the lid state from the lid-closed screen; otherwise it is `SC_MONITORPOWER` 2, broadcast with `SendMessageTimeout` in the background, one broadcast at a time (a repeat while one is still going is ignored), logged `Display turned off from the phone · <device>`. `wake` waits for a broadcast still going, then calls `SetThreadExecutionState(ES_DISPLAY_REQUIRED)` and moves the pointer to where it already is, in order with the other input. Any accepted input restarts the display idle timer the same way (at most every 2 seconds), and right after `displayoff` it also does the pointer move. If Windows takes only part of a `SendInput` batch, every key and button the batch pressed is released again; at start-up, and when control ends, any Ctrl, Shift, Alt or Windows key Windows still reports as held gets a key-up (as the Mac releases its modifiers at start-up).
+
 ---
 
 ## 6. `/status` fields
@@ -719,15 +782,17 @@ A computer that cannot measure a field sends the **safe default** in the last co
 
 | Field | Type | Meaning | Safe default |
 |---|---|---|---|
-| `host` | string | the computer's display name (Mac: `Host.current().localizedName`, else `"Mac"`). The page shows it under the greeting | the computer's name |
+| `host` | string | the computer's display name (Mac: `Host.current().localizedName`, else `"Mac"`; Windows: the DNS host name, `GetComputerNameEx(ComputerNamePhysicalDnsHostname)`, which keeps the case it was typed in, else the NetBIOS name). The page shows it under the greeting | the computer's name |
 | `lidAwake` | boolean | Lid Awake is on | required |
 | `timerMinutes` | integer | chosen auto-off length; `0` = never; one of 0, 15, 30, 60, 120, 240, 480 | `0`; required |
 | `timerRemaining` | number, seconds | time left. Present only while on, with a timer, and in the future | omit |
-| `batteryGuard` | boolean | "turn off on low battery" switch (Mac default on) | `true` |
-| `heatGuard` | boolean | "turn off when hot" switch (Mac default on) | `true` |
+| `batteryGuard` | boolean | "turn off on low battery" switch (Mac and Windows default on) | `true` |
+| `heatGuard` | boolean | "turn off when hot" switch (Mac and Windows default on). On Windows it is the stored setting even when there is no temperature source (then `features` has no `"heat"` and the page hides the row) | `true` |
 | `batteryLimit` | integer, percent | battery level below which it turns off (Mac: `10`) | `10`; required (the page prints it) |
 | `maxBatteryTemp` | integer, degrees C | temperature at which it turns off (Mac: `40`) | `40`; required (the page uses it) |
-| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value. Windows measures no heat yet and sends `"unknown"`, so the page shows a dash rather than a "Normal" nothing measured | `"nominal"` |
+| `thermalState` | string | `"nominal"`, `"fair"`, `"serious"` or `"critical"` (Mac: from the system's thermal state). The page shows Normal, Warm, Hot, Critical, and a dash for any other value. Windows has no system thermal state: it works one out from the ACPI thermal zones (below), and sends `"unknown"` when the PC has none, so the page shows a dash rather than a "Normal" nothing measured | `"nominal"` |
+
+Windows' `thermalState`: the hottest thermal zone, from the heat limit's zone reading (`MSAcpi_ThermalZoneTemperature`, which needs admin rights on most PCs, else a laptop maker's board sensor, else the counters below, else a maker's processor die sensor; see `POST /limits`) and the Thermal Zone Information performance counters (`Win32_PerfFormattedData_Counters_ThermalZoneInformation`, readable by any user), whichever is hotter, against the 90 °C limit at which Lid Awake turns off; and the counters' `PercentPassiveLimit`, under 100 while Windows slows the processor down to cool a zone. `"critical"` at 90 °C or more, or with the processor held to 50% or less; `"serious"` while held under 90% (lighter throttling comes and goes, so it doesn't count), or from 85 °C; `"fair"` from 75 °C; `"nominal"` below. The counters are read in the background at most every 15 seconds, so `/status` never waits for them.
 
 ### 6.2 Remote access state
 
@@ -738,7 +803,7 @@ A computer that cannot measure a field sends the **safe default** in the last co
 | `cameraAllowed` | boolean | screen **and** camera allowed (`remoteScreen && camera switch`). The current page does not read it | `false` |
 | `screenPermission` | boolean | the system allows capturing the screen | `false` |
 | `controlPermission` | boolean | the system allows sending clicks and keys | `false` |
-| `screenWidth` | number | width of the main display (Mac: points). The page divides it by the picture's width on the phone to turn finger movement into scroll distance; `0` or absent makes it use a factor of 2 | `0` |
+| `screenWidth` | number | width of the main display in points (Windows: the primary display's pixels divided by its scale, `GetDpiForMonitor`, so 1707 for 2560 pixels at 150%). The page divides it by the picture's width on the phone to turn a drag on the Screen tab into the computer's points for `scroll` (section 8). The trackpad's `move` does not use it: it sends the phone's pixels times a speed gain, which the Mac reads as points. `0` or absent makes it use a factor of 2 | `0` |
 | `screenOff` | boolean | the phone turned the display off (via `/power` `displayoff`) and has not woken it | `false` |
 | `lidClosed` | boolean | the lid is closed (Mac: `AppleClamshellState`) | `false` |
 | `displayAsleep` | boolean | the main display is asleep | `false` |
@@ -766,6 +831,19 @@ The page draws the computer as dark when `lidClosed`, `displayAsleep` or `screen
 
 The page hides the Claude section when `claude` is `null` or has neither window.
 
+**Windows.** The same object, from `%LOCALAPPDATA%\LidAwake\claude-usage.json` (the Mac's file format: `{"rate_limits": {"five_hour": {"used_percentage": 74, "resets_at": 1760010000}, "seven_day": {…}}, "updated": 1760000000}`), with the Mac's checks: a regular file (not a folder or a link) under 64 KB, a JSON object with a `rate_limits` object, each window only with a finite `used_percentage` from 0 to 1000, and `resets_at` / `updated` only when finite, above 0 and below 1e11 (else `0`). `null` when there is no such file. Two things write it, each to a temp file first:
+
+- `LidAwake.exe --claude-statusline`, Claude Code's status line, after each terminal reply: it reads Claude Code's status-line JSON on stdin (at most 64 KB), keeps its `rate_limits` (`resets_at` in Unix seconds or as an ISO date) when `%LOCALAPPDATA%\LidAwake` is there (as on the Mac), and prints `<model> · session 59%`. Claude Code runs it as often as every 300 ms, so the same `rate_limits` as the file's, saved (its `updated`) under 60 seconds ago, are not written again. It always exits 0.
+- Lid Awake asking Claude Code itself: `claude -p /usage --setting-sources local --no-session-persistence` ("/usage" sends no message and uses none of the plan), in a fresh empty temp folder that is deleted afterwards. Claude Code is `%USERPROFILE%\.local\bin\claude.exe`, else `%APPDATA%\npm\claude.cmd` (run through `cmd.exe /d /v:off /s /c`). It is run only when the file (links followed) and its folder are owned by the user, Administrators, SYSTEM or TrustedInstaller and nobody else may write to them; hidden, with stdin from NUL, inheriting no handles but its own three, in a job object, for at most 45 seconds (then the whole process tree is stopped). Its "Current session:" and "Current week (all models):" lines are read like the Mac's (`74% used`, `resets Oct 8 at 3:09pm (Asia/Jerusalem)` in the PC's local time; also with Windows line endings, without the time zone, or with a time alone). Asked at most every 3 minutes for `/status`, every 5 from the tray's 30-second timer (while "Show Claude usage by the clock" is on), every 10 for the alert, once a minute when the tray menu opens, and once at start while "Show Claude usage by the clock" is on.
+
+`"claude"` is in `features` whenever this is wired (always in the app). In the tray, a greyed menu line shows `Claude: Session 59%, resets 15:10 · Week 84%, resets Fri 22:59` (`Claude usage: checking…` without numbers), and **Show Claude usage by the clock** (`claudeInBar` in the roaming settings, on by default) adds `Claude 59% · 1h40m` as the tooltip's last line (Windows can't draw text beside a tray icon; the tooltip's own text comes first, all within 127 characters). Numbers past their reset time are hidden, as on the Mac.
+
+**Claude Code's settings (Windows).** For the status line and the session alerts, Claude Code must run Lid Awake. Lid Awake changes `%USERPROFILE%\.claude\settings.json` only when the owner asks: the tray item **Claude alerts and usage from Claude Code…**, or yes to the installer's optional last step (`LidAwake.exe --claude-setup on`). Before each change it backs the file up, never overwriting a backup: `settings.json.lidawake-backup` the first time, then `settings.json.lidawake-backup-YYYYmmdd-HHMMSS` (as the Mac's setup). Then it merges in (JSON, every other key and hook kept as it is) a `Stop` and a `Notification` hook group `{"hooks": [{"type": "command", "command": "\"C:/…/LidAwake.exe\" --claude-event", "timeout": 10}]}`, and `"statusLine": {"type": "command", "command": "\"C:/…/LidAwake.exe\" --claude-statusline"}` only when there is no status line yet (one of the owner's stays, and the numbers then come from `/usage`). An entry is Lid Awake's only when its command is exactly that form: a quoted path ending in `\LidAwake.exe` or `/LidAwake.exe`, a space, the flag, nothing else. So nothing is added twice, and a wrapper of the owner's or another tool's hook that mentions the flag is never changed or removed. A file that can't be read is left alone, with the reason: not UTF-8, not valid JSON, a key twice, over 4 MB, or a `hooks` that isn't an object of lists. Turning it off (`--claude-setup off`, also run by the uninstaller) removes exactly those entries, and a group, list or `hooks` object only when removing them left it empty. When the installed Lid Awake (`%LOCALAPPDATA%\LidAwake\LidAwake.exe`, where install.ps1 puts it) starts and finds entries of its exact form pointing to another path, it rewrites them to itself (with a backup first); a copy running from anywhere else (a build, a ZIP in Downloads) never does.
+
+The commands assume Claude Code runs hooks and the status line through cmd.exe or Git Bash, which read the quoted path with forward slashes the same way. Under PowerShell the command would need `& ` before it: this is unverified, and owner testing will confirm which shell Claude Code uses on Windows. `--claude-setup status` answers by exit code: 0 set up, 1 not set up, 2 no Claude Code on this PC, 3 the file can't be read; `on` and `off` exit 0 when done (or nothing to do) and 3 when refused. These codes are Windows' own and differ from the Mac's `tools/claude/setup.py`, whose `status` exits 0 set up, 1 not set up (or partly), 2 the settings can't be read, 3 set up but its scripts are outdated, and whose `on` and `off` exit 1 on failure: a script that reads them must know which platform it runs on.
+
+`LidAwake.exe --claude-event` (the hook) reads the event JSON on stdin (at most 64 KB, a few seconds), writes it to `%LOCALAPPDATA%\LidAwake\claude-events\<time>-<id>.tmp` and renames it to `.json`, and always exits 0. When the folder isn't there (Lid Awake has never run, which makes it) it writes nothing, as on the Mac. That folder is the user's only (no inherited entries); a `.tmp` older than a minute (a hook stopped half-way) is deleted at start and at each scan. Lid Awake reads it every 2 seconds: the 50 oldest files, each deleted once read, skipping one of 64 KB or more or older than 5 minutes. The summary for `Claude finished` comes from the session's transcript only when the path as written is a full local path under `%USERPROFILE%\.claude\projects` (never `\\server`, `\\.\` or `\\?\`) and its real path (links followed, compared ignoring case) is a `.jsonl` file under `%USERPROFILE%\.claude\projects`, reading only its last 256 KB. These flags are handled before the single-instance check, so they never start a second tray; each first reads one message of its own, so Windows doesn't show the "app starting" pointer every time Claude Code runs the status line.
+
 ### 6.4 Power (omit all of it on a computer with no battery)
 
 Every key except `batteryTemp` comes from `powerInfo()`. On the Mac, a computer with no battery answers `{}` for this group, so every key is absent. `batteryTemp` is added separately in `statusJSON` from `batteryTemperature()` (the battery's own sensor, not the power source), so it is present or absent on its own. The last column is what the computer sends when it cannot measure the value.
@@ -775,10 +853,10 @@ Every key except `batteryTemp` comes from `powerInfo()`. On the Mac, a computer 
 | `battery` | integer 0 to 100 | charge percent. The page shows the battery card only if present | omit (no battery) |
 | `onBattery` | boolean | running on battery | omit when the power source is unknown (the page then shows neither "On battery" nor "Plugged in"); never guess `false` |
 | `charging` | boolean | charging now | `false` |
-| `charged` | boolean | fully charged | `false` |
+| `charged` | boolean | fully charged (Mac: the power source's `IsCharged`). Windows: from the batteries' own drivers (`IOCTL_BATTERY_QUERY_STATUS`): every battery on the power line, neither charging nor discharging, and together at least 98% of their full charge capacity. A battery held below that by a charge limit is not charged (the page then says "holding charge"). When the drivers can't tell, plugged in at 100% | `false` |
 | `minutesToEmpty` | integer | estimate; `-1` = unknown | `-1` |
-| `minutesToFull` | integer | estimate; `-1` = unknown | `-1` |
-| `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`) | omit |
+| `minutesToFull` | integer | estimate; `-1` = unknown. Windows gives no time to full: it is worked out while charging from the batteries' own drivers, what all batteries miss to their full charge capacity (`BATTERY_INFORMATION.FullChargedCapacity` minus `BATTERY_STATUS.Capacity`, mWh) at the rate the charging ones charge at now (`Rate`, mW), rounded to the minute. `-1` when a value is unknown, the driver counts in relative units, or it would be over 24 hours. The drivers are read in the background at most every 10 seconds | `-1` |
+| `batteryTemp` | number, degrees C, one decimal | battery temperature (Mac: `batteryTemperature()`, rounded to one decimal; not part of `powerInfo()`). Windows: only the battery's own sensor (`IOCTL_BATTERY_QUERY_INFORMATION`, `BatteryTemperature`, tenths of a kelvin) or, when Windows' own sources give nothing, a laptop maker's sensor labelled for the battery (see `POST /limits`), never a thermal zone or a processor sensor; read at most every 15 seconds and cached, so `/status` never waits for it. A PC whose only temperature is a thermal zone has `"heat"` in `features` but no `batteryTemp` | omit |
 
 ### 6.5 System info
 
@@ -791,7 +869,7 @@ These come from `SystemInfo.snapshot()`. Two objects, `mac` and `net` (the key i
 | `memTotal` | integer bytes | installed memory | always sent |
 | `uptime` | integer seconds | time since boot | always sent |
 | `cpu` | number 0 to 100 | processor load since the **previous status request** (so the first request after start has none) | omit |
-| `memUsed` | integer bytes | memory in use | omit |
+| `memUsed` | integer bytes | memory in use. The Mac counts app, wired and compressed memory; Windows sends the installed memory minus what is available (`GlobalMemoryStatusEx`), which also counts memory that is modified but not yet written to disk, so it reads a little higher than Task Manager's "In use" | omit |
 | `diskFree` | integer bytes | free space on the system disk | omit |
 | `diskTotal` | integer bytes | size of the system disk | omit |
 
@@ -814,7 +892,7 @@ These come from `SystemInfo.snapshot()`. Two objects, `mac` and `net` (the key i
 | `os` | string | `"mac"` or `"windows"` | required |
 | `features` | list of strings | feature names (section 4) | required |
 
-`link` values the Mac sends: `Direct · same Wi-Fi`, `Direct · iPhone hotspot`, `Direct · over the internet`, `Through a relay in <city>`, `Through a relay server`. It comes from `tailscale status --json` (the peer's `CurAddr`, `Relay`, `Active`), refreshed in the background at most every 10 seconds. The `·` is a middle dot.
+`link` values the Mac sends: `Direct · same Wi-Fi`, `Direct · iPhone hotspot`, `Direct · over the internet`, `Through a relay in <city>`, `Through a relay server`. It comes from `tailscale status --json` (the peer's `CurAddr`, `Relay`, `Active`), refreshed in the background at most every 10 seconds. The `·` is a middle dot. Windows sends the same values the same way; it matches the last address in `X-Forwarded-For` (the one Serve added) against each peer's `TailscaleIPs`, and a `/status` never waits for Tailscale, so the first one after a while has no `link` yet.
 
 ---
 
@@ -958,6 +1036,8 @@ For video the Mac also holds back new frames while the oldest unconfirmed one is
 
 Mac camera details: 1280x720 when available, a plugged-in camera is preferred over the built-in one, the phone itself is never used as the camera. Problems are sent as `cameraError`.
 
+Windows camera details: the same messages and limits, with "PC" in the sentences. The camera is read through Media Foundation, 1280x720 when the camera offers it, and sent as NV12 to the H.264 encoder at about 1.2 Mbit/s and at most about 24 pictures a second, as on the Mac. A camera is "built in" when Windows gives it an enclosure location (front or back panel, or in the lid); a USB camera without one is plugged in and is tried first, then the built-in one, then any other. A phone lent to Windows as a camera is never used, as on the Mac: a camera made through Windows' virtual-camera API (device path under `SWD\VCAMDEVAPI`, which is how Phone Link's "connected camera" appears, named after the phone), or with `iPhone`, `iPad` or `Phone Link` in its name, is left out. If the camera stops for good while it runs (read error, unplugged, Windows' camera privacy switch), or sends nothing for 4 seconds (`The camera stopped sending. If the PC's lid is closed, open it or plug in a USB camera.`), the whole capture ends, microphone included, the phone gets a `cameraError`, its talk back is no longer played, and the next phone that opens the camera (or this one, opening it again) starts it again. A camera that fails while it is still opening never turns the microphone on. On the socket, the camera's video and sound need no `ack` and aren't held back by the screen's flow control; more than 90 of them waiting are dropped and the camera starts again from a keyframe (the 256-message / 8 MB limit of the socket still applies). While a phone's camera is open its socket gets no screen pictures and `{"video": true}` is ignored; when the camera closes without the socket closing (the switch, the 10 minutes), the screen comes back as JPEG. A socket that closes (also when its session is signed out or expires, found by the 2-second check) closes its camera. The default microphone is read through WASAPI at its own rate; the first channel is brought down to 16 kHz (each output sample is the average of the input samples it covers) before mu-law, in messages of at least `rate / 10` samples. A microphone at 16 kHz or less is sent at its own rate. Talk back plays on the default speakers through WASAPI.
+
 **Talk back.** While the camera is open, the phone may send `{"talk": "<base64>"}`: audio for the computer's speakers. Format: **16 kHz, mono, mu-law, one byte per sample**, base64 of at most **4000 bytes** (the page sends about 40 ms at a time). It is ignored (silently) if the camera is not open or the owner's camera switch is off. The Mac plays chunks back to back and drops them if it is already about a second behind.
 
 ### 7.6 Input on the socket
@@ -978,11 +1058,13 @@ More rules:
 - `{"type": "ping"}` is not a real command: it is answered `{"pong": true}` (after the checks above) and does nothing else.
 - If a phone leaves while a mouse button or modifier is held, the computer lets go of them.
 
+Windows: the live socket hands input to `IInputSink` (`RemoteInput.cs`, the same `RemoteControl` as `POST /input`), in the Mac's order: `Refusal()` for the sentences above (`Screen access is off.` also while Lid Awake is off, as the Mac's socket answers; `Perform` checks it again itself, so nothing is typed while it is not null; there is no permission check), then an `InputRateLimiter` per socket for the 240/s cap (shared with video changes and restarts), then `TooLong`, then `Perform` (for `ping` too, then `{"pong": true}`). A phone that sent input lets go of held buttons and modifiers when its socket closes, and so does closing every socket (screen switch off, Lid Awake off, the session ending). The first command from a phone is logged `PC controlled from the phone · <device>`.
+
 Messages with `quality`, `acks`, `video`, `camera` and the others in 7.3 are handled **before** these checks, so view-only phones can still change quality and open the camera (the camera has its own switch).
 
 ### 7.7 Keeping the screen available
 
-While a phone is watching (a socket, or recent `/screen.jpg` polls) the Mac keeps the display awake (a "user activity" signal, at most once every 15 seconds) and runs capture. Capture stops 10 seconds after the last viewer or poll. After `POST /power` `displayoff` it stops waking the display until a `wake` or any accepted input. The Mac also keeps the screen usable behind a closed lid (at the lowest brightness).
+While a phone is watching (a socket, or recent `/screen.jpg` polls) the Mac keeps the display awake (a "user activity" signal, at most once every 15 seconds) and runs capture. Capture stops 10 seconds after the last viewer or poll. After `POST /power` `displayoff` it stops waking the display until a `wake` or any accepted input. The Mac also keeps the screen usable behind a closed lid (at the lowest brightness). **Windows** does the same only as far as Windows allows: while watched, and (as on the Mac) whenever Lid Awake is on with the lid closed, it holds the display awake (`ES_DISPLAY_REQUIRED`), except after `POST /power` `displayoff` until a `wake` or any accepted input (or until Lid Awake or the screen switch is turned off, which forgets it without waking the display) (watched: a phone on the live socket watching the screen, not one whose camera is open, or the capture still running for `/screen.jpg` polls and its 10 seconds after), and with the lid closed it lowers the built-in panel's brightness (saved in `machine.json` and put back when the lid opens, on turn-off, quit, sign-out and at the next start). Many laptops switch the panel off with the lid closed regardless; `lidClosed` and `displayAsleep` (from the lid and console-display power notifications) say so, and the picture may stop until the lid is opened a little or an external monitor is used.
 
 ---
 
@@ -1017,6 +1099,8 @@ So an agent must map `"cmd"` to **the computer's main shortcut key** (Command on
 
 The page's gestures send `{"type":"key","key":"left"|"right"|"up"|"down","mods":["ctrl"]}`. On the Mac these are Control plus an arrow (switch desktop, Mission Control, App windows). What they should do on Windows is for that agent to decide. **(unverified: the page does not change these per computer)**
 
+**Windows (`SendInput`).** `move` `dx`/`dy` are the computer's points, as on the Mac: they are multiplied by the primary display's scale (`GetDpiForMonitor`, 1.5 at 150%) to get pixels. It reads the pointer (`GetCursorPos`) and sends an absolute move to the new place, kept on the primary display (a relative `MOUSEEVENTF_MOVE` would be scaled by the pointer speed and acceleration settings). `click` `x`/`y` become absolute positions 0..65535 of the primary display. Windows has no click count and tells a double-click by timing, while the page sends `count` 1 for the first tap and 2 for the second tap of a double-tap, so each `click` is **one** press and release: `count` only adds the clicks that did not come just before (within the double-click time, same button; a lone `count` 2 sends two), and a click that continues a double-click is made where the previous one was. `scroll` is `MOUSEEVENTF_WHEEL` = `dy` x 1.2 and `MOUSEEVENTF_HWHEEL` = -`dx` x 1.2 (120, one notch, per 100 pixels, as far as one notch scrolls in Chrome and Edge), so the content follows the finger. `text` is `KEYEVENTF_UNICODE`, one grapheme cluster at a time, every UTF-16 unit (both halves of a surrogate pair) pressed and then released; a line break is the Return key and a tab the Tab key. `key` names are virtual-key codes (`delete` is Backspace; the arrows are extended keys); `char` is sent by its US scan code (`KEYEVENTF_SCANCODE`), which Windows maps with the layout in use like a real key press. `mods` are pressed in the order given and released in reverse, each key once (`"cmd"` and `"ctrl"` are both Ctrl). The page's gestures (exactly `["ctrl"]` with an arrow) do the Windows jobs: left and right are Win+Ctrl+Left/Right (switch virtual desktop), up and down are Win+Tab (Task View).
+
 Arrow keys on the Mac also carry the Fn and numeric-pad flags, as a real keyboard does. After a shortcut with modifiers the Mac explicitly releases every modifier key, because a stuck Control turns later clicks into right-clicks. An agent should do the equivalent.
 
 ---
@@ -1045,11 +1129,13 @@ While Lid Awake is **off** it removes everything so nothing on the tailnet can r
 tailscale serve --https=443 off
 ```
 
+After turning off, both keep the mapping 8 more seconds, so an open page hears `423` "Lid Awake is off" (2.4) instead of losing the address; turning on again within those seconds keeps it. On Windows, Quit and signing out or shutting down remove it at once (within their few seconds' wait).
+
 **Funnel is never allowed.** If `serve status --json` shows any `AllowFunnel` entry set to true, the agent runs `tailscale funnel --https=443 off`, logs it and notifies the owner. (Requests carrying `Tailscale-Funnel-Request` are refused in any case, 2.2 step 1.)
 
 On the Mac the Tailscale binary is `/Applications/Tailscale.app/Contents/MacOS/Tailscale` run with the environment variable `TAILSCALE_BE_CLI=1`.
 
-**Windows differs in three ways.** It removes Serve only when it added the mapping itself (remembered as `servedByLidAwake` in its settings, and cleared once removed), so a Serve setup of the owner's own stays; this is checked at start-up too, after a crash. While off, a removal that failed is retried by the one-minute check until it is confirmed. It matches `127.0.0.1:<port>` exactly (`8787` does not match `87870`). After `serve --bg` it reads `serve status --json` again; if the mapping is missing, the command timed out, or Tailscale printed a link (to allow Serve or HTTPS for the tailnet), it writes what Tailscale printed to the activity log and tells the owner at the tray.
+**Windows differs in three ways.** It removes Serve only when it added the mapping itself (remembered as `servedByLidAwake`, and cleared once removed), so a Serve setup of the owner's own stays; this is checked at start-up too, after a crash. When the page was the owner's own mapping and Lid Awake only added `/live`, it remembers `liveServedByLidAwake` and removes only `/live` (`tailscale serve --set-path /live off`). Both flags, and this PC's Tailscale name and owner (`tailnetHost`, `tailnetOwner`), are kept in this PC's `machine.json` (`%LOCALAPPDATA%\LidAwake`), not in the roaming settings (an older version's values there are moved once, at start). The uninstaller reads them from there (and from the old place), removes what they say, and when its first command fails, counts the mapping as gone only if `serve status` maps neither `127.0.0.1:8787` nor `127.0.0.1:8788`. While off, a removal that failed is retried by the one-minute check until it is confirmed. It matches `127.0.0.1:<port>` exactly (`8787` does not match `87870`). After `serve --bg` it reads `serve status --json` again; if the mapping is missing, the command timed out, or Tailscale printed a link (to allow Serve or HTTPS for the tailnet), it writes what Tailscale printed to the activity log and tells the owner at the tray. It maps `/live` only while its own live socket server holds `127.0.0.1:8788` (the handshake carries the session cookie), the same rule as for the page on 8787.
 
 For `link` in `/status` (6.6) the agent runs `tailscale status --json` at most every 10 seconds, in the background.
 

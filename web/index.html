@@ -1193,8 +1193,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       </header>
       <div class="alert-row"><span class="set-icon indigo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/></svg></span><span class="title">Lid Awake turns off<small>Timer, low battery or heat</small></span><button type="button" class="mini-switch" data-alert="turnedOff" role="switch" aria-label="Lid Awake turns off"></button></div>
       <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Battery low<small>At 20%, with time left</small></span><button type="button" class="mini-switch" data-alert="lowBattery" role="switch" aria-label="Battery low"></button></div>
-      <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span><span class="title">Claude usage<small>Over 90% of a limit</small></span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch" aria-label="Claude usage"></button></div>
-      <div class="alert-row"><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10.5h8"/></svg></span><span class="title">Claude sessions<small>Finished, or waiting for you, while you're away from the <span data-w="computer">Mac</span></small></span><button type="button" class="mini-switch" data-alert="claudeSession" role="switch" aria-label="Claude sessions"></button></div>
+      <div class="alert-row" data-claude-alert><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></span><span class="title">Claude usage<small>Over 90% of a limit</small></span><button type="button" class="mini-switch" data-alert="claudeUsage" role="switch" aria-label="Claude usage"></button></div>
+      <div class="alert-row" data-claude-alert><span class="set-icon clay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10.5h8"/></svg></span><span class="title">Claude sessions<small>Finished, or waiting for you, while you're away from the <span data-w="computer">Mac</span></small></span><button type="button" class="mini-switch" data-alert="claudeSession" role="switch" aria-label="Claude sessions"></button></div>
       <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title"><span data-w="computer">Mac</span> warm<small>Battery at 37°C</small></span><button type="button" class="mini-switch" data-alert="warm" role="switch" data-w-label="{computer} warm"></button></div>
       <p class="alerts-note" id="alertsFoot" hidden></p>
     </section>
@@ -1227,7 +1227,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="section-head">Safety limits</div>
       <section class="alerts-card limits-card">
         <div class="alert-row"><span class="set-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="15" height="8" rx="2"/><path d="M21 11v2M6 11v2"/></svg></span><span class="title">Low battery<small id="batteryLimitText">Turns off below 10% on battery</small></span><button type="button" class="mini-switch" data-limit="battery" role="switch" aria-label="Turn off at low battery"></button></div>
-        <div class="alert-row"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the <span data-w="computer">Mac</span> overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
+        <div class="alert-row" data-feature="heat"><span class="set-icon orange"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a2.3 2.3 0 0 0-2.3 2.3v7.3a4 4 0 1 0 4.6 0V5.8A2.3 2.3 0 0 0 12 3.5z"/></svg></span><span class="title">Too hot<small id="heatLimitText">Turns off above 40°C or if the <span data-w="computer">Mac</span> overheats</small></span><button type="button" class="mini-switch" data-limit="heat" role="switch" aria-label="Turn off when too hot"></button></div>
       </section>
       <div class="section-foot">Lid Awake turns itself off so your <span data-w="computer">Mac</span> can sleep safely. These are the same switches as in the <span data-w="computer">Mac</span> menu.</div>
     </div>
@@ -1429,7 +1429,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       <div class="card tile mem-tile"><div class="tile-head">Overflow to disk</div><div class="tile-value" id="memSwapNum">—</div></div>
     </div>
     <div class="section" id="memAppsSection" hidden><div class="section-head">Using the most</div><div class="list mem-apps" id="memApps"></div></div>
-    <div class="section-foot">Pressure shows how hard your <span data-w="computer">Mac</span> is working to find room. Green is fine even when memory looks full: macOS keeps recent files in spare memory and hands it back the moment an app needs it. Overflow to disk is memory moved to storage when room ran out.</div>
+    <div class="section-foot">Pressure shows how hard your <span data-w="computer">Mac</span> is working to find room. Green is fine even when memory looks full: <span data-w="os">macOS</span> keeps recent files in spare memory and hands it back the moment an app needs it. Overflow to disk is memory moved to storage when room ran out.</div>
   </div>
 </section>
 <input class="live-input" id="liveInput" data-w-label="Type directly on your {computer}"
@@ -1468,8 +1468,10 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   const PHONE_WORDS = ALL_PHONE_WORDS[PHONE];
   const COMPUTER_WORDS = {
     mac:     { computer: "Mac", cmdKey: "⌘", cmdName: "Command", altKey: "⌥", altName: "Option", menuBar: "the menu bar",
+               os: "macOS", systemPart: "macOS & system", systemGlyph: "\uF8FF",
                logPath: "Lid Awake menu → Signed-in devices → Show activity log" },
     windows: { computer: "PC",  cmdKey: "Ctrl", cmdName: "Control", altKey: "Alt", altName: "Alt", menuBar: "the tray by the clock (it may be under the ^ arrow)",
+               os: "Windows", systemPart: "Windows & system", systemGlyph: "",
                logPath: "the Lid Awake icon by the clock → Show activity log" },
   };
   let COMPUTER = "mac", FEATURES = null;  // FEATURES null = not known yet: show everything
@@ -1523,6 +1525,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     const tabsChanged = shownTabs !== lastTabs;
     lastTabs = shownTabs;
     $("alertsSection").hidden = !can("push");
+    // The Claude alert rows only where Claude alerts are sent: the Mac always, a PC with "claude".
+    document.querySelectorAll("[data-claude-alert]").forEach(el => { el.hidden = COMPUTER !== "mac" && !can("claude"); });
     $("camNotch").hidden = !can("camera");
     renderFaceIDRow();
     if (!can("passkeys")) $("faceIdOffer").hidden = true;
@@ -4206,7 +4210,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   // ---------- Safety limits (same as the Mac menu) ----------
   let limitSaving = false;
   document.querySelectorAll("[data-limit]").forEach(b => b.addEventListener("click", async () => {
-    if (!can("limits")) return;
+    if (!can("limits") || (b.dataset.limit === "heat" && !can("heat"))) return;
     const on = b.getAttribute("aria-checked") !== "true";
     b.setAttribute("aria-checked", on);
     tick();
@@ -4855,11 +4859,12 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
       seen.add(a.name);
     }
     // Then the rest, so the list adds up to Used: the owner's smaller programs, and what Lid Awake
-    // can't name (macOS's own programs, the system core, graphics and shared memory).
+    // can't name (the system's own programs, the system core, graphics and shared memory). Its
+    // name and glyph follow the computer ("macOS & system" with the Apple logo, "Windows & system").
     const others = m.otherPrograms || 0;
     const system = (m.used || 0) - top.reduce((sum, a) => sum + a.bytes, 0) - others;
     for (const [key, name, bytes, glyph] of [["\0others", "Your other programs", others, ""],
-                                             ["\0system", "macOS & system", system, "\uF8FF"]]) {
+                                             ["\0system", word("systemPart"), system, word("systemGlyph")]]) {
       if (!top.length || bytes < 0.05 * GiB) continue;
       let row = memRows.get(key);
       if (!row) {

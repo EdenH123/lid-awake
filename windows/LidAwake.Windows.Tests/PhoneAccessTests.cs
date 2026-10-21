@@ -128,13 +128,16 @@ public class PhoneAccessTests : IDisposable
         Assert.Empty(ServeCommands());
     }
 
+    // The 8-second wait after turning off, finished by the test itself (FakeWait).
+    static readonly Func<TimeSpan, CancellationToken, Task> NoWait = (_, _) => Task.CompletedTask;
+
     [Fact]
     public async Task TurningOffRemovesServe()
     {
         var port = FreePort();
         using var server = NewServer(port);
         server.Start();
-        var phone = new PhoneAccess(tailnet, server);
+        var phone = new PhoneAccess(tailnet, server, delay: NoWait);
         await phone.Set(true);
         lock (commands) commands.Clear();
         await phone.Set(false);
@@ -148,7 +151,7 @@ public class PhoneAccessTests : IDisposable
         var port = FreePort();
         using var server = NewServer(port);
         server.Start();
-        var phone = new PhoneAccess(tailnet, server);
+        var phone = new PhoneAccess(tailnet, server, delay: NoWait);
         await phone.Set(true);
         offWorks = false;
         lock (commands) commands.Clear();
@@ -169,5 +172,152 @@ public class PhoneAccessTests : IDisposable
         await phone.Recheck();
         // This fake Tailscale never shows the mapping, so each check adds it again.
         Assert.Equal(new[] { $"serve --bg {port}", $"serve --bg {port}" }, ServeCommands());
+    }
+
+    // ---- The 8 seconds after turning off (the Mac's refresh) ----
+
+    // A wait the test ends: Waits are the lengths asked for, Finish lets the oldest one end.
+    sealed class FakeWait
+    {
+        readonly List<(TimeSpan Length, TaskCompletionSource Done, CancellationToken Cancel)> waits = new();
+        public Func<TimeSpan, CancellationToken, Task> Delay => (length, cancel) =>
+        {
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (waits) waits.Add((length, done, cancel));
+            return done.Task.WaitAsync(cancel);
+        };
+        public TimeSpan[] Lengths { get { lock (waits) return waits.Select(w => w.Length).ToArray(); } }
+        public bool Cancelled(int i) { lock (waits) return waits[i].Cancel.IsCancellationRequested; }
+        public void Finish(int i) { lock (waits) waits[i].Done.TrySetResult(); }
+    }
+
+    string[] OffCommands()
+    {
+        lock (commands) return commands.Where(c => c == "serve --https=443 off").ToArray();
+    }
+
+    [Fact]
+    public async Task TurningOffWaitsEightSecondsBeforeRemovingServe()
+    {
+        var port = FreePort();
+        using var server = NewServer(port);
+        server.Start();
+        var wait = new FakeWait();
+        var phone = new PhoneAccess(tailnet, server, delay: wait.Delay);
+        await phone.Set(true);
+        var off = phone.Set(false);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(8) }, wait.Lengths);
+        Assert.Equal(TimeSpan.FromSeconds(8), PhoneAccess.OffDelay);
+        // Still published: the phone keeps hearing 423 "Lid Awake is off" for those seconds.
+        await Task.Delay(200);
+        Assert.False(off.IsCompleted);
+        Assert.Empty(OffCommands());
+        Assert.True(settings.Get<bool?>(Tailnet.ServedKey));
+        // Turned off again meanwhile (a timer and a limit together): the same wait, not a new one.
+        Assert.Same(off, phone.Set(false));
+        Assert.Single(wait.Lengths);
+        wait.Finish(0);
+        await off;
+        Assert.Single(OffCommands());
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+    }
+
+    [Fact]
+    public async Task TurningOnWithinTheEightSecondsKeepsServe()
+    {
+        var port = FreePort();
+        using var server = NewServer(port);
+        server.Start();
+        var wait = new FakeWait();
+        var phone = new PhoneAccess(tailnet, server, delay: wait.Delay);
+        await phone.Set(true);
+        var off = phone.Set(false);
+        await phone.Set(true);
+        Assert.True(wait.Cancelled(0));
+        await off;  // ends: replaced by the turn-on
+        wait.Finish(0);  // a wait that ends late anyway changes nothing
+        await Task.Delay(200);
+        Assert.Empty(OffCommands());
+        Assert.True(settings.Get<bool?>(Tailnet.ServedKey));
+        // Off again: a fresh wait of its own.
+        var again = phone.Set(false);
+        Assert.Equal(2, wait.Lengths.Length);
+        wait.Finish(1);
+        await again;
+        Assert.Single(OffCommands());
+    }
+
+    [Fact]
+    public async Task OffRemovesServeAtOnceAndCancelsAWaitingRemoval()
+    {
+        var port = FreePort();
+        using var server = NewServer(port);
+        server.Start();
+        var wait = new FakeWait();
+        var phone = new PhoneAccess(tailnet, server, delay: wait.Delay);
+        await phone.Set(true);
+        // Quit, or signing out: SetAwake(false) starts the wait, then Off removes it now.
+        var off = phone.Set(false);
+        // Off must not wait the eight seconds (WaitAsync throws if it does).
+        await phone.Off().WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Single(OffCommands());
+        Assert.True(wait.Cancelled(0));
+        await off;
+        wait.Finish(0);
+        await Task.Delay(200);
+        Assert.Single(OffCommands());
+        // Within SessionEnd's own limit, with the real wait: Off never waits for it.
+        var real = new PhoneAccess(tailnet, server);
+        await real.Set(true);
+        lock (commands) commands.Clear();
+        _ = real.Set(false);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await real.Off().WaitAsync(SessionEnd.MaxWait);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(3), $"took {clock.Elapsed}");
+        Assert.Single(OffCommands());
+    }
+
+    [Fact]
+    public async Task TurningOffWhenItWasNotOnRemovesAtOnce()
+    {
+        // Nothing was published by this run (start-up, or a server that couldn't start): no wait.
+        settings.Set(Tailnet.ServedKey, true);
+        using var server = NewServer(FreePort());
+        var wait = new FakeWait();
+        var phone = new PhoneAccess(tailnet, server, delay: wait.Delay);
+        await phone.Set(false);
+        Assert.Empty(wait.Lengths);
+        Assert.Single(OffCommands());
+    }
+
+    // Signing out within the 8 seconds after turning off (Program's OnSessionEnding while off):
+    // the waiting removal is done now, within SessionEnd's few seconds.
+    [Fact]
+    public async Task ASessionEndingWhileARemovalWaitsRemovesItAtOnce()
+    {
+        var port = FreePort();
+        using var server = NewServer(port);
+        server.Start();
+        var wait = new FakeWait();
+        var phone = new PhoneAccess(tailnet, server, delay: wait.Delay);
+        await phone.Set(true);
+        var off = phone.Set(false);
+        Assert.Empty(OffCommands());
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        SessionEnd.Unserve(phone.Off);
+        Assert.True(clock.Elapsed < SessionEnd.MaxWait + TimeSpan.FromSeconds(1), $"took {clock.Elapsed}");
+        Assert.Single(OffCommands());
+        Assert.False(settings.Get<bool?>(Tailnet.ServedKey));
+        Assert.True(wait.Cancelled(0));
+        await off;
+    }
+
+    [Fact]
+    public void ASessionEndingWhileOffLeavesAServeSetupThatIsNotOursAlone()
+    {
+        using var server = NewServer(FreePort());
+        var phone = new PhoneAccess(tailnet, server, delay: (_, _) => Task.Delay(Timeout.Infinite));
+        SessionEnd.Unserve(phone.Off);
+        lock (commands) Assert.Empty(commands);
     }
 }

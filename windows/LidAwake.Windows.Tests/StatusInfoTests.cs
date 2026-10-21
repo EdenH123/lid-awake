@@ -63,7 +63,7 @@ public class StatusInfoTests
         "mac", "net", "link", "os", "features",
     };
 
-    public static void AssertEveryKeyWithItsKind(JsonElement s)
+    internal static void AssertEveryKeyWithItsKind(JsonElement s)
     {
         Assert.Equal(JsonValueKind.Object, s.ValueKind);
         // Nothing outside section 6 at the top level (memTotal and uptime belong inside "mac").
@@ -119,12 +119,12 @@ public class StatusInfoTests
         Assert.False(s.GetProperty("lidAwake").GetBoolean());
         Assert.Equal(0, s.GetProperty("timerMinutes").GetInt32());
         Assert.False(s.TryGetProperty("timerRemaining", out _));
-        // false: there are no battery or heat guards on Windows yet, so the page must not show them on.
-        Assert.False(s.GetProperty("batteryGuard").GetBoolean());
-        Assert.False(s.GetProperty("heatGuard").GetBoolean());
+        // Task 17 (supersedes ruling P2-12's false): the stored switches, on by default as on the Mac.
+        Assert.True(s.GetProperty("batteryGuard").GetBoolean());
+        Assert.True(s.GetProperty("heatGuard").GetBoolean());
         Assert.Equal(10, s.GetProperty("batteryLimit").GetInt32());
         Assert.Equal(40, s.GetProperty("maxBatteryTemp").GetInt32());
-        // Not measured on Windows: "unknown", which the page shows as a dash (not "Normal").
+        // No thermal zone to read: "unknown", which the page shows as a dash (not "Normal").
         Assert.Equal("unknown", s.GetProperty("thermalState").GetString());
         foreach (var key in new[] { "remoteScreen", "remoteControl", "cameraAllowed", "screenPermission", "controlPermission", "screenOff", "lidClosed", "displayAsleep" })
             Assert.False(s.GetProperty(key).GetBoolean(), key);
@@ -212,8 +212,10 @@ public class StatusInfoTests
     {
         var s = Run(new FakeReadings());
         Assert.Equal("windows", s.GetProperty("os").GetString());
-        // There is no /memory route (or any other optional one) yet, so none is listed.
-        Assert.Equal(0, s.GetProperty("features").GetArrayLength());
+        // Always "limits", "history", "memory", "passkeys" and "push" (no optional route was given),
+        // and without a temperature source there is no "heat".
+        Assert.Equal(new[] { "limits", "history", "memory", "passkeys", "push" }, s.GetProperty("features").EnumerateArray().Select(f => f.GetString()).ToArray());
+        Assert.False(s.TryGetProperty("batteryTemp", out _));
     }
 
     [Fact]
@@ -636,11 +638,11 @@ public class StatusInfoTests
     }
 
     [Fact]
-    public void RealCpuAppearsOnTheSecondCallAndIsAPercentage()
+    public async Task RealCpuAppearsOnTheSecondCallAndIsAPercentage()
     {
         var info = new StatusInfo(new SystemReadings());
         Run(info.Build(true));
-        Thread.Sleep(400);
+        await Task.Delay(400);
         var mac = Run(info.Build(true)).GetProperty("mac");
         // GetSystemTimes always works and 400 ms is long enough for the counters to advance.
         Assert.True(mac.TryGetProperty("cpu", out var load));

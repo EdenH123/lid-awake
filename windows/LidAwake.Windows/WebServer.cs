@@ -11,7 +11,7 @@ namespace LidAwake;
 
 // The phone page and its requests on 127.0.0.1:8787, with the same rules as the Mac
 // (docs/API.md). Every request goes through the checks of section 2.2 in that order.
-public sealed class WebServer : IDisposable
+public sealed partial class WebServer : IDisposable
 {
     public const int DefaultPort = 8787;
     const int MaxBody = 64 * 1024;
@@ -25,6 +25,11 @@ public sealed class WebServer : IDisposable
     readonly Action<string, string> announce;
     readonly AccessLog? log;
     readonly Action<int>? setTimer;
+    readonly Action<string, bool>? setLimit;
+    readonly WebPush? push;
+    readonly RemoteControl? control;
+    readonly ScreenFeed? screen;
+    readonly Func<bool>? screenAllowed;
     readonly int port;
     readonly string baseDir;
     readonly string web;
@@ -38,12 +43,22 @@ public sealed class WebServer : IDisposable
     // activity log that GET /activity reads and sign-ins and turn-offs are written to (none: nothing
     // is written and the list is empty). `setTimer(minutes)` applies a length already checked against
     // AutoOff.Choices to the "Turn off after" timer (none: the length is accepted and dropped).
+    // `setLimit(name, on)` turns a safety switch ("battery" or "heat", already checked) on or off
+    // (none: accepted and dropped). `push` keeps the phones that get alerts (none: /push/* is 404).
+    // `control` is the phone's control of this PC, POST /input and POST /power (none: those routes
+    // don't exist, 404). `screen` answers GET /screen.jpg while `screenAllowed` (the owner's
+    // switch, ScreenSwitch) is on (none: the route doesn't exist, 404).
     public WebServer(Auth auth, Tailnet tailnet, Func<bool> isOn, Func<object> status, Action turnOff,
                      Action<string, string> announce, int port = DefaultPort, string? baseDir = null,
-                     AccessLog? log = null, Action<int>? setTimer = null)
+                     AccessLog? log = null, Action<int>? setTimer = null, Action<string, bool>? setLimit = null,
+                     WebPush? push = null, RemoteControl? control = null,
+                     ScreenFeed? screen = null, Func<bool>? screenAllowed = null)
     {
         (this.auth, this.tailnet, this.isOn, this.status, this.turnOff, this.announce) = (auth, tailnet, isOn, status, turnOff, announce);
-        (this.log, this.setTimer) = (log, setTimer);
+        (this.log, this.setTimer, this.setLimit) = (log, setTimer, setLimit);
+        this.push = push;
+        this.control = control;
+        (this.screen, this.screenAllowed) = (screen, screenAllowed);
         this.port = port;
         this.baseDir = baseDir ?? AppContext.BaseDirectory;
         web = Path.Combine(this.baseDir, "web");
@@ -51,10 +66,30 @@ public sealed class WebServer : IDisposable
         rawHtml = PageHeaders.Lf(File.ReadAllText(Path.Combine(web, "index.html")));
         // Hashed before the launch-screen marker is replaced, once, so editing the page never needs a code change.
         scriptHashes = PageHeaders.ScriptHashes(rawHtml);
-        html = rawHtml.Replace("<!--SPLASH-->", "");
+        html = rawHtml.Replace("<!--SPLASH-->", Splash.LinkTags);
     }
 
     public int Port => port;
+
+    // The recorded samples behind /temp-history, /battery-history and /cpu-history (none: those
+    // routes answer 404, as for a feature the PC doesn't have). Set before Start.
+    public HistoryStore? History { get; set; }
+
+    // GET /memory, the phone's Memory window (none: 404, as for a feature the PC doesn't have). Set before Start.
+    public MemoryInfo? Memory { get; set; }
+
+    // POST /camera/options and /camera/unlock (none: both answer 404, as for a feature the PC
+    // doesn't have). Set only once the camera is wired to passkeys and the live socket. Set before Start.
+    public CameraAccess? Camera { get; set; }
+
+    // The diagnostics log (DiagnosticsLog): the phone's stay-awake state from GET /status?wl=…,
+    // when it changes for that caller (StayAwakeLog). None: not written. Set before Start.
+    public Action<string>? Diag { get; set; }
+    readonly StayAwakeLog stayAwake = new();
+
+    // GET /screen.jpg polls (the phone's still pictures when its live socket fails): the tray
+    // counts the screen as viewed while one waits and for a few seconds after.
+    public ScreenPolls ScreenPolls { get; } = new();
 
     // True after Start succeeded, until Stop or Dispose. Tailscale Serve may only point at the
     // port while this is true (PhoneAccess).
@@ -228,11 +263,10 @@ public sealed class WebServer : IDisposable
             return;
         }
 
-        // 7: everything except the public routes needs a session. (Passkey routes do not exist yet,
-        // so they are not public here: they get 404 after this check, as in step 9.)
+        // 7: everything except the public routes needs a session.
         var tokens = CookieTokens(req).ToList();
         bool signedIn = tokens.Any(auth.IsValid);
-        bool isPublic = path is "/" or "/auth" or "/login" or "/logout";
+        bool isPublic = path is "/" or "/auth" or "/login" or "/logout" or "/passkey/login-options" or "/passkey/login";
         if (!isPublic && !signedIn) { await SendText(c, 401, "Locked"); return; }
 
         // 8: a POST must carry the header a plain web form cannot add.
@@ -242,7 +276,7 @@ public sealed class WebServer : IDisposable
         switch (method, path)
         {
             case ("GET", "/auth"):
-                await SendJson(c, new { hasPassword = auth.HasPassword, loggedIn = signedIn, faceID = false, os = "windows" });
+                await SendJson(c, new { hasPassword = auth.HasPassword, loggedIn = signedIn, faceID = auth.Passkeys.Count > 0, os = "windows" });
                 return;
             case ("POST", "/login"):
                 await Login(c);
@@ -253,8 +287,16 @@ public sealed class WebServer : IDisposable
                 Empty(c);
                 return;
             case ("GET", "/status"):
-                await SendJson(c, status());
+            {
+                if (Diag is { } diag && stayAwake.Seen(req.Headers["X-Forwarded-For"].ToString(), req.Query["wl"].ToString()) is { } woke)
+                    diag(woke);
+                // Plus how this very phone reaches the PC (6.6), which never waits for Tailscale.
+                var answer = status();
+                if (answer is Dictionary<string, object?> fields && tailnet.Link(req.Headers["X-Forwarded-For"].ToString()) is { } link)
+                    answer = new Dictionary<string, object?>(fields) { ["link"] = link };
+                await SendJson(c, answer);
                 return;
+            }
             case ("POST", "/awake"):
             {
                 var body = await ReadJson(c.Request);
@@ -267,7 +309,7 @@ public sealed class WebServer : IDisposable
             }
             case ("GET", "/sessions"):
             {
-                var list = auth.Sessions(tokens).Select(x => new { id = x.Id, device = x.Device, created = x.Created, faceID = false, current = x.Current }).ToList();
+                var list = auth.Sessions(tokens).Select(x => new { id = x.Id, device = x.Device, created = x.Created, faceID = x.FaceID, current = x.Current }).ToList();
                 await SendJson(c, new { sessions = list });
                 return;
             }
@@ -286,10 +328,188 @@ public sealed class WebServer : IDisposable
                 Empty(c);
                 return;
             }
+            case ("POST", "/limits"):
+            {
+                // `heat` is accepted even on a PC with no temperature: the switch is stored.
+                var body = await ReadJson(c.Request);
+                if (!body.TryGetValue("name", out var n) || n.ValueKind != JsonValueKind.String || n.GetString() is not { } name
+                    || !Limits.IsName(name)
+                    || !body.TryGetValue("on", out var o) || o.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                { await SendText(c, 400, "Unknown limit."); return; }
+                setLimit?.Invoke(name, o.ValueKind == JsonValueKind.True);
+                Empty(c);
+                return;
+            }
+            case ("GET", "/temp-history") when History is { } tempHistory:
+                await SendJson(c, tempHistory.Temperature(HistoryStore.ClampHours(req.Query["hours"].FirstOrDefault())));
+                return;
+            case ("GET", "/battery-history") when History is { } batteryHistory:
+                await SendJson(c, batteryHistory.Battery(HistoryStore.ClampHours(req.Query["hours"].FirstOrDefault())));
+                return;
+            case ("GET", "/cpu-history") when History is { } cpuHistory:
+                await SendJson(c, cpuHistory.Cpu(HistoryStore.ClampHours(req.Query["hours"].FirstOrDefault())));
+                return;
+            case ("GET", "/cpu-icon") when History is { } iconHistory:
+            {
+                // Only programs the processor history names (by their key, never a path).
+                var png = iconHistory.IconPng(req.Query["key"].ToString());
+                if (png == null) { await SendText(c, 404, "No such app."); return; }
+                c.Response.ContentType = "image/png";
+                c.Response.ContentLength = png.Length;
+                await c.Response.Body.WriteAsync(png);
+                return;
+            }
+            case ("GET", "/memory") when Memory is { } memory:
+                await SendJson(c, memory.Snapshot());
+                return;
+            // Face ID / fingerprint (passkeys): WebServer.Passkeys.cs.
+            case ("GET", "/passkey/login-options"):
+                await SendJson(c, new { challenge = auth.Passkeys.Challenge("get"), rpId = host });
+                return;
+            case ("POST", "/passkey/login"):
+                await PasskeyLogin(c, host);
+                return;
+            case ("POST", "/passkey/register-options"):
+                await PasskeyRegisterOptions(c, host);
+                return;
+            case ("POST", "/passkey/register"):
+                await PasskeyRegister(c, host);
+                return;
+            case ("GET", "/app-icon.png"): await AppIcon(c); return;
+            case ("POST", "/open-app"): await OpenApp(c); return;
+            case ("POST", "/focus-app"): await FocusApp(c); return;
+            case ("POST", "/quit-app"): await QuitApp(c); return;
+            case ("POST", "/apps-order"): await AppsOrder(c); return;
+            // Phone alerts (5.5): the PC's public key, subscribing, and which alerts.
+            case ("GET", "/push/key") when push != null:
+                await SendJson(c, new { key = push.PublicKey });
+                return;
+            case ("POST", "/push/subscribe") when push != null:
+                await PushSubscribe(c, push, host);
+                return;
+            case ("POST", "/push/settings") when push != null:
+                await PushSettings(c, push);
+                return;
+            case ("POST", "/input") when control is { } rc:
+                await Input(c, rc);
+                return;
+            case ("POST", "/power") when control is { } rc:
+                await Power(c, rc);
+                return;
+            case ("GET", "/screen.jpg") when screen is { } feed:
+                await ScreenJpg(c, feed);
+                return;
+            case ("POST", "/camera/options") when Camera is { } cameraOptions:
+                await SendCamera(c, cameraOptions.Options(host));
+                return;
+            case ("POST", "/camera/unlock") when Camera is { } cameraUnlock:
+                await SendCamera(c, cameraUnlock.Unlock(host, SessionOf(auth, tokens), await ReadJson(c.Request)));
+                return;
             default:
                 await SendText(c, 404, "Not found");
                 return;
         }
+    }
+
+    // POST /push/subscribe: the browser's subscription and the alerts this phone turned off.
+    static async Task PushSubscribe(HttpContext c, WebPush push, string host)
+    {
+        var body = await ReadJson(c.Request);
+        string? endpoint = Text(body, "endpoint"), p256dh = null, secret = null;
+        if (body.TryGetValue("keys", out var keys) && keys.ValueKind == JsonValueKind.Object)
+        {
+            if (keys.TryGetProperty("p256dh", out var k) && k.ValueKind == JsonValueKind.String) p256dh = k.GetString();
+            if (keys.TryGetProperty("auth", out var a) && a.ValueKind == JsonValueKind.String) secret = a.GetString();
+        }
+        if (!push.Subscribe(endpoint, p256dh, secret, Names(body), host))
+        { await SendText(c, 400, "Couldn't turn on alerts."); return; }
+        Empty(c);
+    }
+
+    // POST /push/settings: `enabled: false` removes the phone; otherwise `off` replaces its list
+    // (no list, or not a list of strings: every alert back on). An unknown endpoint is ignored.
+    static async Task PushSettings(HttpContext c, WebPush push)
+    {
+        var body = await ReadJson(c.Request);
+        if (Text(body, "endpoint") is not { } endpoint) { await SendText(c, 400, "Missing phone."); return; }
+        if (body.TryGetValue("enabled", out var e) && e.ValueKind == JsonValueKind.False) push.Unsubscribe(endpoint);
+        else push.SetOff(endpoint, Names(body));
+        Empty(c);
+    }
+
+    // `off`: a list of strings, or nothing (as on the Mac, a list with anything else in it counts as none).
+    static List<string> Names(Dictionary<string, JsonElement> body)
+    {
+        if (!body.TryGetValue("off", out var off) || off.ValueKind != JsonValueKind.Array) return new();
+        var names = new List<string>();
+        foreach (var item in off.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String) return new();
+            names.Add(item.GetString()!);
+        }
+        return names;
+    }
+
+    // POST /input (5.10), checked in the Mac's order: the screen switch, the control switch (no
+    // system permission is needed on Windows), a JSON object, the text length. The command runs
+    // before the answer, so the page's next one (it sends them one at a time) comes after it.
+    async Task Input(HttpContext c, RemoteControl control)
+    {
+        if (!control.ScreenAllowed) { await SendText(c, 403, RemoteControl.ScreenOffText); return; }
+        if (!control.ControlAllowed) { await SendText(c, 403, RemoteControl.ViewOnlyText); return; }
+        if (await ReadObject(c.Request) is not { } command) { await SendText(c, 400, "Bad request"); return; }
+        if (control.TooLong(command)) { await SendText(c, 413, RemoteControl.TooMuchText); return; }
+        control.Perform(command);
+        Empty(c);
+    }
+
+    // POST /power (5.10): all three need the screen switch, and lock the control switch too.
+    // With the lid closed, displayoff is refused (409): the screen couldn't come back on.
+    async Task Power(HttpContext c, RemoteControl control)
+    {
+        if (!control.ScreenAllowed) { await SendText(c, 403, RemoteControl.ScreenOffText); return; }
+        var body = await ReadObject(c.Request);
+        var action = body is { } b && b.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.String ? a.GetString() : null;
+        var device = Auth.DeviceName(c.Request.Headers.UserAgent.ToString());
+        switch (action)
+        {
+            case "lock":
+                if (!control.ControlAllowed) { await SendText(c, 403, RemoteControl.ViewOnlyText); return; }
+                LogQuietly($"PC locked from the phone · {device}");
+                control.Lock();
+                break;
+            case "displayoff":
+                if (control.LidClosed) { await SendText(c, 409, RemoteControl.LidClosedText); return; }
+                LogQuietly($"Display turned off from the phone · {device}");
+                control.DisplayOff();
+                break;
+            case "wake":
+                control.Wake();
+                break;
+            default:
+                await SendText(c, 400, "Bad request");
+                return;
+        }
+        Empty(c);
+    }
+
+    // The body as a JSON object; anything else (not JSON, an array, nothing): null.
+    static async Task<JsonElement?> ReadObject(HttpRequest req)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(req.Body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object ? doc.RootElement.Clone() : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    static Task SendCamera(HttpContext c, CameraAccess.Answer a)
+    {
+        if (a.Json == null) return SendText(c, a.Code, a.Text ?? "");
+        c.Response.StatusCode = a.Code;
+        c.Response.ContentType = "application/json";
+        return c.Response.WriteAsync(a.Json);
     }
 
     // POST /sessions/signout: `others: true` signs out every session but the caller's, `id` one
@@ -312,6 +532,47 @@ public sealed class WebServer : IDisposable
             return;
         }
         Empty(c);
+    }
+
+    // GET /screen.jpg (5.9): the slow path for the screen picture, a long poll. `after` is the id
+    // of the picture the phone has; the answer is a newer one (200 with X-Frame-Id), nothing new
+    // within 2 seconds (204), or no capture yet (503). Windows needs no permission to capture.
+    async Task ScreenJpg(HttpContext c, ScreenFeed feed)
+    {
+        bool allowed;
+        try { allowed = screenAllowed?.Invoke() == true; }
+        catch (Exception) { allowed = false; }
+        if (!allowed)
+        {
+            await SendText(c, 403, "Screen access is off. Turn on “Allow screen from phone” in the Lid Awake menu on your PC.");
+            return;
+        }
+        ScreenPolls.Started();
+        try { await ServeScreenJpg(c, feed); }
+        finally { ScreenPolls.Ended(); }
+    }
+
+    async Task ServeScreenJpg(HttpContext c, ScreenFeed feed)
+    {
+        // Values are not percent-decoded (2.1): digits only.
+        var after = int.TryParse(c.Request.Query["after"].ToString(), System.Globalization.NumberStyles.None,
+                                 System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : 0;
+        var poll = await feed.FrameAfter(after);
+        switch (poll.Kind)
+        {
+            case ScreenFeed.Result.Frame when poll.Jpeg != null:
+                c.Response.StatusCode = 200;
+                c.Response.ContentType = "image/jpeg";
+                c.Response.Headers["X-Frame-Id"] = poll.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await c.Response.Body.WriteAsync(poll.Jpeg);
+                return;
+            case ScreenFeed.Result.Unavailable:
+                await SendText(c, 503, LiveServer.WakingText);
+                return;
+            default:
+                Empty(c);
+                return;
+        }
     }
 
     // A whole number in a JSON body: 15 and 15.0 both count, 15.5 and "15" do not.
@@ -362,8 +623,19 @@ public sealed class WebServer : IDisposable
         }
     }
 
-    // Every session token in the Cookie header, whichever way the header is split (2.5).
-    static IEnumerable<string> CookieTokens(HttpRequest req)
+    // The session a request acts as: the first valid token of its cookies. POST /camera/unlock binds
+    // its ticket to this one, and the live socket's handshake picks its session the same way, so
+    // the ticket is redeemed for the same session it was issued to (5.4).
+    internal static string? SessionOf(Auth auth, IEnumerable<string> tokens) =>
+        tokens.FirstOrDefault(t =>
+        {
+            try { return auth.IsValid(t); }
+            catch (Exception) { return false; }
+        });
+
+    // Every session token in the Cookie header, whichever way the header is split (2.5). The live
+    // socket's handshake reads them the same way.
+    internal static IEnumerable<string> CookieTokens(HttpRequest req)
     {
         foreach (var header in req.Headers.Cookie)
         {
@@ -400,6 +672,15 @@ public sealed class WebServer : IDisposable
 
     async Task Static(HttpContext c, string path)
     {
+        // The iPhone launch screens, drawn here (Splash) for the sizes the page's link tags list.
+        if (path.StartsWith("/splash/", StringComparison.Ordinal))
+        {
+            if (Splash.Png(path) is not { } png) { await SendText(c, 404, "Not found"); return; }
+            c.Response.ContentType = "image/png";
+            c.Response.ContentLength = png.Length;
+            await c.Response.Body.WriteAsync(png);
+            return;
+        }
         string? file = path switch
         {
             "/sw.js" => Path.Combine(web, "sw.js"),
@@ -408,7 +689,7 @@ public sealed class WebServer : IDisposable
             "/icon-512.png" => Path.Combine(baseDir, "icon-512.png"),
             "/sky/sunrise.jpg" or "/sky/day.jpg" or "/sky/sunset.jpg" or "/sky/night.jpg" =>
                 Path.Combine(baseDir, "sky", "sky-" + path["/sky/".Length..]),
-            _ => null,  // includes /splash/*: the Mac's iPhone launch screens are optional
+            _ => null,
         };
         string contentType = path switch
         {

@@ -5,10 +5,123 @@ using System.Runtime.InteropServices;
 
 namespace LidAwake;
 
+// The readings that take longer than a request may wait (WMI, the battery drivers). Each answer is
+// the last one read in the background (BackgroundValue), null until the first read is done.
+// SystemReadings has them; StatusInfo uses them only when its readings do (a test's fake may not).
+public interface ISlowReadings
+{
+    ThermalZoneReading? Zones();    // the Thermal Zone Information counters (thermalState)
+    BatteryCharge? Charge();        // the batteries' own drivers (minutesToFull, charged)
+}
+
+// A value that takes a while to read (a WMI query, the battery drivers, tailscale.exe), read in the
+// background at most every `every`: Latest answers at once with the last value read (null until
+// the first read is done) and starts a new read when that one is older. One read at a time; a read
+// that throws or answers null keeps the last value, but only for MaxAgeTimes `every` after it was
+// read: older than that it counts as unknown (null) until a read succeeds again, so a reading that
+// keeps failing never shows a stale value for long. `start` runs the read (Task.Run; tests run it
+// at once), `clock` is milliseconds that only go forward.
+public sealed class BackgroundValue<T> where T : class
+{
+    public const int MaxAgeTimes = 3;
+    readonly Func<T?> read;
+    readonly long everyMs;
+    readonly Func<long> clock;
+    readonly Action<Action> start;
+    readonly object gate = new();
+    T? value;
+    long valueAt;   // when `value` was read
+    long? readAt;   // when the last read ended, good or not
+    bool reading;
+
+    public BackgroundValue(Func<T?> read, TimeSpan every, Func<long>? clock = null, Action<Action>? start = null)
+    {
+        this.read = read;
+        everyMs = (long)every.TotalMilliseconds;
+        this.clock = clock ?? (() => Environment.TickCount64);
+        this.start = start ?? (work => Task.Run(work));
+    }
+
+    public T? Latest
+    {
+        get
+        {
+            bool go = false;
+            lock (gate)
+            {
+                if (!reading && (readAt is not { } at || clock() - at >= everyMs)) reading = go = true;
+            }
+            if (go)
+            {
+                try { start(Read); }
+                catch (Exception) { lock (gate) reading = false; }
+            }
+            lock (gate) return value != null && clock() - valueAt <= everyMs * MaxAgeTimes ? value : null;
+        }
+    }
+
+    void Read()
+    {
+        T? now = null;
+        try { now = read(); }
+        catch (Exception) { }
+        lock (gate)
+        {
+            readAt = clock();
+            if (now != null) (value, valueAt) = (now, readAt.Value);
+            reading = false;
+        }
+    }
+}
+
+// The primary display's scale: GetDpiForMonitor (effective DPI) over 96. Under Lid Awake's DPI
+// awareness (system aware) this is the scale its own pixels are counted in, the same pixels as
+// Screen.Bounds, GetSystemMetrics and GetCursorPos. 96 (100%) when Windows can't say.
+public static class DisplayScale
+{
+    const uint MonitorDefaultToPrimary = 1;
+    const int MdtEffectiveDpi = 0;
+
+    [DllImport("user32.dll")]
+    static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
+
+    [DllImport("shcore.dll")]
+    static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    public static uint PrimaryDpi()
+    {
+        try
+        {
+            // No window: the primary monitor.
+            var monitor = MonitorFromWindow(IntPtr.Zero, MonitorDefaultToPrimary);
+            if (monitor == IntPtr.Zero) return 96;
+            return GetDpiForMonitor(monitor, MdtEffectiveDpi, out var x, out _) == 0 && x > 0 ? x : 96;
+        }
+        catch (Exception) { return 96; }
+    }
+
+    // Pixels per point (1.0 at 100%, 1.5 at 150%).
+    public static double PixelsPerPoint() => PrimaryDpi() / 96.0;
+}
+
 // The Win32 side of /status: reads the real numbers. Every method answers null (or 0) instead of
 // throwing, so one failing call only leaves its field out. Safe to call from any thread.
-public sealed class SystemReadings : ISystemReadings
+public sealed class SystemReadings : ISystemReadings, ISlowReadings
 {
+    readonly BackgroundValue<ThermalZoneReading> zones = new(ZoneCounters.Read, ThermalZoneReading.Every);
+    readonly BackgroundValue<BatteryCharge> charge = new(BatteryCharge.Read, BatteryCharge.Every);
+
+    public ThermalZoneReading? Zones() => zones.Latest;
+    public BatteryCharge? Charge() => charge.Latest;
+
+    // GetComputerNameEx with ComputerNamePhysicalDnsHostname: the name as the owner typed it (case
+    // kept, up to 63 characters), not the NetBIOS name (upper case, at most 15).
+    const int ComputerNamePhysicalDnsHostname = 5;
+
+    [DllImport("kernel32.dll", EntryPoint = "GetComputerNameExW", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetComputerNameEx(int format, [Out] char[]? buffer, ref uint size);
+
     [StructLayout(LayoutKind.Sequential)]
     struct SystemPowerStatus
     {
@@ -56,7 +169,7 @@ public sealed class SystemReadings : ISystemReadings
         try
         {
             var m = new MemoryStatusEx { dwLength = (uint)Marshal.SizeOf<MemoryStatusEx>() };
-            return GlobalMemoryStatusEx(ref m) ? new MemoryReading(m.ullTotalPhys, m.ullAvailPhys) : null;
+            return GlobalMemoryStatusEx(ref m) ? new MemoryReading(m.ullTotalPhys, m.ullAvailPhys, m.ullTotalPageFile, m.ullAvailPageFile) : null;
         }
         catch (Exception) { return null; }
     }
@@ -138,13 +251,36 @@ public sealed class SystemReadings : ISystemReadings
 
     public long UptimeSeconds() => Environment.TickCount64 / 1000;
 
+    // In points, as the Mac sends it: the page divides it by the picture's width to turn a drag on
+    // the Screen tab into the PC's points for `scroll`.
     public int ScreenWidth()
     {
-        try { return Screen.PrimaryScreen?.Bounds.Width ?? 0; }
+        try { return Points(Screen.PrimaryScreen?.Bounds.Width ?? 0, DisplayScale.PrimaryDpi()); }
         catch (Exception) { return 0; }
     }
 
-    public string HostName() => Environment.MachineName;
+    // Pixels at `dpi` in points (96 per inch); unchanged when the DPI is unknown (0).
+    public static int Points(int pixels, uint dpi) => dpi == 0 ? pixels : (int)Math.Round(pixels * 96.0 / dpi);
+
+    public string HostName() => PickHost(DnsHostName(), Environment.MachineName);
+
+    // The DNS host name when there is one, else the NetBIOS name (Environment.MachineName).
+    public static string PickHost(string? dnsName, string machineName) =>
+        string.IsNullOrWhiteSpace(dnsName) ? machineName : dnsName.Trim();
+
+    static string? DnsHostName()
+    {
+        try
+        {
+            uint size = 0;
+            // The first call only says how long the name is (with its NUL).
+            GetComputerNameEx(ComputerNamePhysicalDnsHostname, null, ref size);
+            if (size == 0 || size > 1024) return null;
+            var buffer = new char[size];
+            return GetComputerNameEx(ComputerNamePhysicalDnsHostname, buffer, ref size) ? new string(buffer, 0, (int)Math.Min(size, (uint)buffer.Length)) : null;
+        }
+        catch (Exception) { return null; }
+    }
 
     public long Milliseconds() => Environment.TickCount64;
 }

@@ -8,6 +8,7 @@ namespace LidAwake;
 // AccessLog.swift on the Mac. A line is the time with its offset, two spaces, then the text.
 // Called from the web server's threads and from the tray, so every read and write is under a lock.
 // A log that cannot be written must never break the request that wanted to write to it.
+// The diagnostics log (DiagnosticsLog) is the same kind of file under another name.
 public sealed class AccessLog
 {
     public const string FileName = "LidAwake-access.log";
@@ -19,10 +20,10 @@ public sealed class AccessLog
     readonly Func<DateTimeOffset> now;
     readonly object gate = new();
 
-    public AccessLog(string? folder = null, long maxBytes = DefaultMaxBytes, Func<DateTimeOffset>? now = null)
+    public AccessLog(string? folder = null, long maxBytes = DefaultMaxBytes, Func<DateTimeOffset>? now = null, string fileName = FileName)
     {
         folder ??= Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LidAwake");
-        path = Path.Combine(folder, FileName);
+        path = Path.Combine(folder, fileName);
         this.maxBytes = maxBytes;
         this.now = now ?? (() => DateTimeOffset.Now);
     }

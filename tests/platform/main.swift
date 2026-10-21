@@ -10,7 +10,7 @@ func check(_ name: String, _ ok: Bool) {
 let info = Platform.info
 check("os is mac", info["os"] as? String == "mac")
 let features = info["features"] as? [String] ?? []
-for f in ["screen", "control", "camera", "apps", "history", "memory", "push", "passkeys", "limits"] {
+for f in ["screen", "control", "camera", "apps", "history", "memory", "push", "passkeys", "limits", "heat"] {
     check("feature \(f)", features.contains(f))
 }
 check("info is valid JSON", JSONSerialization.isValidJSONObject(info))

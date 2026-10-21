@@ -4,7 +4,7 @@
 name: Windows
 on:
   push:
-    branches: [claude/windows-phase-2]
+    branches: [claude/windows-phase-2, "claude/windows-phase-3**"]
     paths: ["windows/**", "web/**", "assets/sky-*.jpg", "*.cmd", ".github/workflows/windows.yml"]
   workflow_dispatch:
 concurrency:
@@ -28,10 +28,66 @@ jobs:
         run: dotnet build windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release
       - name: Test
         if: hashFiles('windows/LidAwake.Windows.Tests/*.csproj') != ''
-        run: dotnet test windows/LidAwake.Windows.Tests/LidAwake.Windows.Tests.csproj -c Release --logger "console;verbosity=normal"
+        # Detailed, so the output of passing tests shows too (the screen tests say what the runner has: "RUNNER: ...").
+        run: dotnet test windows/LidAwake.Windows.Tests/LidAwake.Windows.Tests.csproj -c Release --logger "console;verbosity=detailed"
       - name: Publish the app for the installer test
         shell: powershell
         run: dotnet publish windows/LidAwake.Windows/LidAwake.Windows.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=false -o windows/app
+      # LidAwake.exe --claude-setup status/on/off (what the installers run) on a Claude Code settings
+      # file with a hook of the owner's own, in a temporary USERPROFILE (Lid Awake finds Claude
+      # Code's folder there, as Claude Code does): on adds Lid Awake's entries next to it, off takes
+      # out exactly those, and the file is back as it was.
+      - name: Claude Code setup round trip
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Assert([bool]$ok, [string]$what) {
+            if ($ok) { Write-Host "PASS: $what" } else { Write-Host "FAIL: $what"; exit 1 }
+          }
+          $app = (Resolve-Path 'windows\app\LidAwake.exe').Path
+          $profileDir = Join-Path $env:RUNNER_TEMP 'claude-profile'
+          $claudeDir = Join-Path $profileDir '.claude'
+          New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+          $file = Join-Path $claudeDir 'settings.json'
+          $theirs = '{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo theirs"}]}]}}'
+          [IO.File]::WriteAllText($file, $theirs)
+          function Invoke-Setup([string]$what) {
+            $out = Join-Path $env:RUNNER_TEMP ('claude-setup-' + $what + '.txt')
+            $p = Start-Process -FilePath $app -ArgumentList '--claude-setup', $what -PassThru -WindowStyle Hidden -RedirectStandardOutput $out
+            [void]$p.Handle  # Windows PowerShell 5.1 returns no ExitCode unless the handle is read
+            $done = $p.WaitForExit(30000)
+            if (-not $done) { $p.Kill() }
+            Assert $done "--claude-setup $what finished"
+            Write-Host ("--claude-setup $what -> " + $p.ExitCode + ': ' + [IO.File]::ReadAllText($out).Trim())
+            return $p.ExitCode
+          }
+          function Get-Canonical([string]$json) { ($json | ConvertFrom-Json) | ConvertTo-Json -Depth 20 -Compress }
+          $savedProfile = $env:USERPROFILE
+          $env:USERPROFILE = $profileDir
+          try {
+            Assert ((Invoke-Setup 'status') -eq 1) 'status: not set up (1), next to a hook of the owner''s'
+            Assert ((Invoke-Setup 'on') -eq 0) 'on: done (0)'
+            $on = [IO.File]::ReadAllText($file) | ConvertFrom-Json
+            $stop = @($on.hooks.Stop)
+            Assert ($stop.Count -eq 2) 'on: Stop has the owner''s group and Lid Awake''s'
+            Assert (@($stop | Where-Object { $_.hooks[0].command -eq 'echo theirs' }).Count -eq 1) 'on: the owner''s Stop hook is still there'
+            Assert (@($stop | Where-Object { $_.hooks[0].command -like '*LidAwake.exe" --claude-event' }).Count -eq 1) 'on: Lid Awake''s Stop hook is added'
+            Assert (@($on.hooks.Notification | Where-Object { $_.hooks[0].command -like '*LidAwake.exe" --claude-event' }).Count -eq 1) 'on: Lid Awake''s Notification hook is added'
+            Assert ($on.statusLine.command -like '*LidAwake.exe" --claude-statusline') 'on: Lid Awake''s status line is added'
+            Assert ($on.model -eq 'opus') 'on: the owner''s other settings are kept'
+            Assert ([IO.File]::ReadAllText($file + '.lidawake-backup') -eq $theirs) 'on: the file as it was is backed up'
+            Assert ((Invoke-Setup 'status') -eq 0) 'status: set up (0)'
+            Assert ((Invoke-Setup 'on') -eq 0) 'on again: done (0)'
+            Assert (@(([IO.File]::ReadAllText($file) | ConvertFrom-Json).hooks.Stop).Count -eq 2) 'on again: nothing added twice'
+            Assert ((Invoke-Setup 'off') -eq 0) 'off: done (0)'
+            $after = [IO.File]::ReadAllText($file)
+            Assert ($after -notmatch 'LidAwake') 'off: nothing of Lid Awake''s is left'
+            Assert ((Get-Canonical $after) -eq (Get-Canonical $theirs)) 'off: the file is back as it was, with the owner''s hook'
+            Assert ((Invoke-Setup 'status') -eq 1) 'status after off: not set up (1)'
+          } finally {
+            $env:USERPROFILE = $savedProfile
+          }
+          exit 0
       # Runs the real installer and uninstaller with Windows PowerShell 5.1, the one the
       # double-click launchers use. The switches (-SkipTailscale -NoStart -NoPause -KeepSettings
       # -DeleteSettings) are documented at the top of each script as "for automated tests".
@@ -61,7 +117,11 @@ jobs:
           $settingsDir = Join-Path $env:APPDATA 'LidAwake'
           $settingsFile = Join-Path $settingsDir 'settings.json'
           $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          $settingsText = '{"tailnetHost":"ci-test.ts.net"}'
+          # A key the app never moves or rewrites (tailnetHost now moves to machine.json at start).
+          $settingsText = '{"ciMarker":"untouched"}'
+          $machineFile = Join-Path $dest 'machine.json'
+          # What is left of the install folder besides machine.json (kept with the settings).
+          function Get-LeftOver { @(Get-ChildItem -LiteralPath $dest -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'machine.json' }) }
           function Get-RunValue { (Get-ItemProperty -Path $runKey -Name 'LidAwake' -ErrorAction SilentlyContinue).LidAwake }
           # The per-user Start menu shortcut; its target is read back the way Windows resolves it.
           $startLink = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Lid Awake.lnk'
@@ -71,6 +131,43 @@ jobs:
           foreach ($f in (Get-ChildItem -Path 'windows\*.ps1', '*.cmd')) {
             $bad = [IO.File]::ReadAllBytes($f.FullName) | Where-Object { $_ -gt 127 }
             Assert (-not $bad) "$($f.Name) is plain ASCII"
+          }
+          # Both scripts carry the same helpers (Invoke-ClaudeSetup, finding the tray app among
+          # Claude Code's hooks), word for word: the uninstaller can't rely on finding a shared file.
+          function Get-SharedBlock([string]$script) {
+            $m = [regex]::Match([IO.File]::ReadAllText($script), '(?s)# ---- Shared block: .*?# ---- End of the shared block ----')
+            if ($m.Success) { $m.Value -replace "`r`n", "`n" } else { $null }
+          }
+          $sharedInstall = Get-SharedBlock 'windows\install.ps1'
+          Assert ($null -ne $sharedInstall -and $sharedInstall -match 'function Invoke-ClaudeSetup') 'install.ps1 has the shared block'
+          Assert ($sharedInstall -eq (Get-SharedBlock 'windows\uninstall.ps1')) 'uninstall.ps1 has the same shared block as install.ps1'
+
+          # A Claude Code hook as Claude Code runs it: the installed LidAwake.exe --claude-statusline,
+          # its stdin a pipe that stays open. It stops waiting for stdin after 5 seconds and ends by
+          # itself (exit code 0); the installers must wait for it, never stop it as the tray app.
+          function Start-FakeHook {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $exe
+            $psi.Arguments = '--claude-statusline'
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.CreateNoWindow = $true
+            $hook = [System.Diagnostics.Process]::Start($psi)
+            $seen = $false
+            $deadline = (Get-Date).AddSeconds(3)
+            while (-not $seen -and (Get-Date) -lt $deadline) {
+              $seen = [bool](Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($hook.Id)" | Where-Object { $_.CommandLine -like '*--claude-statusline*' })
+              if (-not $seen) { Start-Sleep -Milliseconds 100 }
+            }
+            Assert $seen 'a stand-in Claude Code hook (LidAwake.exe --claude-statusline) is running'
+            return $hook
+          }
+          function Assert-HookEndedByItself($hook, [string]$when) {
+            $ended = $hook.WaitForExit(15000)
+            Assert $ended "the stand-in hook ended ($when)"
+            Assert ($hook.ExitCode -eq 0) "the stand-in hook ended by itself, it was not stopped ($when; exit code $($hook.ExitCode))"
+            try { $hook.StandardInput.Close() } catch { }
           }
 
           # Settings that must survive installing and updating.
@@ -140,23 +237,32 @@ jobs:
           Assert (-not (Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)) 'no Lid Awake is left running'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by starting the app'
 
-          # Updating: a running Lid Awake (a stand-in process with that name) is stopped.
+          # Updating: a running Lid Awake (a stand-in process with that name) is stopped, while a
+          # Claude Code hook running the installed LidAwake.exe is waited for, not stopped.
           $fake = Join-Path $env:RUNNER_TEMP 'fake\LidAwake.exe'
           New-Item -ItemType Directory -Path (Split-Path $fake) -Force | Out-Null
           Copy-Item "$env:SystemRoot\System32\cmd.exe" $fake
           [void](Start-Process -FilePath $fake -ArgumentList '/c', 'ping -n 300 127.0.0.1 > nul' -WindowStyle Hidden)
           Start-Sleep -Seconds 2
           Assert ([bool](Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)) 'a stand-in LidAwake process is running'
+          $hook = Start-FakeHook
           Invoke-Script 'windows\install.ps1' @('-SkipTailscale', '-NoStart', '-NoPause')
+          Assert-HookEndedByItself $hook 'update'
           Assert (-not (Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)) 'the update stopped the running app'
           Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is still installed after the update'
           Assert ((Get-RunValue) -eq ('"' + $exe + '"')) 'the Run value is still right after the update'
           Assert ((Get-LinkTarget) -eq $exe) 'the Start menu shortcut is still right after the update'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings untouched by the update'
 
-          # Uninstall, keeping settings.
+          # Uninstall, keeping settings (this PC's machine.json, if the app made one, among them).
+          # A Claude Code hook still running the installed LidAwake.exe: waited for, not stopped.
+          $machineExisted = Test-Path -LiteralPath $machineFile
+          $hook = Start-FakeHook
           Invoke-Launcher $uninstallCmd @('-NoPause', '-KeepSettings')
-          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone'
+          Assert-HookEndedByItself $hook 'uninstall'
+          Assert ((Get-LeftOver).Count -eq 0) 'the app is gone from the install folder (only machine.json may stay)'
+          Assert (-not (Test-Path -LiteralPath (Join-Path $dest 'LidAwake-access.log'))) 'the activity log is gone'
+          if ($machineExisted) { Assert (Test-Path -LiteralPath $machineFile) 'machine.json (phone alerts) kept by -KeepSettings' }
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone'
           Assert (-not (Test-Path -LiteralPath $startLink)) 'the Start menu shortcut is gone'
           Assert ([IO.File]::ReadAllText($settingsFile) -eq $settingsText) 'settings kept by -KeepSettings'
@@ -168,7 +274,7 @@ jobs:
           Invoke-Script 'windows\install.ps1' @('-SkipTailscale', '-NoStart', '-NoPause')
           Assert (Test-Path -LiteralPath $exe) 'LidAwake.exe is installed again'
           Invoke-Script 'windows\uninstall.ps1' @('-NoPause', '-DeleteSettings')
-          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone (second time)'
+          Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone, machine.json too (-DeleteSettings)'
           Assert ($null -eq (Get-RunValue)) 'the Run value is gone (second time)'
           Assert (-not (Test-Path -LiteralPath $startLink)) 'the Start menu shortcut is gone (second time)'
           Assert (-not (Test-Path -LiteralPath $settingsDir)) 'settings deleted by -DeleteSettings'
@@ -182,7 +288,6 @@ jobs:
             Write-Host $text
             return [pscustomobject]@{ Code = $code; Text = $text }
           }
-          $machineFile = Join-Path $dest 'machine.json'
           $planGoneNote = '\[OK\] The power plan Lid Awake changed no longer exists; nothing to put back'
           $missingPlan = '00000000-1111-2222-3333-444444444444'
 
@@ -195,7 +300,9 @@ jobs:
             $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
             Assert ($r.Code -eq 0) 'uninstall succeeds when the saved power plan no longer exists'
             Assert ($r.Text -match $planGoneNote) 'uninstall says there is nothing to put back for a missing plan'
-            Assert (-not (Test-Path -LiteralPath $dest)) 'the install folder is gone (missing plan)'
+            Assert ((Get-LeftOver).Count -eq 0) 'only machine.json is left (missing plan)'
+            Assert ([IO.File]::ReadAllText($machineFile) -match '"savedLidAc"\s*:\s*null') 'the saved lid values are cleared in machine.json'
+            Remove-Item -LiteralPath $dest -Recurse -Force
 
             New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
             [IO.File]::WriteAllText($settingsFile, ('{"tailnetHost":"ci-test.ts.net","savedLidAc":1,"savedLidDc":2,"savedLidScheme":"' + $missingPlan + '"}'))
@@ -222,6 +329,28 @@ jobs:
           Assert ([IO.File]::ReadAllText($machineFile) -match '"savedLidAc":9') 'machine.json still holds the saved values'
           Assert (-not (Test-Path -LiteralPath (Join-Path $dest 'app-file.txt'))) 'the other app files are removed anyway'
           Assert ($r.Text -match 'kept it in') 'uninstall says where it kept the lid setting'
+          Remove-Item -LiteralPath $dest -Recurse -Force
+
+          # (c) A brightness a crash left saved cannot be put back when there is no built-in
+          # screen to set (this runner has none): machine.json stays, and the uninstaller says so.
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          [IO.File]::WriteAllText((Join-Path $dest 'app-file.txt'), 'x')
+          [IO.File]::WriteAllText($machineFile, '{"savedBrightness":55}')
+          $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
+          Assert ($r.Code -ne 0) 'uninstall fails when the saved brightness cannot be put back'
+          Assert (Test-Path -LiteralPath $machineFile) 'machine.json is kept when the brightness cannot be put back'
+          Assert ([IO.File]::ReadAllText($machineFile) -match '"savedBrightness":55') 'machine.json still holds the saved brightness'
+          Assert ($r.Text -match 'screen brightness') 'uninstall says the screen brightness was not put back'
+          Assert (-not (Test-Path -LiteralPath (Join-Path $dest 'app-file.txt'))) 'the other app files are removed anyway (brightness)'
+          Remove-Item -LiteralPath $dest -Recurse -Force
+
+          # (d) A saved brightness that is not 0 to 100 is never applied, and is kept.
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          [IO.File]::WriteAllText($machineFile, '{"savedBrightness":150}')
+          $r = Invoke-UninstallCaptured @('-NoPause', '-KeepSettings')
+          Assert ($r.Code -ne 0) 'uninstall fails for a saved brightness out of range'
+          Assert ($r.Text -match 'looks wrong') 'uninstall says the saved brightness looks wrong'
+          Assert ([IO.File]::ReadAllText($machineFile) -match '"savedBrightness":150') 'machine.json keeps the bad brightness'
           Remove-Item -LiteralPath $dest -Recurse -Force
           exit 0
 
@@ -260,8 +389,9 @@ jobs:
             '2) Double-click "Install Lid Awake (Windows)".',
             '3) If Windows shows "Windows protected your PC", click More info, then Run anyway.',
             '   If it asks "Do you want to run this file?", click Run.',
-            '4) When it finishes, right-click the Lid Awake icon by the clock, choose',
-            '   "Set phone password...", and then turn it on.',
+            '4) When it finishes, the "Set up Lid Awake" window opens. Set a phone password',
+            '   there, turn Lid Awake on, and scan the code with your phone camera.',
+            '   (Later: right-click the Lid Awake icon by the clock, "Set up phone...".)',
             '',
             'To remove it later, double-click "Uninstall Lid Awake (Windows)".'
           ) | Set-Content -Path 'stage\README-FIRST.txt' -Encoding ASCII

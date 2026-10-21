@@ -14,8 +14,9 @@ step() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 note() { printf '    %s\n' "$1"; }
 stop() { printf '  \033[31m✗\033[0m %s\n\n' "$1"; exit 1; }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; }  # for an optional step: say it, carry on
 
-step "1/6  This Mac"
+step "1/7  This Mac"
 v=$(sw_vers -productVersion)
 [ "${v%%.*}" -ge 14 ] || stop "Lid Awake needs macOS 14 or newer (this Mac has $v)."
 if ! xcode-select -p >/dev/null 2>&1; then
@@ -24,7 +25,7 @@ if ! xcode-select -p >/dev/null 2>&1; then
 fi
 ok "macOS $v, developer tools ready"
 
-step "2/6  Tailscale (the private connection between your iPhone and this Mac)"
+step "2/7  Tailscale (the private connection between your iPhone and this Mac)"
 if [ ! -x "$TS" ]; then
   open "https://tailscale.com/download/mac"
   stop "Install Tailscale from the page that opened and sign in, then open the installer again."
@@ -43,7 +44,7 @@ fi
 host=$(printf '%s' "$status" | grep -o '"DNSName": *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)\.".*/\1/')
 ok "Signed in · this Mac will be https://$host"
 
-step "3/6  Signing certificate"
+step "3/7  Signing certificate"
 # macOS keeps the app's Screen Recording and Accessibility permissions across updates only when
 # every build is signed by the same certificate. It's made here, stays in this Mac's keychain,
 # and is used for nothing else.
@@ -62,7 +63,7 @@ else
   ok "Made \"$CERT\" in your keychain"
 fi
 
-step "4/6  Building the app"
+step "4/7  Building the app"
 note "This takes a minute or two."
 log=$(mktemp)
 if ! ./build.sh >"$log" 2>&1; then
@@ -72,7 +73,7 @@ fi
 rm -f "$log"
 ok "Installed in ~/Applications"
 
-step "5/6  Permission to keep the Mac awake"
+step "5/7  Permission to keep the Mac awake"
 # The app runs exactly one command as admin: pmset -a disablesleep 1 (or 0), which turns sleep
 # off (or back on). This rule allows only that, without asking for a password each time.
 if sudo -n -l /usr/bin/pmset -a disablesleep 1 >/dev/null 2>&1 && sudo -n -l /usr/bin/pmset -a disablesleep 0 >/dev/null 2>&1; then
@@ -88,7 +89,7 @@ else
   ok "Allowed"
 fi
 
-step "6/6  Start with your Mac"
+step "6/7  Start with your Mac"
 mkdir -p "$HOME/Library/LaunchAgents"
 old=$(cat "$AGENT" 2>/dev/null || true)
 cat > "$AGENT" <<EOF
@@ -120,6 +121,39 @@ i=0
 while ! pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" >/dev/null && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 pgrep -f "Lid Awake.app/Contents/MacOS/LidAwake" >/dev/null || stop "Lid Awake didn't start. Open the installer again."
 ok "Running · look for the cup in the menu bar"
+
+# Only on a Mac with Claude Code: its settings folder, or the app where Lid Awake looks for it.
+if [ -d "$HOME/.claude" ] || [ -x /opt/homebrew/bin/claude ] || [ -x /usr/local/bin/claude ] ||
+   [ -x "$HOME/.local/bin/claude" ] || [ -x "$HOME/.claude/local/claude" ]; then
+  step "7/7  Claude alerts on your phone (optional)"
+  claude_setup() { /usr/bin/python3 tools/claude/setup.py "$@" 2>&1; }
+  state=0; out=$(claude_setup status) || state=$?
+  case $state in
+    0) ok "Already set up" ;;
+    3) if out=$(claude_setup on --quiet); then ok "Already set up (its scripts updated)"
+       else bad "$out"; fi ;;
+    2) bad "$out" ;;
+    *)
+      note "Lets your phone show your Claude usage after each reply, and alert you when Claude"
+      note "finishes or needs you. It adds Lid Awake to Claude Code's settings (backed up first)."
+      if [ -t 0 ]; then
+        printf '    Turn it on? [Y/n] '
+        read -r answer || answer=n
+        case "$answer" in
+          n|N|no|No|NO) note "Skipped. To turn it on later: python3 tools/claude/setup.py on" ;;
+          *)
+            if out=$(claude_setup on); then
+              printf '%s\n' "$out" | grep -v '^On:' | while IFS= read -r line; do note "$line"; done
+              ok "On · to undo: python3 tools/claude/setup.py off (or the uninstaller)"
+            else
+              bad "$out"
+            fi ;;
+        esac
+      else
+        note "Skipped (nobody here to answer). To turn it on later: python3 tools/claude/setup.py on"
+      fi ;;
+  esac
+fi
 
 printf '\n\033[1mAlmost done.\033[0m The "Set up Lid Awake" window opens on this Mac: choose a phone\n'
 printf 'password there and scan its code with your iPhone. (Later: Lid Awake menu → Set up iPhone…)\n\n'

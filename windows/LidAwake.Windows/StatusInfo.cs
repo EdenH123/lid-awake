@@ -21,7 +21,9 @@ public interface ISystemReadings
 // charging, 128 = no battery, 255 = unknown. Percent 0 to 100, 255 = unknown. LifeSeconds -1 = unknown.
 public readonly record struct PowerReading(byte AcLineStatus, byte BatteryFlag, byte BatteryLifePercent, long LifeSeconds);
 
-public readonly record struct MemoryReading(ulong Total, ulong Available);
+// CommitLimit and CommitAvailable: GlobalMemoryStatusEx's ullTotalPageFile and ullAvailPageFile, the
+// memory programs can be promised (RAM plus page files) and what is left of it (0: unknown).
+public readonly record struct MemoryReading(ulong Total, ulong Available, ulong CommitLimit = 0, ulong CommitAvailable = 0);
 
 // GetSystemTimes, in 100-nanosecond units since boot. Kernel time includes idle time.
 public readonly record struct CpuTimes(ulong Idle, ulong Kernel, ulong User);
@@ -87,53 +89,114 @@ public sealed class NetMeter
 // all requests, because processor load and network speed are measured between two requests.
 public sealed class StatusInfo
 {
-    // No /memory route yet, so "memory" is not listed (section 4). Grows as features land.
-    public static readonly string[] Features = Array.Empty<string>();
+    // Section 4. "limits" (POST /limits and the low-battery switch), "history" (the graphs,
+    // recorded by Lid Awake itself), "passkeys" (/passkey/*) and "push" (/push/*) always; "heat"
+    // (the too-hot switch) only while a temperature source works, re-checked with each status.
+    // FeatureList adds apps, control, screen, camera and claude. "memory": GET /memory (MemoryInfo).
+    public static readonly string[] Features = { "limits", "history", "memory", "passkeys", "push" };
+    public static readonly string[] FeaturesWithHeat = { "limits", "history", "heat", "memory", "passkeys", "push" };
+
+    // "camera" too, but only once the camera is wired to passkeys, the H.264 encoder and the live
+    // socket (CameraFeature.Ready, in Program). Off by default, so a build without them never offers it.
+    public bool CameraFeature { get; set; }
+
+    // cameraAllowed: the owner's screen and camera switches (CameraSwitch.Allowed). None: false.
+    public Func<bool>? CameraAllowed { get; set; }
 
     readonly ISystemReadings readings;
+    readonly Limits? limits;
+    readonly HeatSensor? heat;
+    readonly PhoneApps? apps;
+    readonly Func<bool>? screenAllowed;
     readonly object gate = new();
     readonly CpuMeter cpu = new();
     readonly NetMeter net = new();
 
-    public StatusInfo(ISystemReadings readings) => this.readings = readings;
+    // The lid and the display, from Windows' power notifications (none: open, awake).
+    public LidScreen? Screen { get; init; }
+
+    // The phone's control of this PC (feature "control"). None (the tests): no "control", and
+    // the control fields keep their defaults.
+    public RemoteControl? Control { get; init; }
+
+    // Claude plan usage (ClaudeUsage.cs): "claude" in features, and the saved numbers in `claude`.
+    // None (the tests): `claude` is null, as before.
+    public ClaudeUsage? Claude { get; set; }
+
+    // `limits` are the two safety switches (none: both on, the documented default). `heat` holds
+    // the last good temperatures (none: no temperature, so no "heat" and no batteryTemp). `apps` is
+    // the owner's list for the phone's Apps page (none: empty lists, and no "apps" in features).
+    // `screenAllowed` is the owner's "Allow screen from phone" switch (ScreenSwitch): with it,
+    // "screen" is in features and remoteScreen follows it (none: no screen viewing on this PC).
+    public StatusInfo(ISystemReadings readings, Limits? limits = null, HeatSensor? heat = null, PhoneApps? apps = null,
+                      Func<bool>? screenAllowed = null)
+    {
+        this.apps = apps;
+        this.readings = readings;
+        this.limits = limits;
+        this.heat = heat;
+        this.screenAllowed = screenAllowed;
+    }
 
     // `timer` is the "Turn off after" setting: timerMinutes is its length and timerRemaining the
     // time left (6.1). Without one (tests, before the tray exists) the length is 0, never.
     public Dictionary<string, object?> Build(bool lidAwake, AutoOff? timer = null)
     {
+        // The cached reading only: /status never waits for the hardware.
+        var temperature = heat?.Latest ?? TemperatureReading.None;
+        // The thermal zones' counters and the batteries' own drivers, also only as last read.
+        var slow = readings as ISlowReadings;
+        var zones = slow?.Zones();
+        // One look at the running programs for both lists.
+        var appLists = AppLists();
         var s = new Dictionary<string, object?>
         {
-            // 6.1: the switches and limits Windows does not have get the documented safe defaults.
+            // 6.1
             ["host"] = readings.HostName(),
             ["lidAwake"] = lidAwake,
             ["timerMinutes"] = timer?.Minutes ?? 0,
-            // false, not the documented default true: there are no battery or heat guards on
-            // Windows yet (no /limits route), and the page shows a true switch as protection.
-            ["batteryGuard"] = false,
-            ["heatGuard"] = false,
-            ["batteryLimit"] = 10,
-            ["maxBatteryTemp"] = 40,
-            // "unknown", not the documented "nominal": Windows measures no heat yet, and the page
-            // shows a dash for a value it doesn't know, instead of "Normal".
-            ["thermalState"] = "unknown",
+            // The stored switches. Without a temperature heatGuard is still the stored setting
+            // (the page hides its row: no "heat" in features).
+            ["batteryGuard"] = limits?.BatteryGuard ?? true,
+            ["heatGuard"] = limits?.HeatGuard ?? true,
+            ["batteryLimit"] = Limits.BatteryLimit,
+            ["maxBatteryTemp"] = Limits.MaxBatteryTemp,
+            // From the thermal zones (ThermalState.Name): the hottest against the 90 °C limit, and
+            // whether Windows is slowing the processor to cool it. "unknown" with no zone (the page
+            // shows a dash for it, instead of a "Normal" nothing measured).
+            ["thermalState"] = ThermalState.Name(temperature.Zone, zones),
             // 6.2
             ["remoteScreen"] = false,
-            ["remoteControl"] = false,
-            ["cameraAllowed"] = false,
+            // The control switch, which needs the screen switch. SendInput needs no permission
+            // (only windows of an elevated program are out of reach, by Windows' UIPI).
+            ["remoteControl"] = Control?.ControlAllowed ?? false,
+            ["cameraAllowed"] = CameraAllowed?.Invoke() ?? false,
             ["screenPermission"] = false,
-            ["controlPermission"] = false,
+            ["controlPermission"] = Control != null,
             ["screenWidth"] = Math.Max(0, readings.ScreenWidth()),
-            ["screenOff"] = false,
-            ["lidClosed"] = false,
-            ["displayAsleep"] = false,
+            ["screenOff"] = Control?.ScreenOff ?? false,
+            ["lidClosed"] = Screen?.LidClosed ?? false,
+            ["displayAsleep"] = Screen?.DisplayAsleep ?? false,
             // 6.3
-            ["apps"] = Array.Empty<object>(),
-            ["otherApps"] = Array.Empty<object>(),
-            ["claude"] = null,
+            ["apps"] = appLists.Apps,
+            ["otherApps"] = appLists.Others,
+            ["claude"] = Claude?.ForStatus(),
             // 6.6
             ["os"] = "windows",
-            ["features"] = Features,
+            // "heat" while either source works: the battery's sensor or the thermal zones.
+            ["features"] = FeatureList(temperature.Any),
         };
+
+        // 6.2: screen viewing ("screen" is in features, FeatureList). Windows needs no permission
+        // to capture the screen.
+        if (screenAllowed != null)
+        {
+            bool allowed;
+            try { allowed = screenAllowed(); }
+            catch (Exception) { allowed = false; }
+            s["remoteScreen"] = allowed;
+            s["screenPermission"] = true;
+        }
 
         // timerRemaining: omitted unless on, with a timer, and in the future.
         if (lidAwake && timer?.Remaining() is { } left) s["timerRemaining"] = left;
@@ -149,11 +212,18 @@ public sealed class StatusInfo
             s["battery"] = (int)p.BatteryLifePercent;
             if (acKnown) s["onBattery"] = onBattery;
             s["charging"] = charging;
-            s["charged"] = p.AcLineStatus == 1 && p.BatteryLifePercent == 100;
-            // Windows only estimates the time left on battery, and never the time to full.
+            // The batteries' drivers say whether they are full (BatteryCharge.Charged); when they
+            // can't, plugged in at 100%.
+            var charge = slow?.Charge();
+            s["charged"] = charge?.Charged() ?? (p.AcLineStatus == 1 && p.BatteryLifePercent == 100);
             s["minutesToEmpty"] = onBattery && p.LifeSeconds > 0 ? (int)(p.LifeSeconds / 60) : -1;
-            s["minutesToFull"] = -1;
+            // Windows only estimates the time left on battery: the time to full is worked out from
+            // the batteries' capacities and charge rate (BatteryCharge.MinutesToFull).
+            s["minutesToFull"] = charging && charge != null ? charge.MinutesToFull() : -1;
         }
+        // 6.4: on its own, like the Mac, and only from the battery's own sensor (a thermal zone
+        // measures the processor or the board, not the battery).
+        if (temperature.Battery is { } celsius) s["batteryTemp"] = TemperatureMath.OneDecimal(celsius);
 
         long now = readings.Milliseconds();
         var memory = readings.Memory();
@@ -190,6 +260,33 @@ public sealed class StatusInfo
         return s;
     }
 
+    // "apps" is listed only when the apps routes exist (an app list was given), "control" after it
+    // only when the control routes do (a RemoteControl was given), and "screen" last only when
+    // /screen.jpg and the live socket do (the screen switch was given). "camera" after them only
+    // once the camera is wired (CameraFeature), and "claude" last once the Claude usage is (Claude).
+    string[] FeatureList(bool withHeat)
+    {
+        IEnumerable<string> list = withHeat ? FeaturesWithHeat : Features;
+        if (apps != null) list = list.Append("apps");
+        if (Control != null) list = list.Append("control");
+        if (screenAllowed != null) list = list.Append("screen");
+        if (CameraFeature) list = list.Append("camera");
+        if (Claude != null) list = list.Append("claude");
+        return list.ToArray();
+    }
+
+    // Never lets a failing process or settings read take the whole status down: an empty list.
+    (object Apps, object Others) AppLists()
+    {
+        if (apps == null) return (Array.Empty<object>(), Array.Empty<object>());
+        try
+        {
+            var lists = apps.Lists();
+            return (lists.Apps, lists.Others);
+        }
+        catch (Exception) { return (Array.Empty<object>(), Array.Empty<object>()); }
+    }
+
     // Windows gives Wi-Fi signal as a quality from 0 to 100, not dBm. The usual approximation:
     // quality = 2 × (dBm + 100), so dBm = quality / 2 − 100, from −100 (0) to −50 (100). A whole
     // number, and never 0, as section 6.5 asks.
@@ -203,6 +300,6 @@ public sealed class StatusInfo
     }
 
     // Flag 128 means no battery; 255 means Windows can't tell; a percent over 100 is unknown.
-    static bool HasBattery(PowerReading p) =>
+    internal static bool HasBattery(PowerReading p) =>
         (p.BatteryFlag & 128) == 0 && p.BatteryFlag != 255 && p.BatteryLifePercent <= 100;
 }

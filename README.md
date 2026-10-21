@@ -67,6 +67,7 @@ Tailscale is a free app that creates a private, encrypted connection between you
 4. A Terminal window opens and the installer starts. It checks your Mac step by step and shows a green ✓ for each step.
 5. When you see **Password:**, type your Mac login password and press **Return**.
    *Nothing appears while you type. That's normal.*
+6. If you use **Claude Code**, the last step asks about **Claude alerts on your phone (optional)**. Press **Return** to turn it on: your phone then shows your Claude usage after each reply and alerts you when Claude finishes or needs you. It adds Lid Awake to Claude Code's settings and backs them up first (to `~/.claude/settings.json.lidawake-backup`). Type **n** to skip it. To undo it later, run `python3 tools/claude/setup.py off` in the Lid Awake folder, or use the uninstaller.
 
 **If a step shows a red ✗**, it tells you exactly what to do (for example "Sign in to Tailscale"). Do it, then open **Install Lid Awake** again. It continues where it stopped.
 
@@ -135,36 +136,45 @@ You don't need to install any programming tools.
 
 ### Install it
 
-1. On this page (the GitHub page for Lid Awake), open **Actions** → **Windows** → **Run workflow**. (Until this version is on the main branch, ask whoever maintains your copy for the ZIP.)
-2. When the run has finished, open it and download **LidAwake-Windows** from **Artifacts** at the bottom. It's kept for 3 days.
+1. Download the ZIP. On this page (the GitHub page for Lid Awake), open **Releases** on the right side, then the latest release, and download **LidAwake-Windows.zip**. Or use the direct link: [LidAwake-Windows.zip](https://github.com/EdenH123/lid-awake/releases/latest/download/LidAwake-Windows.zip).
+2. To test a branch that has no release yet, use Actions instead: open **Actions** → **Windows** → **Run workflow**, choose the branch, and when the run has finished, download **LidAwake-Windows** from **Artifacts** at the bottom of the run. It's kept for 3 days.
 3. Unpack the **whole** ZIP (right-click it → **Extract All**). Inside, **README-FIRST.txt** repeats these steps.
 4. Double-click **Install Lid Awake (Windows)**.
    - If Windows says **"Windows protected your PC"**, click **More info** → **Run anyway**.
    - If it asks **"Do you want to run this file?"**, click **Run**.
 5. A window shows each step with **[OK]**. If a line shows **[X]**, it tells you what to do (for example "Tailscale is not signed in"). Do it, then open **Install Lid Awake (Windows)** again.
+6. If you use **Claude Code** on the laptop, the last step asks about **Claude alerts on your phone (optional)**: **Turn it on? [Y/n]**. Press **Enter** to turn it on: your phone then shows your Claude usage after each reply and alerts you when Claude finishes or needs you. It adds Lid Awake to Claude Code's settings and backs them up first. Type **n** to skip it; you can turn it on later from the tray (see **Claude on Windows** below).
 
 > Already have the source ZIP and the .NET 8 SDK installed? The same installer builds the app for you.
 
 ### Finish and add it to your phone
 
-1. Right-click the **Lid Awake** icon in the tray by the clock (it may be under the **^** arrow).
-2. Choose **Set phone password…** and pick a password.
-3. Click **Lid Awake on** so it shows a tick. The phone page only opens while Lid Awake is on.
-4. On your phone, make sure Tailscale is on, then open `https://<pc-name>.<tailnet>.ts.net/` in the browser. You'll find your laptop's exact name in the Tailscale app on the phone (the list of your machines), or at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
-5. Add it to your Home screen:
+1. The **Set up Lid Awake** window opens by itself the first time (until a phone password is set). Later, open it from the tray: right-click the **Lid Awake** icon by the clock → **Set up phone…**.
+   - Lid Awake lives by the clock. If you don't see its icon, click **^** next to the clock and drag it onto the taskbar, or turn it on in **Settings → Personalization → Taskbar → Other system tray icons** (the window has a button that opens that page).
+2. The window ticks off what the laptop needs: Tailscale installed and signed in, and the private web address (MagicDNS and HTTPS Certificates). Anything missing has a button next to it that fixes it or opens the right page.
+3. Type a **phone password** in the two boxes and click **Save password**. (Later you change it from the tray: **Set phone password…**.)
+4. Click **Turn Lid Awake on**. The phone page only opens while Lid Awake is on.
+5. On your phone, make sure Tailscale is on, then point the **Camera** at the QR code in the window and open the link (Safari on iPhone, your browser on Android).
+   - No camera handy? Type the address shown under the code (**Copy address** copies it), `https://<pc-name>.<tailnet>.ts.net/`, into the phone's browser. You'll also find your laptop's exact name in the Tailscale app on the phone (the list of your machines), or at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
+6. Add it to your Home screen:
    - **iPhone:** in Safari tap **Share** → **Add to Home Screen** → **Add**.
    - **Android (Samsung or similar):** open the browser menu (**⋮** in Chrome, **≡** in Samsung Internet) → **Add to Home screen** (or **Install app**).
-6. Open **Lid Awake** from your Home screen and type your phone password.
+7. Open **Lid Awake** from your Home screen and type your phone password.
+8. Optional: to watch the screen from the phone, click **Allow screen from phone** at the bottom of the window.
 
 Each time a new phone signs in, the laptop shows a small alert at the tray: **New sign-in to Lid Awake**.
 
 ### Every day on Windows
 
-- **Turn it on:** right-click the tray icon → **Lid Awake on**. You can turn it **off** from your phone too.
+- **Turn it on:** right-click the tray icon → **Lid Awake on**. You can turn it **off** from your phone too; the laptop then says **Turned off from your phone** at the tray.
+- **See how it is at a glance:** the tray icon is a moon while Lid Awake is off and a cup while it's on. It changes within a second when your phone uses the laptop: an **eye** while the screen is viewed (also when the phone falls back to still pictures), a **hand** while the phone clicks or types, a **video camera** while the camera is watched. Point at the icon for the same in words, and for the time left on the timer. The menu's first (grey) line says it too, for example **Turns off in 1:23:45**, **On, no timer** or **Screen being viewed from your phone**, and a grey line further down, below the safety limits and the Claude items, shows the battery, for example **Battery 80% · full in 1h 5m · 31.2°C** (or **charging** while the battery can't say how long).
 - **Turn it on for a while only:** tray icon → **Turn off after** (for example 2 hours). When the time is up, Lid Awake turns itself off.
-- **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed.
-- **See what happened:** tray icon → **Show activity log**.
-- **Keep it plugged in, and don't leave it closed in a bag or a tight space;** on Windows Lid Awake doesn't watch the temperature yet. It doesn't turn itself off when the battery is low either.
+- **Open the phone page on the laptop:** tray icon → **Open live page** (it needs Tailscale's name for the laptop; until Tailscale has one, a message says so).
+- **Signed-in devices:** tray icon → **Signed-in devices** lists each phone or browser signed in, with the day and how (password, or Face ID or fingerprint). Click one to sign it out, or **Sign out all devices**. After too many wrong passwords, sign-in is locked for a while: **Allow password sign-in again** ends that at once. **Show activity log** is there too.
+- **Close the lid:** while Lid Awake is on, the laptop keeps running with the lid closed. See **The screen with the lid closed** below.
+- **See what happened:** tray icon → **Show activity log**. When something doesn't work: tray icon → **Troubleshooting** (see **Find out what's wrong on Windows**).
+- **Change the phone password:** tray icon → **Change phone password…** (it says **Set phone password…** until there is one). A new password signs out every device.
+- **Safety limits:** Lid Awake turns itself off when the laptop is on battery below 10%, and won't turn on then (tray icon → **Turn off below 10% battery**). If the laptop reports its temperature, Lid Awake also turns off when the battery gets hotter than 40°C, when the laptop itself (its board, measured by Windows' thermal zones or the maker's board sensors) stays at 90°C or more for two readings in a row, or, on a laptop whose only sensor is on the processor chip, when that chip stays at 100°C or more, and when Windows slows the processor to half speed or less to cool it (tray icon → **Turn off if battery is hotter than 40°C**). A sensor that never changes while the processor's work goes up and down is not trusted: after 30 minutes the activity log says so and it is no longer used. It asks Windows first (the battery's own sensor and the thermal zones, which some laptops of any brand report), and the maker's own sensors for whatever Windows doesn't report: many **HP** business laptops (EliteBook, ProBook, ZBook) report theirs through the BIOS with nothing to install, and **Dell** laptops can once the free **Dell Command | Monitor** is installed (not every model fills in the readings). Lenovo, ASUS and most others have no sensors of their own that Lid Awake can read (without their own software or admin rights), so they only report through Windows. The activity log says which one it uses (for example **Temperature from HP BIOS sensors**). A laptop with none of them greys that item out with **(no temperature on this PC)** and nothing watches the heat, so **don't leave the laptop closed in a bag or a tight space**. Both limits are on to start with. You can also change them on your phone (the gear → **Safety limits**).
 - **After Windows restarts** (for example for updates), Lid Awake starts off. Turn it on again from the tray.
 - **Wi-Fi signal bars need Location.** On Windows, the bars on your phone need Location to be on for Lid Awake. Windows asks once, when you turn Lid Awake on. If you say no, or Location is off, your phone shows "Connected" without bars. You can change it in **Settings → Privacy & security → Location**.
 - **After you choose Quit Lid Awake**, start it again from the Start menu (**Lid Awake**).
@@ -172,29 +182,71 @@ Each time a new phone signs in, the laptop shows a small alert at the tray: **Ne
 ### What works on Windows so far
 
 - See how the laptop is doing on your phone: battery, memory, processor, network (with Wi-Fi signal bars and the network name) and uptime.
-- Keep it running with the lid closed.
+- Keep it running with the lid closed, and tell your phone when the lid is closed or the screen is off.
 - Turn it off from your phone.
 - A **Turn off after** timer.
 - Sign in with your phone password, with an alert at the tray for each new sign-in.
-- See your signed-in devices and sign one out.
+- See your signed-in devices and sign one or all of them out, on the phone or from the tray (**Signed-in devices**), and allow password sign-in again after a lockout.
+- A tray icon that shows what is going on: off, on, screen watched, controlled from the phone, camera watched, with the status, the timer's countdown and the battery in the menu and the icon's tooltip.
+- Messages at the tray when the phone turns Lid Awake off, when every device is signed out, and when Tailscale Funnel was on (it would put the phone page on the open internet) and Lid Awake turned it off. Each is in the activity log too, like turning **Allow control from phone** on or off.
 - The activity log.
+- Troubleshooting, as on the Mac: a self-test and a battery check (tray icon → **Troubleshooting**, or `LidAwake.exe --selftest` and `--battery`), and a diagnostics log with the details of each screen or camera session, the phone's "keep the screen on" state, each phone alert's delivery, encoder fallbacks, Tailscale Serve errors and which sensors the temperature comes from.
+- The low-battery safety limit, and the too-hot one on laptops that report a temperature.
+- Battery, temperature and processor history graphs. Windows has no power log to read, so Lid Awake records its own, once a minute, while it runs (the last 48 hours). The processor graph shows which programs used it, as on the Mac (Windows' own processes count as "Windows core", "Screen & windows" and "Windows (other)"). The graphs only cover the time Lid Awake has been running on this PC, with gaps while the PC slept. On a laptop, the battery graph fills those gaps from Windows' own battery report (at start and once a day), which keeps the battery level at each sleep, wake and plug-in; temperature and processor use can't be filled in. (The battery report's format has only been checked against a sample so far; a check on a real laptop is still to come.)
+- The memory window: tap the memory reading to see how much is used, free and in Windows' file cache, how hard Windows works to find room, and the programs using the most.
+- Face ID or fingerprint sign-in. On your phone: the gear ⚙︎ → turn on **Face ID** (or fingerprint), then type your password once more. The laptop shows **Face ID or fingerprint added to Lid Awake** at the tray. To remove one, use the tray icon → **Face ID and fingerprint** → click the device. Setting a new phone password removes them all.
+- Open, switch to and quit programs from your phone. Right-click the Lid Awake icon, choose **Apps on phone…**, and tick the programs from the Start menu to show on the phone's Apps page. Programs that are open but not ticked show in the phone's dock.
+- Alerts on your phone: the laptop turned off (timer or safety limit), battery low, getting warm (on laptops that report a battery temperature), and each new sign-in. Turn them on in the app: gear ⚙︎ → **Alerts**. On an iPhone, the app must be on the Home Screen first.
+- Claude: your Claude plan usage on the phone's Status page and in the tray (hover over the Lid Awake icon, or open its menu), and phone alerts when you reach 90% of a limit, and when Claude Code finishes or needs you while you're away from the laptop. See **Claude on Windows** below.
+- Watching the screen live. Tick **Allow screen from phone** in the tray menu first (it starts off). Turning it off, or turning Lid Awake off, closes the picture on your phone at once. If the graphics card's video encoder fails, Lid Awake uses Windows' own instead, for the screen and the camera alike, until it starts again.
+- Using the phone as trackpad and keyboard, and locking the PC or turning its screen off from the phone. Turning on **Allow screen from phone** also allows control, until you change **Allow control from phone** in the tray menu yourself (as on the Mac): if you only want to watch, untick it. **Allow control from phone** is greyed out while screen viewing is off. Windows doesn't let any program control a window that runs as administrator, the "Do you want to allow…" prompt, or the lock screen, so do those at the PC.
+- On your phone, as on the Mac: how your phone reaches the laptop (**Connection**: direct on the same Wi-Fi, over the internet, or through a relay), how warm the laptop is (Normal, Warm, Hot, Critical, on laptops with a thermal zone), when the battery will be full while charging, the laptop's own name, and the launch screen when you open the app from your iPhone's Home Screen. After you turn Lid Awake off, your phone still shows **Lid Awake is off** for a few seconds before the address goes away.
+- Seeing and hearing the room through the laptop's camera and microphone, and talking through its speakers. Tick **Allow camera & microphone from phone** in the tray menu (it needs **Allow screen from phone**, and starts off), then tap the notch in the drawing on your phone (Face ID or fingerprint every time, so turn that on first). A plugged-in USB camera is used before the built-in one, and a phone connected to Windows as a camera (Phone Link) is never used. It closes by itself after 10 minutes. Many laptops switch the built-in camera off with the lid closed: open the lid, or plug in a USB camera. If Windows says no, turn on Settings → Privacy & security → Camera → **Let desktop apps access your camera** (and the same for the microphone).
+
+### The screen with the lid closed
+
+Many laptops switch the built-in screen off when you close the lid, and Windows doesn't let an app stop that. Lid Awake keeps the laptop running, but the screen can still go dark. Your phone then shows the PC as dark, and if you are watching the screen, the picture may stop. To keep the picture, either:
+
+- open the lid a little (a small gap is enough on most laptops), or
+- plug in an external monitor, which stays on with the lid closed.
+
+What Lid Awake does for you: while someone watches the screen from the phone, and (as on the Mac) the whole time the lid is closed while Lid Awake is on, it stops Windows from turning the display off after a while. On a laptop that keeps its built-in screen on behind a closed lid, that means the screen is always there for your phone. With the lid closed it also turns the built-in screen's brightness down to the lowest level, and puts it back when you open the lid, turn Lid Awake off, quit it, or sign out. If Lid Awake is stopped by a crash with the lid closed, it puts the brightness back the next time it starts. Some laptops don't let Windows change the brightness; then Lid Awake leaves it alone and says so once in the activity log.
+
+### Claude on Windows
+
+If you use Claude Code on the laptop, Lid Awake shows your plan usage: on the phone's Status page, in the tray menu (**Claude: Session 59%, resets 15:10 · Week 84%, …**) and, while **Show Claude usage by the clock** is ticked, when you hover over the Lid Awake icon. Lid Awake asks Claude Code for the numbers every few minutes ("/usage", which sends no message and uses none of your plan).
+
+For the usage after every reply and the "Claude finished" and "Claude needs you" alerts, Claude Code has to tell Lid Awake. **This changes Claude Code's settings file** (`.claude\settings.json` in your user folder), so Lid Awake only does it when you ask:
+
+- the installer's last step asks **Turn it on? [Y/n]** when Claude Code is on the laptop, or
+- right-click the Lid Awake icon → **Claude alerts and usage from Claude Code…**.
+
+Lid Awake first saves a copy of the file as `settings.json.lidawake-backup` (later copies get the date and time added; none is ever overwritten), then adds two hooks (Stop and Notification) and a status line, and changes nothing else. If you already have your own status line, it stays; the usage numbers then come from the "/usage" check instead. New Claude Code sessions pick it up. The hooks assume Claude Code runs them through cmd or Git Bash; with PowerShell they may not work (not checked yet).
+
+**To undo it:** click **Claude alerts and usage from Claude Code…** again (the tick goes), or uninstall Lid Awake: either takes out exactly what Lid Awake added. You can also put the backup copy back yourself.
+
+The session alerts only go out while you're away from the laptop (no keyboard or mouse for 2 minutes, or the lid closed). Turn them on in the app: gear ⚙︎ → **Alerts** → **Claude usage** and **Claude sessions**.
 
 ### Not on Windows yet
 
-Don't rely on these on Windows. They work on the Mac only, for now.
+These work on the Mac only:
 
-- Watching the screen and using the phone as trackpad and keyboard.
-- Opening, switching and quitting apps.
-- Alerts on your phone.
-- Face ID or fingerprint sign-in (you use your password).
-- The camera and microphone.
-- Battery and temperature history graphs.
-- **The low-battery and too-hot safety switches.** Lid Awake will **not** turn itself off if the battery runs low or the laptop gets hot, so keep it plugged in.
+- Claude usage written next to the icon. Windows can't show text beside a tray icon, so it's in the icon's tooltip instead (hover over the icon).
+- History from the time Lid Awake wasn't running. Only the battery graph is filled in from Windows' battery report; temperature and processor use can't be.
 
 ### Update or remove it on Windows
 
-- **Update:** download the new LidAwake-Windows ZIP (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are. If Lid Awake is on while you update, the update turns it off and puts the lid setting back. Turn it on again afterwards.
-- **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was.
+- **Update:** download the new LidAwake-Windows.zip (Install it, steps 1–3) and open **Install Lid Awake (Windows)** again. Your password and settings stay as they are. If Lid Awake is on while you update, the update turns it off and puts the lid setting back. Turn it on again afterwards.
+- **Remove:** double-click **Uninstall Lid Awake (Windows)**. It asks whether to also delete your settings, and puts your laptop's lid setting back the way it was (and the screen brightness, if a crash left it lowered).
+- **After removing it, restart any Claude Code sessions that are open:** they keep the hooks they loaded when they started, until you restart them.
+
+### Make a new release (for the maintainer)
+
+1. Merge the changes to `master`.
+2. On GitHub, open **Releases** → **Draft a new release**, create a new tag such as `v1.1.0` on `master`, and click **Publish release**.
+3. After about 10 minutes, **LidAwake-Windows.zip** appears on the release. The **Windows release** workflow builds it, runs the tests and the installer test, and attaches it. If a test fails, nothing is attached. To build it again for a release that already exists, open **Actions** → **Windows release** → **Run workflow** and type its tag.
+
+While the repository is private, only people with access to it can download the ZIP.
 
 ---
 
@@ -212,6 +264,8 @@ Download the new version (Step 2) and open **Install Lid Awake** again. Your pas
 ## Remove Lid Awake
 
 Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks whether to also delete your settings.
+
+If you turned on **Claude alerts on your phone**, the uninstaller also takes Lid Awake out of Claude Code's settings and removes its two scripts, leaving the rest of your Claude Code settings as they are. To undo only that part and keep Lid Awake, open Terminal in the Lid Awake folder and run `python3 tools/claude/setup.py off` (`on` turns it back on, `status` shows whether it's on).
 
 ---
 
@@ -231,7 +285,19 @@ Open **Uninstall Lid Awake** in the folder (right-click → **Open**). It asks w
 | **Windows:** a message says **"Phone page not available"** | Another program is using the port Lid Awake needs (8787). Restart the PC, then turn **Lid Awake on** again. |
 | **Windows:** the phone **can't reach the PC** | Make sure Tailscale is on, on both the PC and the phone, with the same account. |
 | **Windows:** a message says **"The phone page isn't published yet"** | Tailscale needs your OK first. Tray icon → **Show activity log**: the line **Phone page not published by Tailscale** has a link from Tailscale. Open it and allow what it asks. Lid Awake tries again within a minute. |
+| **Windows:** something else doesn't work | Run the self-test (see **Find out what's wrong on Windows** below) and look for a line with ✗. |
 | **Windows:** the laptop still **sleeps with the lid closed**, or a message says **"Couldn't change what closing the lid does"** | Keep the lid open until it's fixed. 1) Make sure **Lid Awake on** is ticked in the tray menu. 2) Some laptops have their own power app from the maker that switches power plans or overrides the lid setting: check it there. 3) If you ever change **Choose what closing the lid does** in Control Panel by hand, do it only while Lid Awake is on, so turning it off puts your setting back. |
+
+### Find out what's wrong on Windows
+
+- **Self-test:** right-click the Lid Awake icon → **Troubleshooting** → **Run self-test**. After a few seconds a report opens in Notepad, one line per thing Lid Awake needs: ✓ works, ✗ doesn't work, – not on this PC (a desktop has no battery or lid, for example). It checks Tailscale (installed, signed in, and the laptop's HTTPS name), that the ports 8787 and 8788 are free or used by Lid Awake itself, the settings files, the lid setting, the battery, temperature and memory readings, the screen capture and the video encoder, the camera and microphone, phone alerts, and Claude Code. The last line says whether every required check passed. The self-test only looks: it changes no setting and turns nothing on (the camera is only listed, never opened).
+- **Battery check:** the same menu → **Battery check** shows what Windows says about the battery: the charge, the rate, the capacity, the minutes to full or to empty, whether it's plugged in, and each temperature sensor.
+- **From a terminal:** `"%LOCALAPPDATA%\LidAwake\LidAwake.exe" --selftest` (or `--battery`). It prints the report, and the self-test's exit code is 0 when every required check passed, 1 when one didn't. Lid Awake is a windowed program, so a terminal doesn't wait for it by itself: in Command Prompt use `start /wait "" "%LOCALAPPDATA%\LidAwake\LidAwake.exe" --selftest` (then `echo %ERRORLEVEL%` shows the exit code) or add `| more`; in PowerShell add `| Out-Host` (then `$LASTEXITCODE` is the exit code).
+- **Where the files are,** all in `%LOCALAPPDATA%\LidAwake` (paste it into File Explorer's address bar):
+  - `LidAwake-selftest.txt` and `LidAwake-battery.txt`: the last report of each.
+  - `LidAwake-access.log`: the activity log (tray → **Show activity log**).
+  - `LidAwake-diagnostics.log`: the details for finding a problem (tray → **Troubleshooting** → **Open diagnostics log**): one line for each time the screen or the camera was watched (how long, how many pictures, which encoder), when the phone's "keep the screen on" changes, what each phone alert got back from the phone's push service, when the screen capture or the video encoder had to fall back to another one, and Tailscale Serve errors. It never holds passwords, sign-in cookies, keys or the text of your alerts, and no addresses other than Tailscale names.
+  - Both logs keep about 1 MB; the one before is kept as `.old`.
 
 ---
 

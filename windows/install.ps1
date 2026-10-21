@@ -43,12 +43,75 @@ function Stop-Here([string]$text) {
     exit 1
 }
 
+# ---- Shared block: install.ps1 and uninstall.ps1 have it word for word (the Windows workflow checks) ----
+
 # Native programs write to stderr in normal use; Stop would turn that into an error.
 function Invoke-Quietly([scriptblock]$command) {
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { & $command } finally { $ErrorActionPreference = $saved }
 }
+
+# Every LidAwake.exe running. Helper: started with a --claude- flag, by Claude Code itself (its
+# hooks and status line, --claude-event and --claude-statusline) or by these scripts
+# (--claude-setup); short-lived, and not the tray app. Without WMI every one counts as the app.
+function Get-LidAwakeProcesses {
+    try {
+        return @(Get-CimInstance -ClassName Win32_Process -Filter "Name='LidAwake.exe'" -ErrorAction Stop |
+            ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; Helper = ([string]$_.CommandLine -like '*--claude-*') } })
+    } catch {
+        return @(Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue |
+            ForEach-Object { [pscustomobject]@{ Id = $_.Id; Helper = $false } })
+    }
+}
+
+# The Lid Awake tray app, never one of the helpers above.
+function Get-TrayApp { @(Get-LidAwakeProcesses | Where-Object { -not $_.Helper }) }
+
+# Stops the tray app and waits (at most 15 seconds) for it to end. True when one was running.
+function Stop-TrayApp {
+    $running = @(Get-TrayApp)
+    if ($running.Count -eq 0) { return $false }
+    foreach ($p in $running) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    $deadline = (Get-Date).AddSeconds(15)
+    while (@(Get-TrayApp).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    return $true
+}
+
+# Claude Code's hooks end by themselves within seconds, and Claude Code waits for them, so they
+# are never stopped: this waits for them (at most 5 seconds) before the app's files are replaced
+# or deleted. One still running after that may hold a file: the copy or delete is tried again.
+function Wait-ClaudeHelpers {
+    $deadline = (Get-Date).AddSeconds(5)
+    while (@(Get-LidAwakeProcesses | Where-Object { $_.Helper }).Count -gt 0 -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 250
+    }
+}
+
+# Runs the installed LidAwake.exe --claude-setup <on|off|status> (hidden, at most 30 seconds): the
+# same code as the tray item "Claude alerts and usage from Claude Code...". Returns its exit code
+# (-1 when it could not run) and what it printed. Status: 0 set up, 1 not set up, 2 no Claude
+# Code on this PC, 3 Claude Code's settings file can't be read. On and off: 0 done, 3 refused.
+function Invoke-ClaudeSetup([string]$what) {
+    $out = Join-Path ([IO.Path]::GetTempPath()) ('LidAwake-claude-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    try {
+        $p = Start-Process -FilePath $exe -ArgumentList '--claude-setup', $what -PassThru -WindowStyle Hidden -RedirectStandardOutput $out
+        [void]$p.Handle  # Windows PowerShell 5.1 returns no ExitCode unless the handle is read
+        if (-not $p.WaitForExit(30000)) {
+            try { $p.Kill() } catch { }
+            return [pscustomobject]@{ Code = -1; Text = 'it did not finish.' }
+        }
+        $text = ''
+        if (Test-Path -LiteralPath $out) { $text = ([IO.File]::ReadAllText($out)).Trim() }
+        return [pscustomobject]@{ Code = $p.ExitCode; Text = $text }
+    } catch {
+        return [pscustomobject]@{ Code = -1; Text = $_.Exception.Message }
+    } finally {
+        Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---- End of the shared block ----
 
 function Test-TailscaleSignedIn {
     try {
@@ -123,13 +186,10 @@ if (-not $appDir) {
 # ---- 3/5 Copy ---------------------------------------------------------------------------
 Show-Step '3/5  Installing'
 try {
-    # Stop a running Lid Awake so its files can be replaced.
-    $running = @(Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)
-    if ($running.Count -gt 0) {
-        $running | Stop-Process -Force -ErrorAction SilentlyContinue
-        $running | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
-        Show-Note 'Stopped the running Lid Awake (it starts again below).'
-    }
+    # Stop a running Lid Awake so its files can be replaced, and let Claude Code's hooks (the same
+    # LidAwake.exe, with a --claude- flag) finish on their own first.
+    if (Stop-TrayApp) { Show-Note 'Stopped the running Lid Awake (it starts again below).' }
+    Wait-ClaudeHelpers
     New-Item -ItemType Directory -Path $dest -Force | Out-Null
     # Only the program folder is replaced. Settings live in %APPDATA%\LidAwake and are not touched.
     # The program folder also holds machine.json (the saved lid setting) and the activity log:
@@ -199,7 +259,7 @@ if ($NoStart) {
         $up = $false
         for ($i = 0; $i -lt 20 -and -not $up; $i++) {
             Start-Sleep -Milliseconds 500
-            $up = [bool](Get-Process -Name 'LidAwake' -ErrorAction SilentlyContinue)
+            $up = (@(Get-TrayApp).Count -gt 0)
         }
         if (-not $up) { throw 'it did not stay running.' }
         Show-Ok 'Running. Look for the Lid Awake icon by the clock.'
@@ -208,7 +268,43 @@ if ($NoStart) {
     }
 }
 
+# ---- Optional: Claude ------------------------------------------------------------------
+# Only when Claude Code is on this PC (silent otherwise), and only with the owner's yes: it changes
+# Claude Code's settings file. Not asked in automated tests (-NoPause), or with nobody to answer.
+$claudeState = Invoke-ClaudeSetup 'status'
+$claudeLater = 'Later: right-click the Lid Awake icon by the clock -> Claude alerts and usage from Claude Code...'
+if ($claudeState.Code -eq 0) {
+    Show-Step 'Claude alerts on your phone (optional)'
+    Show-Ok 'Already set up'
+} elseif ($claudeState.Code -eq -1) {
+    Show-Step 'Claude alerts on your phone (optional)'
+    Show-Note ("Skipped: Lid Awake couldn't check Claude Code's settings (" + ([string]$claudeState.Text).TrimEnd('.') + '). ' + $claudeLater)
+} elseif ($claudeState.Code -eq 3) {
+    Show-Step 'Claude alerts on your phone (optional)'
+    Show-Note "Skipped: Claude Code's settings file (.claude\settings.json in your user folder) can't be read (invalid JSON, too big, or an unexpected shape), so Lid Awake left it alone."
+} elseif ($claudeState.Code -eq 1) {
+    Show-Step 'Claude alerts on your phone (optional)'
+    Show-Note 'Shows your Claude usage after each reply, and alerts your phone when Claude finishes or needs you.'
+    Show-Note "It adds Lid Awake to Claude Code's settings (a copy of the old file is saved first)."
+    if ($NoPause -or -not [Environment]::UserInteractive) {
+        Show-Note ('Skipped. ' + $claudeLater)
+    } else {
+        $answer = Read-Host '       Turn it on? [Y/n]'
+        if ($answer.Trim() -match '^(n|no)$') {
+            Show-Note ('Skipped. ' + $claudeLater)
+        } else {
+            $claudeOn = Invoke-ClaudeSetup 'on'
+            if ($claudeOn.Code -eq 0) {
+                Show-Ok 'Turned on. Claude Code picks it up in new sessions.'
+                if ($claudeOn.Text -match 'own status line') { Show-Note 'Your own status line is kept; Lid Awake asks Claude Code for the usage numbers itself.' }
+            } else {
+                Write-Host ('  [X] Not turned on: ' + $claudeOn.Text) -ForegroundColor Red
+            }
+        }
+    }
+}
+
 Write-Host ''
-Write-Host 'Almost done: right-click the Lid Awake icon by the clock -> Set phone password..., then turn it on.'
+Write-Host 'Almost done: in the Set up Lid Awake window, set a phone password, turn Lid Awake on and scan the code with your phone. (Later: right-click the Lid Awake icon by the clock -> Set up phone...)'
 Wait-ForEnter
 exit 0

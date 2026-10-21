@@ -393,6 +393,39 @@ public class KeepAwakeTests : IDisposable
         Assert.Equal((1, 2), (fake.Ac, fake.Dc));
     }
 
+    // Serve's removal and the brightness start first, then the lid goes back, and only then is the
+    // history written (off the caller's thread); all of them are waited for together, within the
+    // same few seconds.
+    [Fact]
+    public void SessionEndWritesTheHistoryLastAndWaitsForEverythingTogether()
+    {
+        KeepAwake.On(settings);
+        var order = new List<string>();
+        bool? holdingAtFlush = null;
+        int flushThread = -1;
+        var stuck = new ManualResetEventSlim(false);
+        var watch = Stopwatch.StartNew();
+
+        SessionEnd.TurnOff(settings,
+            () => { lock (order) order.Add("serve"); return Task.Run(() => stuck.Wait(TimeSpan.FromSeconds(30))); },
+            null, TimeSpan.FromMilliseconds(500),
+            brightness: () => { lock (order) order.Add("brightness"); return Task.CompletedTask; },
+            flush: () =>
+            {
+                holdingAtFlush = KeepAwake.IsHolding;
+                flushThread = Environment.CurrentManagedThreadId;
+                lock (order) order.Add("flush");
+            });
+
+        watch.Stop();
+        stuck.Set();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), $"took {watch.Elapsed}");
+        lock (order) Assert.Equal(new[] { "serve", "brightness", "flush" }, order);
+        Assert.False(holdingAtFlush);
+        Assert.NotEqual(Environment.CurrentManagedThreadId, flushThread);
+        Assert.Equal((1, 2), (fake.Ac, fake.Dc));
+    }
+
     // The plan the values came from is where they go back, even if the owner (or a maker's power
     // app) switched plans while Lid Awake was on. The restore is also read back in that plan: if
     // it were read in the active one, the saved values would never be confirmed and cleared.

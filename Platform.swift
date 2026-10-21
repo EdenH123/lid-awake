@@ -5,6 +5,6 @@ import Foundation
 // "windows" and its own list (docs/API.md).
 enum Platform {
     static let os = "mac"
-    static let features = ["screen", "control", "camera", "apps", "history", "memory", "push", "passkeys", "limits"]
+    static let features = ["screen", "control", "camera", "apps", "history", "memory", "push", "passkeys", "limits", "heat"]
     static var info: [String: Any] { ["os": os, "features": features] }
 }

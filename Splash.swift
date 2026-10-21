@@ -19,16 +19,14 @@ enum Splash {
     private static var cache: [String: Data] = [:]
     private static let lock = NSLock()
 
-    // "/splash/1206x2622.png" → the PNG, for listed sizes only.
+    // "/splash/1206x2622.png" → the PNG, for listed sizes only, spelled exactly as the link tags
+    // spell them ("/splash/01206x2622.png" is not drawn), so the cache holds one picture per size.
     static func png(forPath path: String) -> Data? {
-        let name = path.dropFirst("/splash/".count).replacingOccurrences(of: ".png", with: "")
-        let parts = name.split(separator: "x").compactMap { Int($0) }
-        guard parts.count == 2, sizes.contains(where: { $0.w * $0.scale == parts[0] && $0.h * $0.scale == parts[1] }) else { return nil }
+        guard let size = sizes.first(where: { "/splash/\($0.w * $0.scale)x\($0.h * $0.scale).png" == path }) else { return nil }
         lock.lock(); defer { lock.unlock() }
-        if let cached = cache[name] { return cached }
-        let scale = sizes.first { $0.w * $0.scale == parts[0] && $0.h * $0.scale == parts[1] }!.scale
-        let png = draw(width: parts[0], height: parts[1], scale: scale)
-        cache[name] = png
+        if let cached = cache[path] { return cached }
+        let png = draw(width: size.w * size.scale, height: size.h * size.scale, scale: size.scale)
+        cache[path] = png
         return png
     }
 
