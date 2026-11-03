@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using LidAwake;
@@ -348,6 +349,186 @@ public class ClaudeUsageTests : IDisposable
         };
         empty.Check();
         Assert.Single(sent.All);
+    }
+
+    // ---- Signed out (2.0.1): "claude auth status", the state, and old files ----
+
+    // What a signed-out Claude Code's "-p /usage" prints: a cost summary, no numbers.
+    const string CostOnly = "Total cost:            $0.0000\nTotal duration (API):  0s\nTotal duration (wall): 1.2s\n";
+
+    const string SignedOutJson =
+        "{\n  \"loggedIn\": false,\n  \"authMethod\": \"none\",\n  \"apiProvider\": \"firstParty\",\n  \"analyticsDisabled\": false\n}\n";
+
+    [Theory]
+    [InlineData(SignedOutJson, false)]
+    [InlineData("{\"loggedIn\": true, \"authMethod\": \"claude.ai\"}", true)]
+    [InlineData("warning: something\r\n{\"loggedIn\":false}\r\n", false)]
+    [InlineData("", null)]
+    [InlineData("Not logged in", null)]
+    [InlineData("{\"loggedIn\": \"no\"}", null)]
+    [InlineData("{\"authMethod\": \"none\"}", null)]
+    [InlineData("{\"loggedIn\": fals", null)]
+    [InlineData("} {", null)]
+    public void ReadsAuthStatus(string text, bool? expected) => Assert.Equal(expected, ClaudeUsage.ParseSignedIn(text));
+
+    [Fact]
+    public void ParseSignedInOfNothing() => Assert.Null(ClaudeUsage.ParseSignedIn(null));
+
+    const string SavedNumbers = "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":21,\"resets_at\":1760010000}},\"updated\":1760000000}";
+
+    [Fact]
+    public void AnOldFileWithoutAStateIsOkAndAStateIsRead()
+    {
+        var folder = NewFolder();
+        Assert.Equal(ClaudeUsage.UsageState.Ok, ClaudeUsage.ReadFile(WriteUsage(folder, SavedNumbers))!.State);
+        var signedOut = ClaudeUsage.ReadFile(WriteUsage(folder, SavedNumbers.TrimEnd('}') + ",\"state\":\"signedOut\"}"))!;
+        Assert.Equal(ClaudeUsage.UsageState.SignedOut, signedOut.State);
+        Assert.Equal(1760000000, signedOut.Updated);
+        Assert.Equal(21, signedOut.FiveHour!.Value.Pct);
+        Assert.Equal(ClaudeUsage.UsageState.Failed, ClaudeUsage.ReadFile(WriteUsage(folder, SavedNumbers.TrimEnd('}') + ",\"state\":\"failed\"}"))!.State);
+        // Something else, or not a string: Ok.
+        Assert.Equal(ClaudeUsage.UsageState.Ok, ClaudeUsage.ReadFile(WriteUsage(folder, SavedNumbers.TrimEnd('}') + ",\"state\":\"later\"}"))!.State);
+        Assert.Equal(ClaudeUsage.UsageState.Ok, ClaudeUsage.ReadFile(WriteUsage(folder, SavedNumbers.TrimEnd('}') + ",\"state\":3}"))!.State);
+        // A state alone is no file.
+        Assert.Null(ClaudeUsage.ReadFile(WriteUsage(folder, "{\"state\":\"signedOut\"}")));
+    }
+
+    [Fact]
+    public async Task SignedOutThenSignedInAgain()
+    {
+        var folder = NewFolder();
+        var path = WriteUsage(folder, SavedNumbers);
+        var now = Noon;
+        string? answer = CostOnly;
+        bool? loggedIn = false;
+        int authAsked = 0;
+        var usage = new ClaudeUsage(folder, () => answer, () => now, Utc, () => { authAsked++; return loggedIn; });
+        int saved = 0;
+        usage.Saved += () => saved++;
+
+        // No numbers, and Claude Code says it is signed out.
+        await usage.Refresh(TimeSpan.Zero);
+        Assert.Equal(1, authAsked);
+        Assert.Equal(1, saved);
+        var u = usage.Read()!;
+        Assert.Equal(ClaudeUsage.UsageState.SignedOut, u.State);
+        // The old numbers and their time stay in the file, with the state beside them.
+        Assert.Equal(1760000000, u.Updated);
+        Assert.Equal(21, u.FiveHour!.Value.Pct);
+        using (var doc = JsonDocument.Parse(File.ReadAllText(path)))
+        {
+            Assert.Equal("signedOut", doc.RootElement.GetProperty("state").GetString());
+            Assert.Equal(1760000000, doc.RootElement.GetProperty("updated").GetInt64());
+            Assert.Equal(21, doc.RootElement.GetProperty("rate_limits").GetProperty("five_hour").GetProperty("used_percentage").GetDouble());
+        }
+        // For /status.
+        Assert.True((bool)usage.ForStatus()!["signedOut"]!);
+
+        // Still signed out at the next check: nothing new (the file isn't written again).
+        now = Noon.AddMinutes(4);
+        var written = File.GetLastWriteTimeUtc(path);
+        await usage.Refresh(ClaudeUsage.AskForStatus);
+        Assert.Equal(2, authAsked);
+        Assert.Equal(1, saved);
+        Assert.Equal(written, File.GetLastWriteTimeUtc(path));
+
+        // Signed in: numbers again, Ok, and auth status isn't asked.
+        answer = MacSample.Replace("Oct 8", "Oct 21").Replace("Oct 10", "Oct 23");
+        now = Noon.AddMinutes(8);
+        await usage.Refresh(ClaudeUsage.AskForStatus);
+        Assert.Equal(2, authAsked);
+        Assert.Equal(2, saved);
+        u = usage.Read()!;
+        Assert.Equal(ClaudeUsage.UsageState.Ok, u.State);
+        Assert.Equal(Noon.AddMinutes(8).ToUnixTimeSeconds(), u.Updated);
+        Assert.Equal(74, u.FiveHour!.Value.Pct);
+        Assert.DoesNotContain("signedOut", usage.ForStatus()!.Keys);
+        using (var doc = JsonDocument.Parse(File.ReadAllText(path)))
+            Assert.False(doc.RootElement.TryGetProperty("state", out _));
+    }
+
+    [Fact]
+    public async Task NoNumbersButSignedInOrUnknownIsFailed()
+    {
+        foreach (var loggedIn in new bool?[] { true, null })
+        {
+            var folder = NewFolder();
+            WriteUsage(folder, SavedNumbers);
+            var usage = new ClaudeUsage(folder, () => "Error: timed out", () => Noon, Utc, () => loggedIn);
+            await usage.Refresh(TimeSpan.Zero);
+            var u = usage.Read()!;
+            Assert.Equal(ClaudeUsage.UsageState.Failed, u.State);
+            Assert.True(u.Stale(Noon));
+            Assert.DoesNotContain("signedOut", usage.ForStatus()!.Keys);
+        }
+        // An auth question that throws is "unknown" too.
+        var throwing = new ClaudeUsage(NewFolder(), () => null, () => Noon, Utc, () => throw new InvalidOperationException("auth"));
+        await throwing.Refresh(TimeSpan.Zero);
+        Assert.Null(throwing.Read());
+    }
+
+    [Fact]
+    public async Task SignedOutWithNoFileIsStillSaid()
+    {
+        var folder = NewFolder();
+        var usage = new ClaudeUsage(folder, () => CostOnly, () => Noon, Utc, () => false);
+        await usage.Refresh(TimeSpan.Zero);
+        Assert.False(File.Exists(usage.FilePath));  // nothing to keep, so no file
+        Assert.Equal(new ClaudeUsage.Snapshot(0, null, null, ClaudeUsage.UsageState.SignedOut), usage.Read());
+        var json = JsonSerializer.Serialize(usage.ForStatus());
+        Assert.Equal("{\"updated\":0,\"signedOut\":true}", json);
+    }
+
+    // The status line (Claude Code answered, so it is signed in) writes only rate_limits and updated:
+    // after it, the file says Ok, even with the same numbers as the signed-out file's.
+    [Fact]
+    public async Task TheStatusLineAfterSignedOutMeansOk()
+    {
+        var folder = NewFolder();
+        var now = Noon;
+        var usage = new ClaudeUsage(folder, () => CostOnly, () => now, Utc, () => false);
+        var line = Encoding.UTF8.GetBytes("{\"rate_limits\":{\"five_hour\":{\"used_percentage\":21,\"resets_at\":1760010000}}}");
+        ClaudeHook.StatusLine(line, usage.FilePath, Noon.AddSeconds(-30));
+        await usage.Refresh(TimeSpan.Zero);
+        Assert.Equal(ClaudeUsage.UsageState.SignedOut, usage.Read()!.State);
+        // Signed in again 10 seconds later, the same numbers: written anyway, and Ok.
+        ClaudeHook.StatusLine(line, usage.FilePath, Noon.AddSeconds(10));
+        var u = usage.Read()!;
+        Assert.Equal(ClaudeUsage.UsageState.Ok, ClaudeUsage.ReadFile(usage.FilePath)!.State);
+        Assert.Equal(ClaudeUsage.UsageState.Ok, u.State);
+        Assert.Equal(Noon.AddSeconds(10).ToUnixTimeSeconds(), u.Updated);
+    }
+
+    [Fact]
+    public void TheLastCheckAndTheFile()
+    {
+        var file = new ClaudeUsage.Snapshot(1000, new ClaudeUsage.Window(5, 0), null);
+        Assert.Same(file, ClaudeUsage.Merge(file, null, 0));
+        Assert.Equal(ClaudeUsage.UsageState.SignedOut, ClaudeUsage.Merge(file, ClaudeUsage.UsageState.SignedOut, 2000)!.State);
+        // Numbers saved after that check: the file's own state.
+        Assert.Same(file, ClaudeUsage.Merge(file, ClaudeUsage.UsageState.SignedOut, 999));
+        Assert.Null(ClaudeUsage.Merge(null, ClaudeUsage.UsageState.Failed, 2000));
+        Assert.Null(ClaudeUsage.Merge(null, ClaudeUsage.UsageState.Ok, 2000));
+    }
+
+    [Fact]
+    public void WhenOldNumbersWereSaved()
+    {
+        var c = CultureInfo.InvariantCulture;
+        long Ago(TimeSpan t) => (Noon - t).ToUnixTimeSeconds();
+        Assert.Equal("updated just now", ClaudeUsage.UpdatedAgo(Ago(TimeSpan.FromSeconds(20)), Noon, Utc, c));
+        Assert.Equal("updated just now", ClaudeUsage.UpdatedAgo(Ago(TimeSpan.FromMinutes(-5)), Noon, Utc, c));  // a clock that moved
+        Assert.Equal("updated 12 min ago", ClaudeUsage.UpdatedAgo(Ago(TimeSpan.FromMinutes(12)), Noon, Utc, c));
+        Assert.Equal("updated 3 h ago", ClaudeUsage.UpdatedAgo(Ago(TimeSpan.FromMinutes(200)), Noon, Utc, c));
+        Assert.Equal("updated yesterday 22:52", ClaudeUsage.UpdatedAgo(Ago(new TimeSpan(13, 8, 0)), Noon, Utc, c));
+        Assert.Equal("updated Fri 22:52", ClaudeUsage.UpdatedAgo(new DateTimeOffset(2026, 10, 16, 22, 52, 0, TimeSpan.Zero).ToUnixTimeSeconds(), Noon, Utc, c));
+        Assert.Equal("updated Oct 13", ClaudeUsage.UpdatedAgo(new DateTimeOffset(2026, 10, 13, 22, 52, 0, TimeSpan.Zero).ToUnixTimeSeconds(), Noon, Utc, c));
+
+        // Old: over 30 minutes, or the last check failed; never when the time is unknown.
+        Assert.False(new ClaudeUsage.Snapshot(Ago(TimeSpan.FromMinutes(30)), null, null).Stale(Noon));
+        Assert.True(new ClaudeUsage.Snapshot(Ago(TimeSpan.FromMinutes(31)), null, null).Stale(Noon));
+        Assert.True(new ClaudeUsage.Snapshot(Ago(TimeSpan.FromMinutes(1)), null, null, ClaudeUsage.UsageState.Failed).Stale(Noon));
+        Assert.False(new ClaudeUsage.Snapshot(0, null, null, ClaudeUsage.UsageState.Failed).Stale(Noon));
     }
 
     // ---- Finding Claude Code, and whether it is safe to run (a fake owner and access list) ----

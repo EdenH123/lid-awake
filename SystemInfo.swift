@@ -51,10 +51,16 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
         .appendingPathComponent("Library/Application Support/LidAwake/claude-usage.json")
     private var usageCheckedAt = Date.distantPast
     private var usageChecking = false
+    // What the last check found, and when (Unix seconds); also in the file, when there is one.
+    // Set on a background queue, read from the menu and the web server: under the lock.
+    private let usageStateLock = NSLock()
+    private var usageState: (state: ClaudeUsageState, at: Int)?
 
     // Asks Claude Code for the numbers ("/usage" sends no message and uses none of the limit).
     // Called on each status request; runs at most every 3 minutes, in the background, so the
     // numbers stay fresh while the phone is looking even when no terminal session is running.
+    // No numbers: "claude auth status" says whether Claude Code is signed out (asked only then, so
+    // never more often than "/usage"; signed out, the checks go on, so it recovers by itself).
     func refreshClaudeUsage(every interval: TimeInterval = 180) {
         guard !usageChecking, Date().timeIntervalSince(usageCheckedAt) > interval,
               let claude = ["/opt/homebrew/bin/claude", "/usr/local/bin/claude",
@@ -66,17 +72,29 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
             // Skip the user's hooks and plugins (an empty folder has no project settings), and
             // don't save a session for this check.
             var template = Array((NSTemporaryDirectory() + "lidawake-usage.XXXXXX").utf8CString)
-            let text = template.withUnsafeMutableBufferPointer { buffer -> String in
-                guard let dir = mkdtemp(buffer.baseAddress).map({ String(cString: $0) }) else { return "" }
+            let found = template.withUnsafeMutableBufferPointer { buffer -> (limits: [String: Any]?, signedIn: Bool?) in
+                guard let dir = mkdtemp(buffer.baseAddress).map({ String(cString: $0) }) else { return (nil, nil) }
                 defer { try? FileManager.default.removeItem(atPath: dir) }
-                return runOnItsOwn(claude, ["-p", "/usage", "--setting-sources", "local", "--no-session-persistence"],
-                                   in: dir, timeout: 45) ?? ""
+                let text = runOnItsOwn(claude, ["-p", "/usage", "--setting-sources", "local", "--no-session-persistence"],
+                                       in: dir, timeout: 45) ?? ""
+                if let limits = Self.parseUsage(text) { return (limits, nil) }
+                return (nil, ClaudeUsageWords.parseSignedIn(runOnItsOwn(claude, ["auth", "status"], in: dir, timeout: 15) ?? ""))
             }
-            if let limits = Self.parseUsage(text),
-               let data = try? JSONSerialization.data(withJSONObject: ["rate_limits": limits, "updated": Int(Date().timeIntervalSince1970)]) {
-                try? FileManager.default.createDirectory(at: Self.usageFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try? data.write(to: Self.usageFile, options: .atomic)
+            let now = Int(Date().timeIntervalSince1970)
+            let state: ClaudeUsageState
+            if let limits = found.limits {
+                state = .ok
+                if let data = try? JSONSerialization.data(withJSONObject: ["rate_limits": limits, "updated": now]) {
+                    try? FileManager.default.createDirectory(at: Self.usageFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? data.write(to: Self.usageFile, options: .atomic)
+                }
+            } else {
+                state = found.signedIn == false ? .signedOut : .failed
+                Self.saveUsageState(state)
             }
+            self.usageStateLock.lock()
+            self.usageState = (state, now)
+            self.usageStateLock.unlock()
             DispatchQueue.main.async { self.usageChecking = false }
         }
     }
@@ -114,14 +132,41 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
         return nil
     }
 
-    func claudeUsage() -> [String: Any]? {
-        let url = Self.usageFile
-        // A small, ordinary file only; the numbers are checked below so odd values can't crash anything.
-        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+    // A check that found no numbers: its state goes beside the numbers already saved, which stay
+    // as they were (with their "updated"). Only into a file that is there, and only when it changes.
+    private static func saveUsageState(_ state: ClaudeUsageState) {
+        guard var saved = savedUsageFile(), saved["rate_limits"] is [String: Any],
+              ClaudeUsageState(saved: saved["state"]) != state else { return }
+        saved["state"] = state == .ok ? nil : state.rawValue
+        if let data = try? JSONSerialization.data(withJSONObject: saved) { try? data.write(to: usageFile, options: .atomic) }
+    }
+
+    // A small, ordinary file only; the numbers are checked by the reader so odd values can't crash anything.
+    private static func savedUsageFile() -> [String: Any]? {
+        guard let size = try? usageFile.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
               size.isRegularFile == true, (size.fileSize ?? 0) < 64 * 1024,
-              let data = try? Data(contentsOf: url),
-              let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let limits = saved["rate_limits"] as? [String: Any] else { return nil }
+              let data = try? Data(contentsOf: usageFile) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    // For /status (docs/API.md 6.3): the numbers, and "signedOut": true while Claude Code is signed out.
+    func claudeUsage() -> [String: Any]? {
+        let (usage, state) = claudeUsageAndState()
+        guard var out = usage else { return nil }
+        if state == .signedOut { out["signedOut"] = true }
+        return out
+    }
+
+    // The saved numbers with what the last check found (ClaudeUsageWords.merge).
+    func claudeUsageAndState() -> (usage: [String: Any]?, state: ClaudeUsageState) {
+        usageStateLock.lock()
+        let last = usageState
+        usageStateLock.unlock()
+        return ClaudeUsageWords.merge(file: savedClaudeUsage(), last: last)
+    }
+
+    private func savedClaudeUsage() -> (usage: [String: Any], state: ClaudeUsageState)? {
+        guard let saved = Self.savedUsageFile(), let limits = saved["rate_limits"] as? [String: Any] else { return nil }
         let updated = (saved["updated"] as? Double).flatMap { $0.isFinite && $0 > 0 && $0 < 1e11 ? Int($0) : nil } ?? 0
         var out: [String: Any] = ["updated": updated]
         for (key, name) in [("five_hour", "fiveHour"), ("seven_day", "sevenDay")] {
@@ -131,7 +176,7 @@ final class SystemInfo: NSObject, CLLocationManagerDelegate {
                 out[name] = ["pct": pct, "resetsAt": resets]
             }
         }
-        return out
+        return (out, ClaudeUsageState(saved: saved["state"]))
     }
 
     // MARK: Processor

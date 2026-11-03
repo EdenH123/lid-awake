@@ -6,7 +6,9 @@ namespace LidAwake;
 // draw text beside a tray icon, so the Mac's "59% · 1h40m" goes into the icon's tooltip instead,
 // after the tooltip's own text, while "Show Claude usage by the clock" is ticked (claudeInBar, on
 // by default). The menu has a greyed line "Claude: Session 59%, resets 15:10 · Week 84%, resets
-// Fri 22:59". Numbers past their reset time are hidden until fresh ones arrive. The third item
+// Fri 22:59". Numbers past their reset time are hidden until fresh ones arrive; numbers that may
+// be old (the last check failed, or saved over 30 minutes ago) end with " · updated 3 h ago"; and
+// while Claude Code is signed out the line says so, with no numbers at all. The third item
 // sets Claude Code up to send its numbers and session events here (ClaudeSettingsFile).
 //
 // The tray puts Items in its menu (TrayApp.InsertAfterLimits), shows TooltipText() as the
@@ -18,6 +20,8 @@ public sealed class TrayClaude
     public const string HooksTitle = "Claude alerts and usage from Claude Code…";
     public const string InBarKey = "claudeInBar";
     public const string Checking = "Claude usage: checking…";
+    public const string SignedOutLine = "Claude Code is signed out: in a terminal type claude, then /login";
+    public const string SignedOutTip = "Claude Code is signed out";
 
     readonly Settings settings;
     readonly ClaudeUsage usage;
@@ -58,11 +62,13 @@ public sealed class TrayClaude
 
     // ---- The words (pure, for the tests) ----
 
-    public readonly record struct Texts(string Line, string? Bar);
+    public readonly record struct Texts(string Line, string? Bar, bool SignedOut = false);
 
-    // The menu line, and "59% · 1h40m" for the session (null: nothing to show).
+    // The menu line, and "59% · 1h40m" for the session (null: nothing to show). Signed out: the
+    // line says how to sign in, and no numbers (they can't be fresh).
     public static Texts Describe(ClaudeUsage.Snapshot? usage, DateTimeOffset now, TimeZoneInfo zone, CultureInfo culture)
     {
+        if (usage?.State == ClaudeUsage.UsageState.SignedOut) return new Texts(SignedOutLine, null, true);
         long unix = now.ToUnixTimeSeconds();
         (int Pct, DateTimeOffset? Resets)? Window(ClaudeUsage.Window? w)
         {
@@ -73,12 +79,17 @@ public sealed class TrayClaude
         }
         var session = Window(usage?.FiveHour);
         var week = Window(usage?.SevenDay);
-        string? bar = session is { } s ? $"{s.Pct}%" + (s.Resets is { } r ? " · " + ClaudeUsage.ShortDuration(r - now) : "") : null;
+        // Old numbers are never shown as current.
+        var old = usage is { } u && u.Stale(now) ? " · " + ClaudeUsage.UpdatedAgo(u.Updated, now, zone, culture) : "";
+        string? bar = session is { } s ? $"{s.Pct}%" + (s.Resets is { } r ? " · " + ClaudeUsage.ShortDuration(r - now) : "") + old : null;
         var parts = new List<string>();
         if (session is { } a) parts.Add($"Session {a.Pct}%" + (a.Resets is { } ra ? ", resets " + ClaudeUsage.When(ra, now, zone, culture) : ""));
         if (week is { } b) parts.Add($"Week {b.Pct}%" + (b.Resets is { } rb ? ", resets " + ClaudeUsage.When(rb, now, zone, culture) : ""));
-        return new Texts(parts.Count == 0 ? Checking : "Claude: " + string.Join(" · ", parts), bar);
+        return new Texts(parts.Count == 0 ? Checking : "Claude: " + string.Join(" · ", parts) + old, bar);
     }
+
+    // The tooltip's last line for these texts ("Claude 59% · 1h40m"), or null.
+    public static string? Tooltip(Texts t) => t.SignedOut ? SignedOutTip : t.Bar != null ? "Claude " + t.Bar : null;
 
     // ---- In the tray ----
 
@@ -87,8 +98,8 @@ public sealed class TrayClaude
     // are in reads the numbers again (asking Claude Code at most once a minute; MenuOpened).
     public ToolStripItem[] Items => new ToolStripItem[] { line, barItem, hooksItem };
 
-    // The tooltip's last line while "Show Claude usage by the clock" is on ("Claude 59% · 1h40m"),
-    // or null. For the tray's tooltip; cheap (the numbers are read every 30 seconds, not here).
+    // The tooltip's last line while "Show Claude usage by the clock" is on ("Claude 59% · 1h40m",
+    // or "Claude Code is signed out"), or null. For the tray's tooltip; cheap (the numbers are read every 30 seconds, not here).
     public string? TooltipText() => tipExtra;
 
     // On the UI thread, once the items are in the menu. `onUi` posts to it (new numbers and the
@@ -143,7 +154,7 @@ public sealed class TrayClaude
         catch (Exception) { t = new Texts(Checking, null); }
         line.Text = t.Line;
         barItem.Checked = InBar;
-        tipExtra = InBar && t.Bar != null ? "Claude " + t.Bar : null;
+        tipExtra = InBar ? Tooltip(t) : null;
     }
 
     // On the UI thread: reads Claude Code's settings in the background (unless a read began less

@@ -409,10 +409,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if statusItem.button?.title != title { statusItem.button?.title = title }
     }
 
-    // Reads the saved Claude numbers into the bar text and the menu line.
+    // Reads the saved Claude numbers into the bar text and the menu line. Signed out, the line says
+    // how to sign in and no numbers are shown; numbers that may be old say when they were saved.
     func updateClaudeUsage() {
         let now = Date().timeIntervalSince1970
-        let usage = SystemInfo.shared.claudeUsage()
+        let (usage, state) = SystemInfo.shared.claudeUsageAndState()
+        if state == .signedOut {
+            claudeBarText = nil
+            claudeLine.title = ClaudeUsageWords.signedOutLine
+            statusItem.button?.toolTip = baseToolTip + "\n" + ClaudeUsageWords.signedOutTip
+            return
+        }
+        let updated = usage?["updated"] as? Int ?? 0
+        let old = ClaudeUsageWords.isStale(updated: updated, state: state, now: Date())
+            ? " · " + ClaudeUsageWords.updatedAgo(updated, now: Date()) : ""
         func window(_ key: String) -> (pct: Int, resets: Date?)? {
             guard let w = usage?[key] as? [String: Any], let pct = w["pct"] as? Double else { return nil }
             let at = Double(w["resetsAt"] as? Int ?? 0)
@@ -422,7 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let session = window("fiveHour"), week = window("sevenDay")
         if let s = session {
-            claudeBarText = claudeInBar ? "\(s.pct)%" + (s.resets.map { " · " + shortDuration($0.timeIntervalSinceNow) } ?? "") : nil
+            claudeBarText = claudeInBar ? "\(s.pct)%" + (s.resets.map { " · " + shortDuration($0.timeIntervalSinceNow) } ?? "") + old : nil
         } else {
             claudeBarText = nil
         }
@@ -433,8 +443,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var lines: [String] = []
         if let s = session { lines.append("Session \(s.pct)%" + (s.resets.map { ", resets \(when($0))" } ?? "")) }
         if let w = week { lines.append("Week \(w.pct)%" + (w.resets.map { ", resets \(when($0))" } ?? "")) }
-        claudeLine.title = lines.isEmpty ? "Claude usage: checking…" : "Claude: " + lines.joined(separator: " · ")
-        statusItem.button?.toolTip = baseToolTip + (session.map { "\nClaude session: \($0.pct)% used" + ($0.resets.map { ", resets \(when($0))" } ?? "") } ?? "")
+        claudeLine.title = lines.isEmpty ? "Claude usage: checking…" : "Claude: " + lines.joined(separator: " · ") + old
+        statusItem.button?.toolTip = baseToolTip + (session.map { "\nClaude session: \($0.pct)% used" + ($0.resets.map { ", resets \(when($0))" } ?? "") + old } ?? "")
     }
 
     @objc func toggleClaudeInBar() {

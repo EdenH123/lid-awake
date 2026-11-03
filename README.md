@@ -281,6 +281,7 @@ If you turned on **Claude alerts on your phone**, the uninstaller also takes Lid
 | The **Screen** tab stays black | Do Step 6 again: Screen Recording must be on for Lid Awake. |
 | The camera says **the lid is closed** | macOS switches off the built-in camera and microphone when the lid is closed. Open the lid, or plug in a USB camera. |
 | You **forgot the phone password** | Cup in the menu bar → **Change phone password…** |
+| **Claude usage isn't updating**, or the Lid Awake menu says **"Claude Code is signed out"** | The command-line Claude Code on the computer is signed out (the Claude desktop app signs in on its own, separately). Open Terminal, type `claude`, then `/login`, and sign in. The numbers come back within a few minutes. |
 | **Windows:** the Lid Awake icon is missing from the tray | Look under the **^** arrow by the clock. If it isn't there, open **Install Lid Awake (Windows)** again. |
 | **Windows:** a message says **"Phone page not available"** | Another program is using the port Lid Awake needs (8787). Restart the PC, then turn **Lid Awake on** again. |
 | **Windows:** the phone **can't reach the PC** | Make sure Tailscale is on, on both the PC and the phone, with the same account. |
