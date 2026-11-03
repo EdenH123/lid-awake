@@ -13,6 +13,8 @@ public class TrayClaudeTests : IDisposable
     static readonly DateTimeOffset Noon = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
     static readonly long In100Minutes = Noon.AddMinutes(100).ToUnixTimeSeconds();
     static readonly long Friday = new DateTimeOffset(2026, 10, 23, 22, 59, 0, TimeSpan.Zero).ToUnixTimeSeconds();
+    // Saved two minutes ago: current numbers.
+    static readonly long Fresh = Noon.AddMinutes(-2).ToUnixTimeSeconds();
 
     string NewFolder()
     {
@@ -34,7 +36,7 @@ public class TrayClaudeTests : IDisposable
     [Fact]
     public void TheMenuLineAndTheTooltipText()
     {
-        var usage = new ClaudeUsage.Snapshot(1, new ClaudeUsage.Window(58.5, In100Minutes), new ClaudeUsage.Window(84.4, Friday));
+        var usage = new ClaudeUsage.Snapshot(Fresh, new ClaudeUsage.Window(58.5, In100Minutes), new ClaudeUsage.Window(84.4, Friday));
         var t = TrayClaude.Describe(usage, Noon, Utc, Invariant);
         Assert.Equal("Claude: Session 59%, resets 13:40 · Week 84%, resets Fri 22:59", t.Line);
         Assert.Equal("59% · 1h40m", t.Bar);
@@ -45,7 +47,7 @@ public class TrayClaudeTests : IDisposable
     {
         Assert.Equal(new TrayClaude.Texts("Claude usage: checking…", null), TrayClaude.Describe(null, Noon, Utc, Invariant));
         // The session reset an hour ago: hidden; the week stays.
-        var stale = new ClaudeUsage.Snapshot(1, new ClaudeUsage.Window(99, Noon.AddHours(-1).ToUnixTimeSeconds()), new ClaudeUsage.Window(10, Friday));
+        var stale = new ClaudeUsage.Snapshot(Fresh, new ClaudeUsage.Window(99, Noon.AddHours(-1).ToUnixTimeSeconds()), new ClaudeUsage.Window(10, Friday));
         var t = TrayClaude.Describe(stale, Noon, Utc, Invariant);
         Assert.Equal("Claude: Week 10%, resets Fri 22:59", t.Line);
         Assert.Null(t.Bar);
@@ -54,6 +56,44 @@ public class TrayClaudeTests : IDisposable
         Assert.Equal("Claude: Session 7%", bare.Line);
         Assert.Equal("7%", bare.Bar);
         Assert.Equal("Claude usage: checking…", TrayClaude.Describe(new ClaudeUsage.Snapshot(0, null, null), Noon, Utc, Invariant).Line);
+    }
+
+    // Signed out: how to sign in, and no numbers anywhere (they can't be fresh).
+    [Fact]
+    public void SignedOutSaysSoWithNoNumbers()
+    {
+        var usage = new ClaudeUsage.Snapshot(Fresh, new ClaudeUsage.Window(21, In100Minutes), new ClaudeUsage.Window(84, Friday), ClaudeUsage.UsageState.SignedOut);
+        var t = TrayClaude.Describe(usage, Noon, Utc, Invariant);
+        Assert.Equal("Claude Code is signed out: in a terminal type claude, then /login", t.Line);
+        Assert.Null(t.Bar);
+        Assert.True(t.SignedOut);
+        Assert.Equal("Claude Code is signed out", TrayClaude.Tooltip(t));
+        Assert.Equal("Lid Awake: on\nClaude Code is signed out", TrayText.Tooltip(true, null, TrayActivity.None, TrayClaude.Tooltip(t)));
+        // With no numbers saved at all, the same.
+        Assert.Equal(t, TrayClaude.Describe(new ClaudeUsage.Snapshot(0, null, null, ClaudeUsage.UsageState.SignedOut), Noon, Utc, Invariant));
+        Assert.Null(TrayClaude.Tooltip(TrayClaude.Describe(null, Noon, Utc, Invariant)));
+    }
+
+    // Numbers that may be old say when they were saved, in the line and the tooltip.
+    [Fact]
+    public void OldNumbersSayWhenTheyWereSaved()
+    {
+        var threeHours = new ClaudeUsage.Snapshot(Noon.AddHours(-3).ToUnixTimeSeconds(), new ClaudeUsage.Window(58.5, In100Minutes), new ClaudeUsage.Window(84.4, Friday));
+        var t = TrayClaude.Describe(threeHours, Noon, Utc, Invariant);
+        Assert.Equal("Claude: Session 59%, resets 13:40 · Week 84%, resets Fri 22:59 · updated 3 h ago", t.Line);
+        Assert.Equal("59% · 1h40m · updated 3 h ago", t.Bar);
+        Assert.Equal("Claude 59% · 1h40m · updated 3 h ago", TrayClaude.Tooltip(t));
+
+        var yesterday = new ClaudeUsage.Snapshot(new DateTimeOffset(2026, 10, 19, 22, 52, 0, TimeSpan.Zero).ToUnixTimeSeconds(), null, new ClaudeUsage.Window(84.4, Friday));
+        Assert.Equal("Claude: Week 84%, resets Fri 22:59 · updated yesterday 22:52", TrayClaude.Describe(yesterday, Noon, Utc, Invariant).Line);
+
+        // The last check failed: old even at two minutes.
+        var failed = new ClaudeUsage.Snapshot(Fresh, new ClaudeUsage.Window(7, 0), null, ClaudeUsage.UsageState.Failed);
+        Assert.Equal(new TrayClaude.Texts("Claude: Session 7% · updated 2 min ago", "7% · updated 2 min ago"), TrayClaude.Describe(failed, Noon, Utc, Invariant));
+
+        // 30 minutes is still current.
+        var thirty = new ClaudeUsage.Snapshot(Noon.AddMinutes(-30).ToUnixTimeSeconds(), new ClaudeUsage.Window(7, 0), null);
+        Assert.Equal("Claude: Session 7%", TrayClaude.Describe(thirty, Noon, Utc, Invariant).Line);
     }
 
     // The tray composes the tooltip (TrayText.Tooltip): its own lines first, the Claude line last,
@@ -113,6 +153,23 @@ public class TrayClaudeTests : IDisposable
             Assert.False(c.TryGetProperty("sevenDay", out _));
             Assert.Equal("claude", doc.RootElement.GetProperty("features").EnumerateArray().Last().GetString());
         }
+
+        // Signed out (2.0.1): "signedOut": true, the numbers and "updated" as they were.
+        var folderOut = NewFolder();
+        File.WriteAllText(Path.Combine(folderOut, ClaudeUsage.FileName),
+            "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":74,\"resets_at\":1760010000}},\"updated\":1760000000,\"state\":\"signedOut\"}");
+        var outUsage = new ClaudeUsage(folderOut, () => null, signedIn: () => false);
+        await outUsage.Refresh(TimeSpan.Zero);
+        var signedOut = new StatusInfo(new FakeReadings()) { Claude = outUsage };
+        using (var doc = JsonDocument.Parse(JsonSerializer.Serialize(signedOut.Build(true))))
+        {
+            var c = doc.RootElement.GetProperty("claude");
+            Assert.True(c.GetProperty("signedOut").GetBoolean());
+            Assert.Equal(1760000000, c.GetProperty("updated").GetInt64());
+        }
+        // Ok: no "signedOut" at all.
+        using (var doc = JsonDocument.Parse(JsonSerializer.Serialize(wired.Build(true))))
+            Assert.False(doc.RootElement.GetProperty("claude").TryGetProperty("signedOut", out _));
 
         // No file: null, still "claude" in features (the PC can send it once Claude Code runs).
         var none = new StatusInfo(new FakeReadings()) { Claude = new ClaudeUsage(NewFolder(), () => null) };

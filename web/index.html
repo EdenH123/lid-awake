@@ -377,6 +377,8 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
   .usage-pct { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
   .usage .meter { margin-top: 8px; }
   .usage-sub { font-size: 13px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  /* Claude Code signed out on the computer: one plain line instead of the meters. */
+  .usage-note { margin: 0; font-size: 15px; line-height: 1.4; text-wrap: pretty; }
 
   /* Wi-Fi signal glyph. */
   .bars { width: 22px; height: 16px; flex: none; }
@@ -1121,6 +1123,7 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     <div class="section" id="claudeSection" hidden>
       <div class="section-head claude-head"><button type="button" class="claude-spark" id="claudeSpark" aria-label="Claude"><svg viewBox="0 0 24 24" aria-hidden="true"><line style="--i:0" x1="12" y1="12" x2="12.00" y2="2.00" stroke-width="2.8"/><line style="--i:1" x1="12" y1="12" x2="15.75" y2="5.50" stroke-width="2.2"/><line style="--i:2" x1="12" y1="12" x2="20.23" y2="7.25" stroke-width="2.8"/><line style="--i:3" x1="12" y1="12" x2="19.00" y2="12.00" stroke-width="2.2"/><line style="--i:4" x1="12" y1="12" x2="20.66" y2="17.00" stroke-width="2.8"/><line style="--i:5" x1="12" y1="12" x2="16.00" y2="18.93" stroke-width="2.2"/><line style="--i:6" x1="12" y1="12" x2="12.00" y2="21.00" stroke-width="2.8"/><line style="--i:7" x1="12" y1="12" x2="8.25" y2="18.50" stroke-width="2.2"/><line style="--i:8" x1="12" y1="12" x2="3.34" y2="17.00" stroke-width="2.8"/><line style="--i:9" x1="12" y1="12" x2="5.00" y2="12.00" stroke-width="2.2"/><line style="--i:10" x1="12" y1="12" x2="3.77" y2="7.25" stroke-width="2.8"/><line style="--i:11" x1="12" y1="12" x2="8.00" y2="5.07" stroke-width="2.2"/></svg></button>Claude</div>
       <section class="card usage">
+        <p class="usage-note" id="claudeSignedOut" hidden></p>
         <div class="usage-row">
           <div class="usage-top"><span>Current session</span><span class="usage-pct" id="claude5hPct">—</span></div>
           <div class="meter"><div id="claude5hBar" style="width:0"></div></div>
@@ -3573,12 +3576,21 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     spark.classList.add("go");
   });
   $("claudeSpark").addEventListener("animationend", e => { if (e.target.tagName === "svg") $("claudeSpark").classList.remove("go"); });
-  // Numbers come from Claude Code after each reply, so show how old they are.
+  // Numbers come from Claude Code after each reply, so show how old they are. Signed out on the
+  // computer, they can't update: one plain line says so (and how to sign in) instead of old numbers.
   function renderClaude() {
     const c = data.claude;
-    $("claudeSection").hidden = !c || (!c.fiveHour && !c.sevenDay);
+    const signedOut = !!(c && c.signedOut);
+    $("claudeSection").hidden = !c || (!signedOut && !c.fiveHour && !c.sevenDay);
     try { localStorage.setItem("claudeShown", $("claudeSection").hidden ? "0" : "1"); } catch (e) {}
     if ($("claudeSection").hidden) return;
+    const computer = word("computer");
+    $("claudeSignedOut").hidden = !signedOut;
+    $("claudeSignedOut").textContent = signedOut
+      ? `Claude Code is signed out on your ${computer}, so usage can't update. On the ${computer}, open Terminal, type claude, then /login.` : "";
+    document.querySelectorAll("#claudeSection .usage-row").forEach(row => { row.hidden = signedOut; });
+    $("claudeFoot").hidden = signedOut;
+    if (signedOut) return;
     const now = Date.now() / 1000;
     const when = (t, long) => {
       const d = new Date(t * 1000), time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -3595,9 +3607,16 @@ try { if ((matchMedia("(display-mode: standalone)").matches || navigator.standal
     };
     show(c.fiveHour, "claude5h", false);
     show(c.sevenDay, "claudeWeek", true);
-    const ago = Math.max(0, Math.round((now - c.updated) / 60));
-    $("claudeFoot").textContent = "Updated " +
-      (ago < 1 ? "just now." : ago < 60 ? `${ago} min ago.` : ago < 1440 ? `${Math.round(ago / 60)} h ago.` : "over a day ago.");
+    // Over 30 minutes old: the time stands out, so old numbers never look current.
+    const ago = Math.max(0, Math.floor((now - c.updated) / 60));
+    const saved = new Date(c.updated * 1000), today = new Date();
+    const days = Math.round((new Date(today.toDateString()) - new Date(saved.toDateString())) / 86400000);
+    const time = saved.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    $("claudeFoot").textContent = !c.updated ? "" : "Updated " +
+      (ago < 1 ? "just now." : ago < 60 ? `${ago} min ago.` : days < 1 ? `${Math.floor(ago / 60)} h ago.`
+        : days === 1 ? `yesterday ${time}.` : days < 7 ? `${saved.toLocaleDateString([], { weekday: "short" })} ${time}.`
+        : `${saved.toLocaleDateString([], { month: "short", day: "numeric" })}.`);
+    $("claudeFoot").classList.toggle("warn", !!c.updated && ago > 30);
   }
 
   // ---------- Apps ----------

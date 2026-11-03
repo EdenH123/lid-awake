@@ -35,19 +35,54 @@ public sealed class ClaudeUsage
     public static readonly TimeSpan AskForAlerts = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan AskOnMenu = TimeSpan.FromMinutes(1);
 
+    // How long one "claude auth status" may take (asked only when "/usage" gave no numbers).
+    public static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(15);
+    public const string AuthArguments = "auth status";
+
+    // Numbers saved longer ago than this are shown with when they were saved (as on the Mac).
+    public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(30);
+
     // One limit window: percent used, and when it resets (Unix seconds, 0 = unknown).
     public readonly record struct Window(double Pct, long ResetsAt);
 
+    // What the last check found (the Mac's the same): numbers, Claude Code signed out ("/usage"
+    // then prints only a cost summary), or no numbers for another reason (a timeout, output that
+    // can't be read). Saved as "state" beside rate_limits; no "state" is Ok, so the status line's
+    // files (which write only rate_limits and updated) and every file before 2.0.1 read as Ok.
+    public enum UsageState { Ok, SignedOut, Failed }
+
+    public const string StateKey = "state";
+
+    public static string? StateName(UsageState state) => state switch
+    {
+        UsageState.SignedOut => "signedOut",
+        UsageState.Failed => "failed",
+        _ => null,
+    };
+
+    public static UsageState StateFrom(string? name) => name switch
+    {
+        "signedOut" => UsageState.SignedOut,
+        "failed" => UsageState.Failed,
+        _ => UsageState.Ok,
+    };
+
     // The saved numbers, as /status sends them (docs/API.md 6.3). `Updated` is 0 when unknown.
-    public sealed record Snapshot(long Updated, Window? FiveHour, Window? SevenDay)
+    public sealed record Snapshot(long Updated, Window? FiveHour, Window? SevenDay, UsageState State = UsageState.Ok)
     {
         public Dictionary<string, object?> ToStatus()
         {
             var s = new Dictionary<string, object?> { ["updated"] = Updated };
             if (FiveHour is { } f) s["fiveHour"] = new Dictionary<string, object?> { ["pct"] = f.Pct, ["resetsAt"] = f.ResetsAt };
             if (SevenDay is { } w) s["sevenDay"] = new Dictionary<string, object?> { ["pct"] = w.Pct, ["resetsAt"] = w.ResetsAt };
+            if (State == UsageState.SignedOut) s["signedOut"] = true;
             return s;
         }
+
+        // Numbers that may be old: the last check failed, or they were saved over StaleAfter ago
+        // (a success since would have saved them again). Never when the time they were saved is unknown.
+        public bool Stale(DateTimeOffset now) =>
+            Updated > 0 && (State == UsageState.Failed || now.ToUnixTimeSeconds() - Updated > (long)StaleAfter.TotalSeconds);
     }
 
     public static string DefaultFolder =>
@@ -55,28 +90,57 @@ public sealed class ClaudeUsage
 
     readonly string path;
     readonly Func<string?> ask;
+    readonly Func<bool?> signedIn;
     readonly Func<DateTimeOffset> now;
     readonly TimeZoneInfo zone;
     readonly object gate = new();
     bool checking;
     DateTimeOffset checkedAt = DateTimeOffset.MinValue;
+    // What the last check found, and when (Unix seconds); also in the file, when there is one.
+    UsageState? lastState;
+    long lastStateAt;
 
-    // After Refresh has saved new numbers (on a thread-pool thread).
+    // After Refresh has saved new numbers, or found a new state (on a thread-pool thread).
     public event Action? Saved;
 
     // `ask` runs Claude Code's "/usage" and returns what it printed, or null (by default
-    // AskClaudeCode). The tests pass a fake, a folder and a clock.
-    public ClaudeUsage(string? folder = null, Func<string?>? ask = null, Func<DateTimeOffset>? now = null, TimeZoneInfo? zone = null)
+    // AskClaudeCode); `signedIn` runs "claude auth status" when that gave no numbers (by default
+    // AskSignedIn; with a fake `ask` and no `signedIn`, "unknown", so a test never runs the real
+    // one). The tests pass fakes, a folder and a clock.
+    public ClaudeUsage(string? folder = null, Func<string?>? ask = null, Func<DateTimeOffset>? now = null, TimeZoneInfo? zone = null,
+                       Func<bool?>? signedIn = null)
     {
         path = Path.Combine(folder ?? DefaultFolder, FileName);
         this.ask = ask ?? AskClaudeCode;
+        this.signedIn = signedIn ?? (ask == null ? AskSignedIn : (Func<bool?>)(() => null));
         this.now = now ?? (() => DateTimeOffset.UtcNow);
         this.zone = zone ?? TimeZoneInfo.Local;
     }
 
     public string FilePath => path;
 
-    public Snapshot? Read() => ReadFile(path);
+    // The saved numbers with what the last check found (Merge).
+    public Snapshot? Read()
+    {
+        var file = ReadFile(path);
+        UsageState? state;
+        long at;
+        lock (gate)
+        {
+            (state, at) = (lastState, lastStateAt);
+        }
+        return Merge(file, state, at);
+    }
+
+    // The file, with the state the last check found (`at`, Unix seconds) unless the file's numbers
+    // were saved after it (the status line: Claude Code answered, so it is signed in). With no file,
+    // only "signed out" is worth saying.
+    public static Snapshot? Merge(Snapshot? file, UsageState? state, long at)
+    {
+        if (state is not { } s) return file;
+        if (file == null) return s == UsageState.SignedOut ? new Snapshot(0, null, null, s) : null;
+        return file.Updated > at ? file : file with { State = s };
+    }
 
     // For /status: asks again at most every 3 minutes (in the background), and answers the saved
     // numbers now. Never throws: a broken file is only `null`.
@@ -106,7 +170,30 @@ public sealed class ClaudeUsage
             try
             {
                 var text = ask();
-                if (text != null && ParseUsage(text, now(), zone) is { } limits && Save(path, limits, now()))
+                var at = now();
+                UsageState state;
+                bool saved;
+                if (text != null && ParseUsage(text, at, zone) is { } limits)
+                {
+                    state = UsageState.Ok;
+                    saved = Save(path, limits, at);
+                }
+                else
+                {
+                    // No numbers: is Claude Code signed out? Asked only now, so never more often than "/usage".
+                    bool? answer;
+                    try { answer = signedIn(); }
+                    catch (Exception) { answer = null; }
+                    state = answer == false ? UsageState.SignedOut : UsageState.Failed;
+                    saved = SaveState(path, state);
+                }
+                bool changed;
+                lock (gate)
+                {
+                    changed = lastState != state;
+                    (lastState, lastStateAt) = (state, at.ToUnixTimeSeconds());
+                }
+                if (saved || changed)
                 {
                     try { Saved?.Invoke(); }
                     catch (Exception) { }
@@ -134,6 +221,25 @@ public sealed class ClaudeUsage
         catch (Exception) { return false; }
     }
 
+    // A check that found no numbers: its state goes beside the numbers already saved, which stay
+    // as they were (with their "updated"). Only into a file that is there with rate_limits, and
+    // only when the state changes. True when written.
+    public static bool SaveState(string path, UsageState state)
+    {
+        try
+        {
+            if (ReadSmallFile(path) is not { } data || JsonNode.Parse(data) is not JsonObject root || root["rate_limits"] is not JsonObject) return false;
+            if (StateIn(root) == state) return false;
+            if (StateName(state) is { } name) root[StateKey] = name;
+            else root.Remove(StateKey);
+            return Files.TryWriteAtomic(path, root.ToJsonString());
+        }
+        catch (Exception) { return false; }
+    }
+
+    static UsageState StateIn(JsonObject root) =>
+        root[StateKey] is JsonValue v && v.TryGetValue<string>(out var name) ? StateFrom(name) : UsageState.Ok;
+
     // Claude Code runs the status line as often as every 300 ms: the same numbers saved less than
     // this long ago are not written (and flushed to the disk) again.
     public static readonly TimeSpan SameNumbersKept = TimeSpan.FromSeconds(60);
@@ -146,6 +252,8 @@ public sealed class ClaudeUsage
         {
             if (ReadSmallFile(path) is not { } data || JsonNode.Parse(data) is not JsonObject root || root["rate_limits"] is not JsonObject saved
                 || root["updated"] is not JsonValue updated) return false;
+            // A file that says signed out or failed is always written again, so it says Ok.
+            if (StateIn(root) != UsageState.Ok) return false;
             long seconds;
             if (updated.TryGetValue<long>(out var l)) seconds = l;
             else if (updated.TryGetValue<JsonElement>(out var e) && e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var el)) seconds = el;
@@ -168,7 +276,8 @@ public sealed class ClaudeUsage
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("rate_limits", out var limits)
                 || limits.ValueKind != JsonValueKind.Object) return null;
-            return new Snapshot(Stamp(root, "updated"), WindowOf(limits, "five_hour"), WindowOf(limits, "seven_day"));
+            var state = root.TryGetProperty(StateKey, out var st) && st.ValueKind == JsonValueKind.String ? StateFrom(st.GetString()) : UsageState.Ok;
+            return new Snapshot(Stamp(root, "updated"), WindowOf(limits, "five_hour"), WindowOf(limits, "seven_day"), state);
         }
         catch (Exception) { return null; }
     }
@@ -287,16 +396,38 @@ public sealed class ClaudeUsage
     static DateTimeOffset At(DateTime local, TimeZoneInfo zone) =>
         new(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), zone.GetUtcOffset(local));
 
+    // `claude auth status` prints JSON: {"loggedIn": false, "authMethod": "none", …}. Its
+    // loggedIn, or null when there is no such object (an error, an older Claude Code, nothing).
+    public static bool? ParseSignedIn(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        int start = text.IndexOf('{'), end = text.LastIndexOf('}');
+        if (start < 0 || end < start) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(text.AsMemory(start, end - start + 1));
+            if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("loggedIn", out var v)
+                && v.ValueKind is JsonValueKind.True or JsonValueKind.False) return v.GetBoolean();
+        }
+        catch (JsonException) { }
+        return null;
+    }
+
     // ---- Asking Claude Code ----
 
-    // Finds Claude Code (ClaudeFinder), runs "/usage" in a fresh empty temp folder that is deleted
-    // afterwards, hidden, with nothing to read, inheriting no open files, for at most 45 seconds.
+    // Finds Claude Code (ClaudeFinder), runs it in a fresh empty temp folder that is deleted
+    // afterwards, hidden, with nothing to read, inheriting no open files: "/usage" for at most 45
+    // seconds, "auth status" for at most 15.
     public const string TempPrefix = "lidawake-usage-";
 
-    public static string? AskClaudeCode()
+    public static string? AskClaudeCode() => RunClaudeCode(UsageArguments, AskTimeout);
+
+    public static bool? AskSignedIn() => ParseSignedIn(RunClaudeCode(AuthArguments, AuthTimeout));
+
+    static string? RunClaudeCode(string arguments, TimeSpan timeout)
     {
         var claude = ClaudeFinder.Find();
-        if (claude == null || ClaudeFinder.CommandFor(claude, UsageArguments) is not { } command) return null;
+        if (claude == null || ClaudeFinder.CommandFor(claude, arguments) is not { } command) return null;
         var temp = Path.GetTempPath();
         CleanUp(temp, DateTime.UtcNow);
         var root = Path.Combine(temp, TempPrefix + Guid.NewGuid().ToString("N")[..12]);
@@ -304,7 +435,7 @@ public sealed class ClaudeUsage
         try
         {
             Directory.CreateDirectory(dir);
-            return HiddenRun.Run(command.App, command.CommandLine, dir, Path.Combine(root, "out.txt"), AskTimeout).Output;
+            return HiddenRun.Run(command.App, command.CommandLine, dir, Path.Combine(root, "out.txt"), timeout).Output;
         }
         catch (Exception) { return null; }
         finally
@@ -344,6 +475,24 @@ public sealed class ClaudeUsage
         if (minutes < 1) return "<1m";
         long h = minutes / 60, m = minutes % 60;
         return h == 0 ? $"{m}m" : $"{h}h{m:00}m";
+    }
+
+    // When numbers that may be old were saved (Snapshot.Stale), for " · updated 3 h ago": "just
+    // now", "12 min ago" and "3 h ago" (today), "yesterday 22:52", "Fri 22:52" (this past week),
+    // else the date ("Oct 13"). The time in the PC's own format.
+    public static string UpdatedAgo(long updated, DateTimeOffset now, TimeZoneInfo zone, CultureInfo culture)
+    {
+        var at = DateTimeOffset.FromUnixTimeSeconds(updated);
+        var minutes = (long)Math.Floor((now - at).TotalMinutes);
+        if (minutes < 1) return "updated just now";
+        if (minutes < 60) return $"updated {minutes} min ago";
+        var local = TimeZoneInfo.ConvertTime(at, zone);
+        var today = TimeZoneInfo.ConvertTime(now, zone).Date;
+        if (local.Date == today) return $"updated {minutes / 60} h ago";
+        var time = local.ToString("t", culture);
+        if (local.Date == today.AddDays(-1)) return "updated yesterday " + time;
+        if (local.Date > today.AddDays(-7)) return "updated " + local.ToString("ddd", culture) + " " + time;
+        return "updated " + local.ToString("MMM d", culture);
     }
 
     // "15:10" today, "Fri 22:59" another day (the time in the PC's own format).
